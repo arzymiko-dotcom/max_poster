@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QSize, QTimer, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPixmap, QTextCursor
+from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -26,7 +26,6 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QRadioButton,
     QScrollArea,
-    QShortcut,
     QSizePolicy,
     QSlider,
     QTabWidget,
