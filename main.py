@@ -847,8 +847,8 @@ class SuccessOverlay(QWidget):
         self._do_hide()
 
 
-class ImageFrame(QFrame):
-    """Отдельный фрейм с изображением поста."""
+class PreviewCard(QFrame):
+    """Карточка предпросмотра поста — шапка + изображение + текст + реакции."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -856,13 +856,106 @@ class ImageFrame(QFrame):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
 
+        # ── Шапка платформы (вне скролла) ────────────────────────────
+        header = QWidget()
+        header.setObjectName("postHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(14, 10, 14, 10)
+        header_layout.setSpacing(10)
+
+        self._avatar_lbl = QLabel()
+        self._avatar_lbl.setFixedSize(28, 28)
+        self._avatar_lbl.setScaledContents(True)
+        self._avatar_lbl.setStyleSheet("background: transparent;")
+
+        meta_col = QVBoxLayout()
+        meta_col.setContentsMargins(0, 0, 0, 0)
+        meta_col.setSpacing(1)
+        self._name_lbl = QLabel("MAX Community")
+        self._name_lbl.setObjectName("checklistTitle")
+        self._date_lbl = QLabel("сейчас")
+        self._date_lbl.setObjectName("postDate")
+        meta_col.addWidget(self._name_lbl)
+        meta_col.addWidget(self._date_lbl)
+
+        more_btn = QPushButton("···")
+        more_btn.setObjectName("postMoreBtn")
+        more_btn.setFixedSize(28, 28)
+
+        header_layout.addWidget(self._avatar_lbl)
+        header_layout.addLayout(meta_col)
+        header_layout.addStretch()
+        header_layout.addWidget(more_btn, alignment=Qt.AlignmentFlag.AlignTop)
+
+        outer.addWidget(header)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        self._post_widget = QWidget()
+        self._post_widget.setObjectName("postCard")
+        post_layout = QVBoxLayout(self._post_widget)
+        post_layout.setContentsMargins(0, 0, 0, 0)
+        post_layout.setSpacing(0)
+
+        # ── Изображение ───────────────────────────────────────────────
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        outer.addWidget(self.image_label)
-
         self._original_pixmap = QPixmap()
         self._apply_placeholder_style()
+
+        # ── Текст поста ───────────────────────────────────────────────
+        self.preview_text = QPlainTextEdit()
+        self.preview_text.setReadOnly(True)
+        self.preview_text.setObjectName("postText")
+        self.preview_text.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.preview_text.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.preview_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.preview_text.document().contentsChanged.connect(self._adjust_text_height)
+
+        # ── Строка реакций ────────────────────────────────────────────
+        reactions_widget = QWidget()
+        reactions_widget.setObjectName("postReactions")
+        reactions_widget.setFixedHeight(28)
+        reactions_layout = QHBoxLayout(reactions_widget)
+        reactions_layout.setContentsMargins(12, 2, 12, 2)
+        reactions_layout.setSpacing(16)
+
+        like_lbl = QLabel("♡  24")
+        like_lbl.setObjectName("reactionItem")
+        comment_lbl = QLabel("💬  3")
+        comment_lbl.setObjectName("reactionItem")
+        share_lbl = QLabel("↗")
+        share_lbl.setObjectName("reactionItem")
+
+        reactions_layout.addWidget(like_lbl)
+        reactions_layout.addWidget(comment_lbl)
+        reactions_layout.addStretch()
+        reactions_layout.addWidget(share_lbl)
+
+        post_layout.addWidget(self.image_label)
+        post_layout.addWidget(self.preview_text)
+        post_layout.addWidget(reactions_widget)
+
+        scroll.setWidget(self._post_widget)
+        outer.addWidget(scroll)
+
+    def set_platform_avatar(self, platform: str, assets_dir: "Path") -> None:
+        if platform == "vk":
+            ico_path = assets_dir / "vk_group.ico"
+            name = "ВКонтакте"
+        else:
+            ico_path = assets_dir / "max.ico"
+            name = "MAX Community"
+        self._name_lbl.setText(name)
+        if ico_path.exists():
+            self._avatar_lbl.setPixmap(QIcon(str(ico_path)).pixmap(QSize(28, 28)))
+        else:
+            self._avatar_lbl.setPixmap(QPixmap())
 
     def _apply_placeholder_style(self) -> None:
         nophoto = _assets_dir() / "nophoto.png"
@@ -893,77 +986,19 @@ class ImageFrame(QFrame):
     def _refresh_pixmap(self) -> None:
         if self._original_pixmap.isNull():
             return
-        w = max(100, self.width())
-        h = max(10, self.height())
+        w = max(100, self._post_widget.width())
         scaled = self._original_pixmap.scaled(
-            w, h,
+            w, 110,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
+        self.image_label.setFixedHeight(scaled.height())
         self.image_label.setPixmap(scaled)
         self.image_label.setText("")
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._refresh_pixmap()
-
-
-class PreviewCard(QFrame):
-    """Карточка предпросмотра поста — текст + реакции."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.setObjectName("previewCard")
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-
-        self._post_widget = QWidget()
-        self._post_widget.setObjectName("postCard")
-        post_layout = QVBoxLayout(self._post_widget)
-        post_layout.setContentsMargins(0, 0, 0, 0)
-        post_layout.setSpacing(0)
-
-        # ── Текст поста ───────────────────────────────────────────────
-        self.preview_text = QPlainTextEdit()
-        self.preview_text.setReadOnly(True)
-        self.preview_text.setObjectName("postText")
-        self.preview_text.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.preview_text.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.preview_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        self.preview_text.document().contentsChanged.connect(self._adjust_text_height)
-
-        # ── Строка реакций ────────────────────────────────────────────
-        reactions_widget = QWidget()
-        reactions_widget.setObjectName("postReactions")
-        reactions_layout = QHBoxLayout(reactions_widget)
-        reactions_layout.setContentsMargins(12, 6, 12, 10)
-        reactions_layout.setSpacing(16)
-
-        like_lbl = QLabel("♡  24")
-        like_lbl.setObjectName("reactionItem")
-        comment_lbl = QLabel("💬  3")
-        comment_lbl.setObjectName("reactionItem")
-        share_lbl = QLabel("↗")
-        share_lbl.setObjectName("reactionItem")
-
-        reactions_layout.addWidget(like_lbl)
-        reactions_layout.addWidget(comment_lbl)
-        reactions_layout.addStretch()
-        reactions_layout.addWidget(share_lbl)
-
-        post_layout.addWidget(self.preview_text)
-        post_layout.addWidget(reactions_widget)
-        post_layout.addStretch()
-
-        scroll.setWidget(self._post_widget)
-        outer.addWidget(scroll)
 
     def _adjust_text_height(self) -> None:
         doc_h = int(self.preview_text.document().size().height()) + 20
@@ -1082,12 +1117,25 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         root = QHBoxLayout(central)
-        root.setContentsMargins(18, 18, 18, 18)
-        root.setSpacing(16)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(12)
 
         left_box = QGroupBox()
+        left_box.setObjectName("sidePanel")
         left_layout = QVBoxLayout(left_box)
         left_layout.setSpacing(12)
+        left_layout.setContentsMargins(12, 10, 12, 12)
+
+        # ── Заголовок левой панели ───────────────────────────────────
+        left_header = QFrame()
+        left_header.setObjectName("checklistFrame")
+        lh_layout = QHBoxLayout(left_header)
+        lh_layout.setContentsMargins(14, 10, 14, 10)
+        lh_title = QLabel("Ввод данных")
+        lh_title.setObjectName("checklistTitle")
+        lh_layout.addWidget(lh_title)
+        lh_layout.addStretch()
+        left_layout.addWidget(left_header)
 
         self.text_input = LineNumberedEdit()
         self.text_input.textChanged.connect(self.sync_preview)
@@ -1133,20 +1181,22 @@ class MainWindow(QMainWindow):
         self._addr_list.itemChanged.connect(self._update_checklist)
         self._addr_list.itemChanged.connect(self.save_state)
 
-        left_layout.addWidget(QLabel("Ввод данных"))
         left_layout.addWidget(text_container, 1)
-        addr_header = QHBoxLayout()
-        addr_header.setContentsMargins(0, 0, 0, 0)
-        addr_lbl = QLabel("Адреса для рассылки MAX (☑ — выбрать)")
+        addr_header_frame = QFrame()
+        addr_header_frame.setObjectName("checklistFrame")
+        ah_layout = QHBoxLayout(addr_header_frame)
+        ah_layout.setContentsMargins(14, 10, 14, 10)
+        addr_lbl = QLabel("Адреса для рассылки MAX")
+        addr_lbl.setObjectName("checklistTitle")
         self._add_addr_btn = QPushButton("+")
         self._add_addr_btn.setObjectName("addAddrBtn")
         self._add_addr_btn.setFixedSize(24, 24)
         self._add_addr_btn.setToolTip("Добавить адрес вручную")
         self._add_addr_btn.clicked.connect(self._add_address_manually)
-        addr_header.addWidget(addr_lbl)
-        addr_header.addStretch()
-        addr_header.addWidget(self._add_addr_btn)
-        left_layout.addLayout(addr_header)
+        ah_layout.addWidget(addr_lbl)
+        ah_layout.addStretch()
+        ah_layout.addWidget(self._add_addr_btn)
+        left_layout.addWidget(addr_header_frame)
         left_layout.addWidget(self._addr_list, 1)
 
         # ── Платформы ────────────────────────────────────────────────
@@ -1246,6 +1296,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(version_label, alignment=Qt.AlignmentFlag.AlignLeft)
 
         right_box = QGroupBox()
+        right_box.setObjectName("sidePanel")
         right_layout = QVBoxLayout(right_box)
         right_layout.setSpacing(12)
         right_layout.setContentsMargins(12, 10, 12, 12)
@@ -1277,44 +1328,8 @@ class MainWindow(QMainWindow):
         ph_layout.addWidget(self._theme_btn)
         right_layout.addWidget(preview_header_frame)
 
-        # ── Шапка платформы (отдельный фрейм) ──────────────────────
-        platform_frame = QFrame()
-        platform_frame.setObjectName("previewCard")
-        pf_layout = QHBoxLayout(platform_frame)
-        pf_layout.setContentsMargins(14, 10, 14, 10)
-        pf_layout.setSpacing(10)
-
-        self._plat_avatar_lbl = QLabel()
-        self._plat_avatar_lbl.setFixedSize(28, 28)
-        self._plat_avatar_lbl.setScaledContents(True)
-        self._plat_avatar_lbl.setStyleSheet("background: transparent;")
-
-        meta_col = QVBoxLayout()
-        meta_col.setContentsMargins(0, 0, 0, 0)
-        meta_col.setSpacing(1)
-        self._plat_name_lbl = QLabel("MAX Community")
-        self._plat_name_lbl.setObjectName("checklistTitle")
-        self._plat_date_lbl = QLabel("сейчас")
-        self._plat_date_lbl.setObjectName("postDate")
-        meta_col.addWidget(self._plat_name_lbl)
-        meta_col.addWidget(self._plat_date_lbl)
-
-        more_btn = QPushButton("···")
-        more_btn.setObjectName("postMoreBtn")
-        more_btn.setFixedSize(28, 28)
-
-        pf_layout.addWidget(self._plat_avatar_lbl)
-        pf_layout.addLayout(meta_col)
-        pf_layout.addStretch()
-        pf_layout.addWidget(more_btn, alignment=Qt.AlignmentFlag.AlignTop)
-        right_layout.addWidget(platform_frame)
-
-        self.image_frame = ImageFrame()
-        self.image_frame.setFixedHeight(160)
-        right_layout.addWidget(self.image_frame)
-
         self.preview = PreviewCard()
-        self.preview.setFixedHeight(290)
+        self.preview.setFixedHeight(560)
         right_layout.addWidget(self.preview)
 
         # ── Чеклист готовности ──────────────────────────────────────
@@ -1497,6 +1512,12 @@ class MainWindow(QMainWindow):
                 subcontrol-position: top center;
                 padding: 0 6px;
             }
+            #sidePanel {
+                border: 1px solid #e4eaf0;
+                border-radius: 10px;
+                background: #ffffff;
+                margin-top: 0;
+            }
             QPlainTextEdit, QTextEdit, QLineEdit, QComboBox {
                 border: 1px solid #c7d0db;
                 border-radius: 8px;
@@ -1531,7 +1552,7 @@ class MainWindow(QMainWindow):
                 background: #ffffff;
                 font-size: 14px;
                 color: #1a1a1a;
-                padding: 14px 16px;
+                padding: 10px 2px;
             }
             #textContainer {
                 border: 1px solid #c7d0db;
@@ -1700,7 +1721,7 @@ class MainWindow(QMainWindow):
             }
             /* ── Шапка поста (preview) ───────────────────────────── */
             #postHeader {
-                background: #ffffff;
+                background: #f8fafc;
                 border-bottom: 1px solid #f0f4f8;
             }
             #postAvatar {
@@ -1737,7 +1758,7 @@ class MainWindow(QMainWindow):
                 border-top: 1px solid #f0f4f8;
             }
             #reactionItem {
-                font-size: 13px;
+                font-size: 11px;
                 color: #9ca3af;
             }
             QPushButton#themeThumb {
@@ -1815,7 +1836,7 @@ class MainWindow(QMainWindow):
         if not file_name:
             return
         self.image_path = Path(file_name)
-        self.image_frame.set_image(str(self.image_path))
+        self.preview.set_image(str(self.image_path))
         self._set_photo_button_name(self.image_path.name)
         self._update_checklist()
         self.save_state()
@@ -1830,7 +1851,7 @@ class MainWindow(QMainWindow):
         self.text_input.clear()
         self._addr_list.clear()
         self.preview.set_preview_text("")
-        self.image_frame.set_image(None)
+        self.preview.set_image(None)
         self.image_path = None
         self.photo_button.setText("Загрузить фото")
         self.photo_button.setObjectName("photoButton")
@@ -1964,19 +1985,10 @@ class MainWindow(QMainWindow):
 
     def _sync_preview_avatar(self, _state=None) -> None:
         """Обновить шапку платформы в зависимости от выбранной платформы."""
-        assets = _assets_dir()
         if self.chk_vk.isChecked() and not self.chk_max.isChecked():
-            ico_path = assets / "vk_group.ico"
-            name = "ВКонтакте"
+            self.preview.set_platform_avatar("vk", _assets_dir())
         else:
-            ico_path = assets / "max.ico"
-            name = "MAX Community"
-        self._plat_name_lbl.setText(name)
-        if ico_path.exists():
-            px = QIcon(str(ico_path)).pixmap(QSize(28, 28))
-            self._plat_avatar_lbl.setPixmap(px)
-        else:
-            self._plat_avatar_lbl.setPixmap(QPixmap())
+            self.preview.set_platform_avatar("max", _assets_dir())
 
     def _add_address_manually(self) -> None:
         dlg = AddAddressDialog(parent=self)
@@ -2154,7 +2166,7 @@ class MainWindow(QMainWindow):
             path = url.toLocalFile()
             if path.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
                 self.image_path = Path(path)
-                self.image_frame.set_image(str(self.image_path))
+                self.preview.set_image(str(self.image_path))
                 self._set_photo_button_name(self.image_path.name)
                 self._update_checklist()
                 self.save_state()
@@ -2218,7 +2230,7 @@ class MainWindow(QMainWindow):
         image_path = data.get("image_path", "")
         if image_path and Path(image_path).exists():
             self.image_path = Path(image_path)
-            self.image_frame.set_image(str(self.image_path))
+            self.preview.set_image(str(self.image_path))
             self._set_photo_button_name(self.image_path.name)
 
         addresses = data.get("addresses", [])
