@@ -1,0 +1,154 @@
+"""
+Telegram-уведомления для MAX Poster.
+
+Отправляет:
+  - уведомление о запуске программы
+  - уведомление о необработанной ошибке (sys.excepthook)
+  - уведомление об ошибке отправки поста
+
+Все запросы выполняются в фоновом потоке — не блокируют UI.
+Если TG_BOT_TOKEN или TG_CHAT_ID не заданы, уведомления молча пропускаются.
+"""
+
+import os
+import platform
+import socket
+import sys
+import threading
+import traceback
+from datetime import datetime
+from pathlib import Path
+
+import requests
+from dotenv import load_dotenv
+
+_env_path = (
+    Path(sys.executable).parent / ".env"
+    if getattr(sys, "frozen", False)
+    else Path(__file__).parent / ".env"
+)
+load_dotenv(_env_path)
+
+_BOT_TOKEN: str = os.getenv("TG_BOT_TOKEN", "")
+_CHAT_ID: str = os.getenv("TG_CHAT_ID", "")
+
+
+def _enabled() -> bool:
+    return bool(_BOT_TOKEN and _CHAT_ID)
+
+
+def _version() -> str:
+    try:
+        base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+        return (base / "version.txt").read_text(encoding="utf-8").strip().splitlines()[0].strip()
+    except Exception:
+        return "?"
+
+
+def _public_ip() -> str:
+    try:
+        return requests.get("https://api.ipify.org", timeout=5).text.strip()
+    except Exception:
+        return "недоступен"
+
+
+def _local_ip() -> str:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "?"
+
+
+def _send(text: str) -> None:
+    """Отправляет сообщение в Telegram (вызывать из фонового потока)."""
+    if not _enabled():
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{_BOT_TOKEN}/sendMessage",
+            data={"chat_id": _CHAT_ID, "text": text, "parse_mode": "HTML"},
+            timeout=10,
+        )
+    except Exception:
+        pass  # тихо игнорируем — телеграм не должен влиять на работу программы
+
+
+def _send_async(text: str) -> None:
+    threading.Thread(target=_send, args=(text,), daemon=True).start()
+
+
+def _sys_info() -> str:
+    now = datetime.now().strftime("%H:%M · %d.%m.%Y")
+    try:
+        user = os.getlogin()
+    except Exception:
+        user = os.environ.get("USERNAME", "?")
+    pc = socket.gethostname()
+    win = platform.version()
+    ver = _version()
+    pub_ip = _public_ip()
+    loc_ip = _local_ip()
+    return (
+        f"👤 Пользователь: {user}\n"
+        f"💻 ПК: {pc}\n"
+        f"🪟 Windows: {win}\n"
+        f"📦 Версия: {ver}\n"
+        f"🌐 IP: {pub_ip}\n"
+        f"🔌 Локальный IP: {loc_ip}\n"
+        f"🕐 {now}"
+    )
+
+
+# ──────────────────────────────────────────────────────────────────
+#  Публичный API
+# ──────────────────────────────────────────────────────────────────
+
+def send_startup() -> None:
+    """Уведомление о запуске программы."""
+    if not _enabled():
+        return
+
+    def _task():
+        info = _sys_info()
+        _send(f"✅ <b>MAX Poster запущен</b>\n{info}")
+
+    threading.Thread(target=_task, daemon=True).start()
+
+
+def send_error(title: str, details: str) -> None:
+    """Уведомление об ошибке."""
+    if not _enabled():
+        return
+    now = datetime.now().strftime("%H:%M · %d.%m.%Y")
+    try:
+        user = os.getlogin()
+    except Exception:
+        user = os.environ.get("USERNAME", "?")
+    pc = socket.gethostname()
+    ver = _version()
+    text = (
+        f"❌ <b>{title}</b>\n\n"
+        f"<pre>{details[:3000]}</pre>\n\n"
+        f"👤 {user}  💻 {pc}  📦 {ver}\n"
+        f"🕐 {now}"
+    )
+    _send_async(text)
+
+
+def install_excepthook() -> None:
+    """
+    Устанавливает глобальный обработчик необработанных исключений.
+    Вызывать один раз при старте программы.
+    """
+    _orig = sys.excepthook
+
+    def _hook(exc_type, exc_value, exc_tb):
+        tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
+        send_error("Необработанная ошибка", tb_text)
+        _orig(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = _hook

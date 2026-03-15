@@ -1,0 +1,6 @@
+PyQt6
+pandas
+openpyxl
+requests
+python-dotenv
+packaging

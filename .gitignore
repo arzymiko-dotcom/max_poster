@@ -1,0 +1,32 @@
+# Virtual environment
+.venv/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Inno Setup output
+installer/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# App state & history (user data)
+app_state.json
+history.json
+
+# Secrets
+.env
+
+# Excel база (большой бинарник, не трекаем)
+max_address.xlsx
+
+# Twemoji (407 PNG, не трекаем)
+twemoji/
+
+# Windows
+desktop.ini
+Thumbs.db
