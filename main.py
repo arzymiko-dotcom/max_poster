@@ -1304,9 +1304,13 @@ class MainWindow(QMainWindow):
         right_layout.setSpacing(12)
         right_layout.setContentsMargins(12, 10, 12, 12)
 
-        preview_header = QHBoxLayout()
+        preview_header_frame = QFrame()
+        preview_header_frame.setObjectName("checklistFrame")
+        ph_layout = QHBoxLayout(preview_header_frame)
+        ph_layout.setContentsMargins(14, 10, 14, 10)
+
         preview_title = QLabel("Предпросмотр")
-        preview_title.setObjectName("groupBoxTitle")
+        preview_title.setObjectName("checklistTitle")
 
         self._font_btn = QPushButton("Аа")
         self._font_btn.setObjectName("fontMiniBtn")
@@ -1321,11 +1325,11 @@ class MainWindow(QMainWindow):
         self._theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._theme_btn.clicked.connect(self._open_theme_picker)
 
-        preview_header.addWidget(preview_title)
-        preview_header.addStretch()
-        preview_header.addWidget(self._font_btn)
-        preview_header.addWidget(self._theme_btn)
-        right_layout.addLayout(preview_header)
+        ph_layout.addWidget(preview_title)
+        ph_layout.addStretch()
+        ph_layout.addWidget(self._font_btn)
+        ph_layout.addWidget(self._theme_btn)
+        right_layout.addWidget(preview_header_frame)
 
         self.preview = PreviewCard()
         self.preview.setFixedHeight(255)
