@@ -27,6 +27,8 @@ OutputDir=installer
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+CloseApplications=yes
+CloseApplicationsFilter=*.exe
 
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
@@ -37,6 +39,9 @@ Name: "desktopicon"; Description: "Создать ярлык на рабочем
 [Files]
 Source: "dist\max_poster\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "assets\max_poster.ico"; DestDir: "{app}"; Flags: ignoreversion
+
+[InstallDelete]
+Type: filesandordirs; Name: "{app}"
 
 [Icons]
 Name: "{group}\max_poster"; Filename: "{app}\max_poster.exe"; IconFilename: "{app}\max_poster.ico"
