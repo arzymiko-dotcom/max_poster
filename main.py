@@ -1603,8 +1603,8 @@ class MainWindow(QMainWindow):
             self._addr_list.addItem(item)
         # Возвращаем ручные адреса (если их нет среди автопарсинга)
         for m, state in manual_entries:
-            if m.chat_id not in {b.chat_id for b in new_items} | manual_ids - {m.chat_id}:
-                pass
+            if m.chat_id in {b.chat_id for b in new_items}:
+                continue  # уже есть в авто-результатах — не дублируем
             item = QListWidgetItem(m.address)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(state)
