@@ -23,7 +23,7 @@ echo.
 REM Очищаем артефакты прошлых сборок
 if exist dist rmdir /s /q dist
 if exist build rmdir /s /q build
-del /q *.spec 2>/dev/null
+del /q *.spec 2>NUL
 
 echo [1/4] Активируем виртуальное окружение...
 call .venv\Scripts\activate.bat
@@ -36,6 +36,11 @@ pyinstaller --clean --windowed --name "max_poster" ^
     --hidden-import=dotenv ^
     --hidden-import=dotenv.main ^
     main.py --noconfirm
+if errorlevel 1 (
+    echo Ошибка: PyInstaller завершился с ошибкой!
+    pause
+    exit /b 1
+)
 
 REM Проверяем, успешно ли прошла сборка
 if not exist dist\max_poster\max_poster.exe (
@@ -52,7 +57,7 @@ if exist version.txt (
     echo Предупреждение: version.txt не найден
 )
 
-copy *.xlsx dist\max_poster\ 2>/dev/null
+copy *.xlsx dist\max_poster\ 2>NUL
 
 if exist .env (
     copy .env dist\max_poster\.env
@@ -61,7 +66,26 @@ if exist .env (
 )
 
 echo [4/4] Собираем установщик Inno Setup...
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" max_poster.iss
+REM Ищем ISCC.exe в нескольких стандартных местах и в PATH
+set "ISCC="
+if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+if not defined ISCC (
+    if exist "C:\Program Files\Inno Setup 6\ISCC.exe" set "ISCC=C:\Program Files\Inno Setup 6\ISCC.exe"
+)
+if not defined ISCC (
+    where ISCC.exe >nul 2>&1 && set "ISCC=ISCC.exe"
+)
+if not defined ISCC (
+    echo Ошибка: Inno Setup не найден. Установите его или добавьте ISCC.exe в PATH.
+    pause
+    exit /b 1
+)
+"%ISCC%" max_poster.iss
+if errorlevel 1 (
+    echo Ошибка: Inno Setup завершился с ошибкой!
+    pause
+    exit /b 1
+)
 
 echo.
 echo ========================================
