@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QRect, QSize, QTimer, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut, QTextCursor
+from PyQt6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QStyledItemDelegate,
     QSlider,
     QTabWidget,
@@ -62,6 +63,25 @@ def _assets_dir() -> Path:
     else:
         base = Path(__file__).parent
     return base / "assets"
+
+
+def _load_ui_fonts() -> list:
+    """Загружает шрифты из папки fonts/ в QFontDatabase, возвращает список семейств."""
+    fonts_dir = (
+        Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+    ) / "fonts"
+    seen: set = set()
+    result: list = []
+    if fonts_dir.exists():
+        for fp in sorted(fonts_dir.iterdir()):
+            if fp.suffix.lower() in (".ttf", ".otf"):
+                fid = QFontDatabase.addApplicationFont(str(fp))
+                if fid >= 0:
+                    for fam in QFontDatabase.applicationFontFamilies(fid):
+                        if fam not in seen:
+                            seen.add(fam)
+                            result.append(fam)
+    return result
 
 
 def _emoji_icon(emoji: str) -> QIcon | None:
@@ -597,6 +617,90 @@ class AddAddressDialog(QDialog):
         return MatchResult(address=address, score=0, chat_link=url, chat_id=chat_id)
 
 
+class FontPickerDialog(QDialog):
+    """Диалог выбора шрифта для всего интерфейса приложения."""
+
+    font_changed = pyqtSignal(str, int)  # family, size — live preview
+
+    _PREVIEW_TEXT = "Привет! Hello · ABCDabc · 123"
+
+    def __init__(self, families: list, current_family: str, current_size: int, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Шрифт интерфейса")
+        self.setMinimumWidth(400)
+        self.setFixedHeight(370)
+        self._orig_family = current_family
+        self._orig_size = current_size
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 14)
+        layout.setSpacing(10)
+
+        # Список семейств шрифтов
+        self._list = QListWidget()
+        self._list.addItems(families)
+        for i in range(self._list.count()):
+            if self._list.item(i).text() == current_family:
+                self._list.setCurrentRow(i)
+                break
+        else:
+            self._list.setCurrentRow(0)
+        self._list.currentRowChanged.connect(self._on_change)
+        layout.addWidget(self._list, 1)
+
+        # Размер
+        size_row = QHBoxLayout()
+        size_row.addWidget(QLabel("Размер:"))
+        self._spin = QSpinBox()
+        self._spin.setRange(9, 18)
+        self._spin.setValue(current_size)
+        self._spin.valueChanged.connect(self._on_change)
+        size_row.addWidget(self._spin)
+        size_row.addStretch()
+        layout.addLayout(size_row)
+
+        # Превью
+        self._preview = QLabel(self._PREVIEW_TEXT)
+        self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview.setMinimumHeight(56)
+        self._preview.setWordWrap(True)
+        self._preview.setStyleSheet(
+            "border:1px solid #cfd6df; border-radius:7px; padding:10px; background:#fff;"
+        )
+        self._refresh_preview()
+        layout.addWidget(self._preview)
+
+        # Кнопки
+        btns = QDialogButtonBox()
+        btns.addButton("Применить", QDialogButtonBox.ButtonRole.AcceptRole)
+        btns.addButton("Отмена", QDialogButtonBox.ButtonRole.RejectRole)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self._on_cancel)
+        layout.addWidget(btns)
+
+    def _on_change(self) -> None:
+        self._refresh_preview()
+        item = self._list.currentItem()
+        if item:
+            self.font_changed.emit(item.text(), self._spin.value())
+
+    def _refresh_preview(self) -> None:
+        item = self._list.currentItem()
+        if item:
+            self._preview.setFont(QFont(item.text(), self._spin.value() + 2))
+
+    def _on_cancel(self) -> None:
+        self.font_changed.emit(self._orig_family, self._orig_size)
+        self.reject()
+
+    def selected_family(self) -> str:
+        item = self._list.currentItem()
+        return item.text() if item else self._orig_family
+
+    def selected_size(self) -> int:
+        return self._spin.value()
+
+
 class _SuccessAnimWidget(QWidget):
     """Векторная анимация: белый круг масштабируется, затем рисуется зелёная галочка."""
 
@@ -859,7 +963,7 @@ class PreviewCard(QFrame):
         self.image_label.setStyleSheet(
             "background:#f0f2f5; color:#b0b8c1; font-size:13px;"
         )
-        self.image_label.setFixedHeight(140)
+        self.image_label.setFixedHeight(90)
         self.image_label.setText("⛰  Изображение не выбрано")
         self.image_label.setPixmap(QPixmap())
 
@@ -891,7 +995,7 @@ class PreviewCard(QFrame):
             return
         w = max(100, self._post_widget.width())
         scaled = self._original_pixmap.scaled(
-            w, 420,
+            w, 150,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
@@ -923,6 +1027,13 @@ class MainWindow(QMainWindow):
         self._bg_mode: int = 0  # 0 = фон, 1 = наложение
         self._bg_opacity: int = 50
         self._bg_widget: _BgWidget | None = None
+
+        # Шрифт интерфейса
+        self._ui_font_families: list = _load_ui_fonts()
+        self._ui_font_family: str = "Inter" if "Inter" in self._ui_font_families else (
+            self._ui_font_families[0] if self._ui_font_families else ""
+        )
+        self._ui_font_size: int = 13
 
         # Кэшированный ExcelMatcher — читает Excel только один раз
         self._matcher: ExcelMatcher | None = (
@@ -1177,13 +1288,23 @@ class MainWindow(QMainWindow):
         preview_header = QHBoxLayout()
         preview_title = QLabel("Предпросмотр")
         preview_title.setObjectName("groupBoxTitle")
+
+        self._font_btn = QPushButton("Аа")
+        self._font_btn.setObjectName("fontMiniBtn")
+        self._font_btn.setFixedHeight(24)
+        self._font_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._font_btn.setToolTip("Шрифт интерфейса")
+        self._font_btn.clicked.connect(self._open_font_picker)
+
         self._theme_btn = QPushButton("Тема")
         self._theme_btn.setObjectName("themeMiniBtn")
         self._theme_btn.setFixedHeight(24)
         self._theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._theme_btn.clicked.connect(self._open_theme_picker)
+
         preview_header.addWidget(preview_title)
         preview_header.addStretch()
+        preview_header.addWidget(self._font_btn)
         preview_header.addWidget(self._theme_btn)
         right_layout.addLayout(preview_header)
 
@@ -1537,6 +1658,21 @@ class MainWindow(QMainWindow):
                 border-color: #2d6cdf;
                 color: #2d6cdf;
             }
+            QPushButton#fontMiniBtn {
+                min-height: 0;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 2px 10px;
+                border-radius: 6px;
+                border: 1px solid #c7d0db;
+                background: #f3f4f6;
+                color: #555;
+            }
+            QPushButton#fontMiniBtn:hover {
+                background: #eef4ff;
+                border-color: #2d6cdf;
+                color: #2d6cdf;
+            }
             /* ── Секция платформ ──────────────────────────────────── */
             #sectionTitle {
                 font-size: 12px;
@@ -1763,6 +1899,27 @@ class MainWindow(QMainWindow):
                 if match:
                     results.append(match)
         return results
+
+    def _open_font_picker(self) -> None:
+        families = self._ui_font_families or ["Sans Serif"]
+        dlg = FontPickerDialog(
+            families, self._ui_font_family, self._ui_font_size, parent=self
+        )
+        dlg.font_changed.connect(self._apply_ui_font)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._apply_ui_font(dlg.selected_family(), dlg.selected_size())
+            self.save_state()
+        else:
+            # Откат
+            self._apply_ui_font(self._ui_font_family, self._ui_font_size)
+
+    def _apply_ui_font(self, family: str, size: int) -> None:
+        """Применить шрифт ко всему интерфейсу через QApplication."""
+        self._ui_font_family = family
+        self._ui_font_size = size
+        app = QApplication.instance()
+        if app:
+            app.setFont(QFont(family, size))
 
     def _open_theme_picker(self) -> None:
         prev_index = self._bg_index
@@ -2013,11 +2170,21 @@ class MainWindow(QMainWindow):
             "bg_opacity": self._bg_opacity,
             "addresses": addresses,
             "checked_ids": list(checked_ids),
+            "ui_font_family": self._ui_font_family,
+            "ui_font_size": self._ui_font_size,
         })
 
     def load_state(self) -> None:
         data = self.state_manager.load()
         self.resize(data.get("width", 1280), data.get("height", 760))
+
+        # Шрифт интерфейса — применяем первым делом
+        saved_family = data.get("ui_font_family", "")
+        saved_size = data.get("ui_font_size", 0)
+        if saved_family and saved_family in self._ui_font_families:
+            self._apply_ui_font(saved_family, saved_size or self._ui_font_size)
+        elif self._ui_font_family:
+            self._apply_ui_font(self._ui_font_family, self._ui_font_size)
 
         bg_index = data.get("bg_index", None)
         bg_mode = data.get("bg_mode", 0)
