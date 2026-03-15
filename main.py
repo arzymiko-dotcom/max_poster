@@ -673,10 +673,13 @@ class FontPickerDialog(QDialog):
         # Кнопки
         btns = QDialogButtonBox()
         btns.addButton("Применить", QDialogButtonBox.ButtonRole.AcceptRole)
+        reset_btn = btns.addButton("Сброс", QDialogButtonBox.ButtonRole.ResetRole)
         btns.addButton("Отмена", QDialogButtonBox.ButtonRole.RejectRole)
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self._on_cancel)
+        reset_btn.clicked.connect(self._on_reset)
         layout.addWidget(btns)
+        self._reset_requested = False
 
     def _on_change(self) -> None:
         self._refresh_preview()
@@ -693,7 +696,14 @@ class FontPickerDialog(QDialog):
         self.font_changed.emit(self._orig_family, self._orig_size)
         self.reject()
 
+    def _on_reset(self) -> None:
+        self._reset_requested = True
+        self.font_changed.emit("", 0)
+        self.accept()
+
     def selected_family(self) -> str:
+        if self._reset_requested:
+            return ""
         item = self._list.currentItem()
         return item.text() if item else self._orig_family
 
@@ -937,6 +947,7 @@ class PreviewCard(QFrame):
         outer.addWidget(scroll)
 
         self._original_pixmap = QPixmap()
+        self._is_placeholder = True
 
     def set_platform_avatar(self, platform: str, assets_dir: "Path") -> None:
         """Обновить аватар и имя в шапке предпросмотра по выбранной платформе."""
@@ -960,12 +971,20 @@ class PreviewCard(QFrame):
             self._avatar_lbl.setStyleSheet("")
 
     def _apply_placeholder_style(self) -> None:
-        self.image_label.setStyleSheet(
-            "background:#f0f2f5; color:#b0b8c1; font-size:13px;"
-        )
-        self.image_label.setFixedHeight(90)
-        self.image_label.setText("⛰  Изображение не выбрано")
-        self.image_label.setPixmap(QPixmap())
+        self._is_placeholder = True
+        nophoto = _assets_dir() / "nophoto.png"
+        if nophoto.exists():
+            px = QPixmap(str(nophoto))
+            self._original_pixmap = px
+            self.image_label.setStyleSheet("background: #f0f2f5;")
+            self.image_label.setText("")
+            self._refresh_pixmap()
+        else:
+            self._original_pixmap = QPixmap()
+            self.image_label.setStyleSheet("background:#f0f2f5; color:#b0b8c1; font-size:13px;")
+            self.image_label.setFixedHeight(110)
+            self.image_label.setText("Изображение не выбрано")
+            self.image_label.setPixmap(QPixmap())
 
     def _adjust_text_height(self) -> None:
         doc_h = int(self.preview_text.document().size().height()) + 20
@@ -976,7 +995,6 @@ class PreviewCard(QFrame):
 
     def set_image(self, file_path: str | None) -> None:
         if not file_path:
-            self._original_pixmap = QPixmap()
             self._apply_placeholder_style()
             return
 
@@ -986,6 +1004,7 @@ class PreviewCard(QFrame):
             self.image_label.setText("Не удалось загрузить изображение")
             return
 
+        self._is_placeholder = False
         self._original_pixmap = pixmap
         self.image_label.setStyleSheet("")
         self._refresh_pixmap()
@@ -1309,7 +1328,8 @@ class MainWindow(QMainWindow):
         right_layout.addLayout(preview_header)
 
         self.preview = PreviewCard()
-        right_layout.addWidget(self.preview, 1)
+        self.preview.setFixedHeight(255)
+        right_layout.addWidget(self.preview)
 
         # ── Чеклист готовности ──────────────────────────────────────
         checklist_frame = QFrame()
@@ -1513,7 +1533,7 @@ class MainWindow(QMainWindow):
                 font-weight: 600;
             }
             #previewCard {
-                border: 1px solid #cfd6df;
+                border: 1px solid #e4eaf0;
                 border-radius: 10px;
                 background: #ffffff;
                 overflow: hidden;
@@ -1918,12 +1938,12 @@ class MainWindow(QMainWindow):
             self._apply_ui_font(prev_family, prev_size)  # откат к сохранённому
 
     def _apply_ui_font(self, family: str, size: int) -> None:
-        """Применить шрифт ко всему интерфейсу."""
+        """Применить шрифт ко всему интерфейсу. family='' — сброс на системный."""
         self._ui_font_family = family
-        self._ui_font_size = size
+        self._ui_font_size = size if size > 0 else 13
         app = QApplication.instance()
         if app:
-            app.setFont(QFont(family, size))
+            app.setFont(QFont(family, self._ui_font_size) if family else QFont())
         self._apply_styles()   # перегенерировать stylesheet с новым font-family
 
     def _open_theme_picker(self) -> None:
