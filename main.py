@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QRect, QSize, QTimer, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut, QTextCursor
+from PyQt6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPixmap, QShortcut, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QSizePolicy,
+    QSpinBox,
     QStyledItemDelegate,
     QSlider,
     QTabWidget,
@@ -597,8 +598,91 @@ class AddAddressDialog(QDialog):
         return MatchResult(address=address, score=0, chat_link=url, chat_id=chat_id)
 
 
+class FontPickerDialog(QDialog):
+    """Диалог выбора шрифта для текстового поля."""
+
+    font_changed = pyqtSignal(str, int)  # family, size — live preview
+
+    def __init__(self, families: list, current_family: str, current_size: int, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Шрифт")
+        self.setMinimumWidth(380)
+        self.setFixedHeight(340)
+        self._families = families
+        self._orig_family = current_family
+        self._orig_size = current_size
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 18, 18, 14)
+        layout.setSpacing(10)
+
+        # Список семейств
+        self._list = QListWidget()
+        self._list.addItems(families)
+        for i in range(self._list.count()):
+            if self._list.item(i).text() == current_family:
+                self._list.setCurrentRow(i)
+                break
+        else:
+            self._list.setCurrentRow(0)
+        self._list.currentRowChanged.connect(self._on_change)
+        layout.addWidget(self._list, 1)
+
+        # Размер шрифта
+        size_row = QHBoxLayout()
+        size_row.addWidget(QLabel("Размер:"))
+        self._size_spin = QSpinBox()
+        self._size_spin.setRange(9, 22)
+        self._size_spin.setValue(current_size)
+        self._size_spin.valueChanged.connect(self._on_change)
+        size_row.addWidget(self._size_spin)
+        size_row.addStretch()
+        layout.addLayout(size_row)
+
+        # Превью
+        self._preview = QLabel("Пример текста · ABCDEFGabcdefg · 1234567890")
+        self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview.setMinimumHeight(60)
+        self._preview.setWordWrap(True)
+        self._preview.setStyleSheet(
+            "border: 1px solid #cfd6df; border-radius: 6px; padding: 8px; background: #fff;"
+        )
+        self._refresh_preview()
+        layout.addWidget(self._preview)
+
+        # Кнопки
+        btns = QDialogButtonBox()
+        ok_btn = btns.addButton("Применить", QDialogButtonBox.ButtonRole.AcceptRole)
+        cancel_btn = btns.addButton("Отмена", QDialogButtonBox.ButtonRole.RejectRole)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self._on_cancel)
+        layout.addWidget(btns)
+
+    def _on_change(self) -> None:
+        self._refresh_preview()
+        item = self._list.currentItem()
+        if item:
+            self.font_changed.emit(item.text(), self._size_spin.value())
+
+    def _refresh_preview(self) -> None:
+        item = self._list.currentItem()
+        if item:
+            self._preview.setFont(QFont(item.text(), self._size_spin.value()))
+
+    def _on_cancel(self) -> None:
+        self.font_changed.emit(self._orig_family, self._orig_size)
+        self.reject()
+
+    def selected_family(self) -> str:
+        item = self._list.currentItem()
+        return item.text() if item else self._orig_family
+
+    def selected_size(self) -> int:
+        return self._size_spin.value()
+
+
 class PreviewCard(QFrame):
-    """Карточка предпросмотра поста — картинка + текст единым блоком, как в соцсети."""
+    """Карточка предпросмотра поста — шапка + картинка + текст + реакции."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -608,7 +692,6 @@ class PreviewCard(QFrame):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Весь пост прокручивается целиком — нет конфликтующих скроллов
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -620,12 +703,47 @@ class PreviewCard(QFrame):
         post_layout.setContentsMargins(0, 0, 0, 0)
         post_layout.setSpacing(0)
 
-        # Блок изображения
+        # ── Шапка поста ──────────────────────────────────────────────
+        header_widget = QWidget()
+        header_widget.setObjectName("postHeader")
+        header_layout = QHBoxLayout(header_widget)
+        header_layout.setContentsMargins(12, 10, 12, 8)
+        header_layout.setSpacing(10)
+
+        # Аватар — иконка платформы (по умолчанию MAX)
+        self._avatar_lbl = QLabel()
+        self._avatar_lbl.setObjectName("postAvatar")
+        self._avatar_lbl.setFixedSize(36, 36)
+        self._avatar_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._avatar_lbl.setScaledContents(False)
+
+        # Имя + дата
+        meta_col = QVBoxLayout()
+        meta_col.setContentsMargins(0, 0, 0, 0)
+        meta_col.setSpacing(1)
+        self._name_lbl = QLabel("MAX Community")
+        self._name_lbl.setObjectName("postAuthor")
+        self._date_lbl = QLabel("сейчас")
+        self._date_lbl.setObjectName("postDate")
+        meta_col.addWidget(self._name_lbl)
+        meta_col.addWidget(self._date_lbl)
+
+        # Кнопка "..."
+        more_btn = QPushButton("···")
+        more_btn.setObjectName("postMoreBtn")
+        more_btn.setFixedSize(28, 28)
+
+        header_layout.addWidget(self._avatar_lbl)
+        header_layout.addLayout(meta_col)
+        header_layout.addStretch()
+        header_layout.addWidget(more_btn, alignment=Qt.AlignmentFlag.AlignTop)
+
+        # ── Блок изображения ─────────────────────────────────────────
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._apply_placeholder_style()
 
-        # Текст поста: растёт с контентом, скролл отключён (скролл — снаружи)
+        # ── Текст поста ───────────────────────────────────────────────
         self.preview_text = QPlainTextEdit()
         self.preview_text.setReadOnly(True)
         self.preview_text.setObjectName("postText")
@@ -634,8 +752,29 @@ class PreviewCard(QFrame):
         self.preview_text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.preview_text.document().contentsChanged.connect(self._adjust_text_height)
 
+        # ── Строка реакций ────────────────────────────────────────────
+        reactions_widget = QWidget()
+        reactions_widget.setObjectName("postReactions")
+        reactions_layout = QHBoxLayout(reactions_widget)
+        reactions_layout.setContentsMargins(12, 6, 12, 10)
+        reactions_layout.setSpacing(16)
+
+        like_lbl = QLabel("♡  24")
+        like_lbl.setObjectName("reactionItem")
+        comment_lbl = QLabel("💬  3")
+        comment_lbl.setObjectName("reactionItem")
+        share_lbl = QLabel("↗")
+        share_lbl.setObjectName("reactionItem")
+
+        reactions_layout.addWidget(like_lbl)
+        reactions_layout.addWidget(comment_lbl)
+        reactions_layout.addStretch()
+        reactions_layout.addWidget(share_lbl)
+
+        post_layout.addWidget(header_widget)
         post_layout.addWidget(self.image_label)
         post_layout.addWidget(self.preview_text)
+        post_layout.addWidget(reactions_widget)
         post_layout.addStretch()
 
         scroll.setWidget(self._post_widget)
@@ -643,12 +782,33 @@ class PreviewCard(QFrame):
 
         self._original_pixmap = QPixmap()
 
+    def set_platform_avatar(self, platform: str, assets_dir: "Path") -> None:
+        """Обновить аватар и имя в шапке предпросмотра по выбранной платформе."""
+        if platform == "vk":
+            ico_path = assets_dir / "vk_group.ico"
+            name = "ВКонтакте"
+        else:
+            ico_path = assets_dir / "max.ico"
+            name = "MAX Community"
+        self._name_lbl.setText(name)
+        if ico_path.exists():
+            px = QIcon(str(ico_path)).pixmap(QSize(34, 34))
+            self._avatar_lbl.setPixmap(px)
+            self._avatar_lbl.setText("")
+            self._avatar_lbl.setStyleSheet(
+                "background: transparent; border-radius: 17px;"
+            )
+        else:
+            self._avatar_lbl.setPixmap(QPixmap())
+            self._avatar_lbl.setText("M")
+            self._avatar_lbl.setStyleSheet("")
+
     def _apply_placeholder_style(self) -> None:
         self.image_label.setStyleSheet(
             "background:#f0f2f5; color:#b0b8c1; font-size:13px;"
         )
-        self.image_label.setFixedHeight(200)
-        self.image_label.setText("Изображение не выбрано")
+        self.image_label.setFixedHeight(140)
+        self.image_label.setText("⛰  Изображение не выбрано")
         self.image_label.setPixmap(QPixmap())
 
     def _adjust_text_height(self) -> None:
@@ -711,6 +871,11 @@ class MainWindow(QMainWindow):
         self._bg_mode: int = 0  # 0 = фон, 1 = наложение
         self._bg_opacity: int = 50
         self._bg_widget: _BgWidget | None = None
+
+        # Шрифт текстового поля
+        self._current_font_family: str = ""
+        self._current_font_size: int = 14
+        self._loaded_font_families: list = self._load_app_fonts()
 
         # Кэшированный ExcelMatcher — читает Excel только один раз
         self._matcher: ExcelMatcher | None = (
@@ -797,7 +962,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(18, 18, 18, 18)
         root.setSpacing(16)
 
-        left_box = QGroupBox("Текст публикации")
+        left_box = QGroupBox("Создание публикации")
         left_layout = QVBoxLayout(left_box)
         left_layout.setSpacing(12)
 
@@ -845,7 +1010,20 @@ class MainWindow(QMainWindow):
         self._addr_list.itemChanged.connect(self._update_checklist)
         self._addr_list.itemChanged.connect(self.save_state)
 
-        left_layout.addWidget(QLabel("Ввод данных"))
+        # Заголовок "Ввод данных" + кнопка выбора шрифта справа
+        input_header = QHBoxLayout()
+        input_data_lbl = QLabel("Ввод данных")
+        input_data_lbl.setObjectName("groupBoxTitle")
+        self._font_btn = QPushButton("Аа")
+        self._font_btn.setObjectName("fontMiniBtn")
+        self._font_btn.setFixedHeight(24)
+        self._font_btn.setToolTip("Выбор шрифта текстового поля")
+        self._font_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._font_btn.clicked.connect(self._open_font_picker)
+        input_header.addWidget(input_data_lbl)
+        input_header.addStretch()
+        input_header.addWidget(self._font_btn)
+        left_layout.addLayout(input_header)
         left_layout.addWidget(text_container, 1)
         addr_header = QHBoxLayout()
         addr_header.setContentsMargins(0, 0, 0, 0)
@@ -861,24 +1039,17 @@ class MainWindow(QMainWindow):
         left_layout.addLayout(addr_header)
         left_layout.addWidget(self._addr_list, 1)
 
-        buttons_row = QGridLayout()
-        buttons_row.setSpacing(8)
+        # ── Платформы ────────────────────────────────────────────────
+        platforms_section = QWidget()
+        platforms_section.setObjectName("platformsSection")
+        pl_layout = QVBoxLayout(platforms_section)
+        pl_layout.setContentsMargins(0, 0, 0, 0)
+        pl_layout.setSpacing(6)
 
-        self.check_button = QPushButton("Проверить адрес")
-        self.check_button.clicked.connect(self.check_post)
+        pl_title = QLabel("Платформы")
+        pl_title.setObjectName("sectionTitle")
+        pl_layout.addWidget(pl_title)
 
-        self.photo_button = QPushButton("Загрузить фото")
-        self.photo_button.clicked.connect(self.select_image)
-
-        self.clear_button = QPushButton("Очистить")
-        self.clear_button.setObjectName("clearButton")
-        self.clear_button.clicked.connect(self.clear_form)
-
-        self.send_button = QPushButton("Опубликовать")
-        self.send_button.clicked.connect(self.send_post)
-        self.send_button.setObjectName("primaryButton")
-
-        # Чекбоксы выбора платформы — под кнопкой Отправить
         self.chk_max = QCheckBox("MAX")
         self.chk_max.setChecked(True)
         self.chk_vk = QCheckBox("ВКонтакте")
@@ -897,22 +1068,50 @@ class MainWindow(QMainWindow):
 
         platforms_row = QHBoxLayout()
         platforms_row.setContentsMargins(0, 0, 0, 0)
-        platforms_row.addWidget(self.chk_max)
-        platforms_row.addWidget(self.chk_vk)
-        platforms_row.addStretch()
+        platforms_row.setSpacing(8)
 
-        send_col = QWidget()
-        send_col_layout = QVBoxLayout(send_col)
-        send_col_layout.setContentsMargins(0, 0, 0, 0)
-        send_col_layout.setSpacing(4)
-        send_col_layout.addWidget(self.send_button)
-        send_col_layout.addLayout(platforms_row)
+        chk_max_frame = QFrame()
+        chk_max_frame.setObjectName("platformChip")
+        chk_max_fl = QHBoxLayout(chk_max_frame)
+        chk_max_fl.setContentsMargins(10, 6, 10, 6)
+        chk_max_fl.addWidget(self.chk_max)
+
+        chk_vk_frame = QFrame()
+        chk_vk_frame.setObjectName("platformChip")
+        chk_vk_fl = QHBoxLayout(chk_vk_frame)
+        chk_vk_fl.setContentsMargins(10, 6, 10, 6)
+        chk_vk_fl.addWidget(self.chk_vk)
+
+        platforms_row.addWidget(chk_max_frame)
+        platforms_row.addWidget(chk_vk_frame)
+        platforms_row.addStretch()
+        pl_layout.addLayout(platforms_row)
+
+        # ── Кнопки действий ─────────────────────────────────────────
+        buttons_row = QGridLayout()
+        buttons_row.setSpacing(8)
+
+        self.check_button = QPushButton("Проверить адрес")
+        self.check_button.clicked.connect(self.check_post)
+
+        self.photo_button = QPushButton("Загрузить фото")
+        self.photo_button.clicked.connect(self.select_image)
+
+        self.clear_button = QPushButton("Очистить")
+        self.clear_button.setObjectName("clearButton")
+        self.clear_button.clicked.connect(self.clear_form)
+
+        self.send_button = QPushButton("Опубликовать")
+        self.send_button.clicked.connect(self.send_post)
+        self.send_button.setObjectName("primaryButton")
 
         # Row 0: вспомогательные кнопки
         buttons_row.addWidget(self.check_button, 0, 0)
         buttons_row.addWidget(self.photo_button, 0, 1)
         # Row 1: кнопка отправки на всю ширину
-        buttons_row.addWidget(send_col, 1, 0, 1, 2)
+        buttons_row.addWidget(self.send_button, 1, 0, 1, 2)
+
+        left_layout.addWidget(platforms_section)
 
         # Прогресс-бар (скрыт в режиме ожидания)
         self._progress_bar = QProgressBar()
@@ -979,15 +1178,20 @@ class MainWindow(QMainWindow):
 
         right_layout.addWidget(checklist_frame)
 
-        # подключаем чекбоксы к обновлению чеклиста
+        # подключаем чекбоксы к обновлению чеклиста и аватара предпросмотра
         self.chk_max.stateChanged.connect(self._update_checklist)
         self.chk_vk.stateChanged.connect(self._update_checklist)
+        self.chk_max.stateChanged.connect(self._sync_preview_avatar)
+        self.chk_vk.stateChanged.connect(self._sync_preview_avatar)
 
         # ── История публикаций ───────────────────────────────────────
         right_layout.addWidget(self._build_history_panel())
 
         root.addWidget(left_box, 5)
         root.addWidget(right_box, 6)
+
+        # Начальный аватар предпросмотра
+        self._sync_preview_avatar()
 
 
     # ──────────────────────────────────────────────────────────────────
@@ -1046,31 +1250,63 @@ class MainWindow(QMainWindow):
             self._hist_layout.insertWidget(0, lbl)
             return
 
-        for entry in entries:
-            lbl = QLabel(self._entry_html(entry))
-            lbl.setObjectName("histEntry")
-            lbl.setTextFormat(Qt.TextFormat.RichText)
-            lbl.setWordWrap(True)
-            self._hist_layout.insertWidget(self._hist_layout.count() - 1, lbl)
+        assets = _assets_dir()
+        _ico_size = QSize(16, 16)
 
-    @staticmethod
-    def _entry_html(entry: dict) -> str:
-        ts = entry.get("ts", "")
-        parts = []
-        if "max" in entry:
-            addrs = entry["max"]
-            if isinstance(addrs, list):
-                addr_text = ", ".join(addrs[:2]) + ("…" if len(addrs) > 2 else "")
+        def _load_icon(name: str) -> QPixmap | None:
+            p = assets / name
+            if not p.exists():
+                return None
+            pix = QPixmap(str(p))
+            return pix.scaled(_ico_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation) if not pix.isNull() else None
+
+        max_pix = _load_icon("max.ico")
+        vk_pix = _load_icon("vk.ico")
+
+        for entry in entries:
+            row = self._make_history_row(entry, max_pix, vk_pix)
+            self._hist_layout.insertWidget(self._hist_layout.count() - 1, row)
+
+    def _make_history_row(self, entry: dict, max_pix: "QPixmap | None", vk_pix: "QPixmap | None") -> QFrame:
+        row = QFrame()
+        row.setObjectName("histEntry")
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.setSpacing(6)
+
+        # Дата/время
+        ts = entry.get("ts", "").replace("  ", " ").strip()
+        date_lbl = QLabel(ts[:16] if len(ts) > 16 else ts)
+        date_lbl.setObjectName("histDate")
+        layout.addWidget(date_lbl)
+
+        # Иконки платформ
+        for has, pix, fallback_text in (
+            ("max" in entry, max_pix, "MAX"),
+            (bool(entry.get("vk")), vk_pix, "VK"),
+        ):
+            if not has:
+                continue
+            ico_lbl = QLabel()
+            if pix:
+                ico_lbl.setPixmap(pix)
+                ico_lbl.setFixedSize(16, 16)
             else:
-                addr_text = addrs
-            parts.append(f"<b style='color:#2d6cdf;'>MAX</b> · {addr_text}")
-        if entry.get("vk"):
-            parts.append("<b style='color:#4a76a8;'>ВКонтакте</b> · паблик")
-        platforms = " &nbsp;│&nbsp; ".join(parts)
-        return (
-            f'<span style="color:#b0b8c4;font-size:11px;">{ts}</span><br>'
-            f'<span style="font-size:12px;color:#2c3340;">{platforms}</span>'
-        )
+                ico_lbl.setText(fallback_text)
+                ico_lbl.setObjectName("histPlatformFallback")
+            layout.addWidget(ico_lbl)
+
+        # Текст публикации
+        snippet = entry.get("text", "")
+        if not snippet and "max" in entry:
+            addrs = entry["max"]
+            snippet = ", ".join(addrs[:1]) if isinstance(addrs, list) else str(addrs)
+        text_lbl = QLabel(snippet or "—")
+        text_lbl.setObjectName("histText")
+        text_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        layout.addWidget(text_lbl)
+
+        return row
 
     def _clear_history(self) -> None:
         history_manager.clear()
@@ -1197,6 +1433,9 @@ class MainWindow(QMainWindow):
                 padding: 5px 8px;
             }
             #histEmpty { font-size: 12px; color: #c0c8d4; padding: 4px 0; }
+            #histDate { font-size: 11px; color: #b0b8c4; }
+            #histText { font-size: 12px; color: #4a5568; }
+            #histPlatformFallback { font-size: 11px; color: #6b7280; font-weight: 600; }
             QPushButton#histClearBtn {
                 min-height: 0;
                 font-size: 11px;
@@ -1260,6 +1499,80 @@ class MainWindow(QMainWindow):
                 background: #eef4ff;
                 border-color: #2d6cdf;
                 color: #2d6cdf;
+            }
+            QPushButton#fontMiniBtn {
+                min-height: 0;
+                font-size: 12px;
+                font-weight: 600;
+                padding: 2px 10px;
+                border-radius: 6px;
+                border: 1px solid #c7d0db;
+                background: #f3f4f6;
+                color: #555;
+            }
+            QPushButton#fontMiniBtn:hover {
+                background: #eef4ff;
+                border-color: #2d6cdf;
+                color: #2d6cdf;
+            }
+            /* ── Секция платформ ──────────────────────────────────── */
+            #sectionTitle {
+                font-size: 12px;
+                font-weight: 600;
+                color: #6b7280;
+                letter-spacing: 0.3px;
+            }
+            #platformChip {
+                border: 1px solid #d1d9e0;
+                border-radius: 8px;
+                background: #f8fafc;
+            }
+            #platformChip QCheckBox {
+                font-size: 13px;
+                color: #1f2937;
+                spacing: 6px;
+            }
+            /* ── Шапка поста (preview) ───────────────────────────── */
+            #postHeader {
+                background: #ffffff;
+                border-bottom: 1px solid #f0f4f8;
+            }
+            #postAvatar {
+                background: #3b82f6;
+                color: white;
+                font-size: 16px;
+                font-weight: 700;
+                border-radius: 18px;
+            }
+            #postAuthor {
+                font-size: 13px;
+                font-weight: 600;
+                color: #1f2937;
+            }
+            #postDate {
+                font-size: 11px;
+                color: #9ca3af;
+            }
+            QPushButton#postMoreBtn {
+                min-height: 0;
+                font-size: 16px;
+                color: #9ca3af;
+                background: transparent;
+                border: none;
+                padding: 0;
+                letter-spacing: 2px;
+            }
+            QPushButton#postMoreBtn:hover {
+                color: #6b7280;
+            }
+            /* ── Реакции поста ────────────────────────────────────── */
+            #postReactions {
+                background: #ffffff;
+                border-top: 1px solid #f0f4f8;
+            }
+            #reactionItem {
+                font-size: 13px;
+                color: #9ca3af;
             }
             QPushButton#themeThumb {
                 min-height: 0;
@@ -1456,6 +1769,64 @@ class MainWindow(QMainWindow):
         if save:
             self.save_state()
 
+    # ──────────────────────────────────────────────────────────────────
+    #  Шрифт текстового поля
+    # ──────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _load_app_fonts() -> list:
+        """Загружает шрифты из папки fonts/ и возвращает список семейств."""
+        fonts_dir = (
+            Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+        ) / "fonts"
+        seen: set = set()
+        result: list = []
+        if fonts_dir.exists():
+            for fp in sorted(fonts_dir.iterdir()):
+                if fp.suffix.lower() in (".ttf", ".otf"):
+                    fid = QFontDatabase.addApplicationFont(str(fp))
+                    if fid >= 0:
+                        for fam in QFontDatabase.applicationFontFamilies(fid):
+                            if fam not in seen:
+                                seen.add(fam)
+                                result.append(fam)
+        return result
+
+    def _open_font_picker(self) -> None:
+        families = self._loaded_font_families or [self._current_font_family]
+        dlg = FontPickerDialog(
+            families,
+            self._current_font_family,
+            self._current_font_size,
+            parent=self,
+        )
+        dlg.font_changed.connect(self._apply_text_font)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._current_font_family = dlg.selected_family()
+            self._current_font_size = dlg.selected_size()
+            self._apply_text_font(self._current_font_family, self._current_font_size)
+            self.save_state()
+        # Откат если Cancel — уже выполнен сигналом _on_cancel в диалоге
+
+    def _apply_text_font(self, family: str, size: int) -> None:
+        """Применить шрифт к текстовому полю и предпросмотру."""
+        self._current_font_family = family
+        self._current_font_size = size
+        f = QFont(family, size)
+        self.text_input.setFont(f)
+        self.preview.preview_text.setFont(f)
+
+    # ──────────────────────────────────────────────────────────────────
+    #  Аватар предпросмотра
+    # ──────────────────────────────────────────────────────────────────
+
+    def _sync_preview_avatar(self, _state=None) -> None:
+        """Обновить аватар предпросмотра в зависимости от выбранной платформы."""
+        if self.chk_vk.isChecked() and not self.chk_max.isChecked():
+            self.preview.set_platform_avatar("vk", _assets_dir())
+        else:
+            self.preview.set_platform_avatar("max", _assets_dir())
+
     def _add_address_manually(self) -> None:
         dlg = AddAddressDialog(parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -1499,6 +1870,7 @@ class MainWindow(QMainWindow):
             "addresses": [m.address for m in checked],
             "send_max": send_max,
             "send_vk": send_vk,
+            "text": text,
         }
 
         self._worker = SendWorker(
@@ -1528,6 +1900,7 @@ class MainWindow(QMainWindow):
                 addresses=h.get("addresses", []),
                 sent_max=h.get("send_max", False),
                 sent_vk=h.get("send_vk", False),
+                text=h.get("text", ""),
             )
             self._refresh_history()
             QMessageBox.information(self, "Отправка", message)
@@ -1665,6 +2038,8 @@ class MainWindow(QMainWindow):
             "bg_opacity": self._bg_opacity,
             "addresses": addresses,
             "checked_ids": list(checked_ids),
+            "font_family": self._current_font_family,
+            "font_size": self._current_font_size,
         })
 
     def load_state(self) -> None:
@@ -1708,6 +2083,11 @@ class MainWindow(QMainWindow):
                     item.setData(_MANUAL_ROLE, True)
                 self._addr_list.addItem(item)
             self._addr_list.blockSignals(False)
+
+        font_family = data.get("font_family", "")
+        font_size = data.get("font_size", 14)
+        if font_family:
+            self._apply_text_font(font_family, font_size)
 
         self.sync_preview()
 
