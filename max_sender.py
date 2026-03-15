@@ -7,6 +7,17 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+
+def _json_or_raise(resp: requests.Response) -> dict | list:
+    """Парсит JSON из ответа; бросает RuntimeError если Content-Type не JSON."""
+    ct = resp.headers.get("Content-Type", "")
+    if "application/json" not in ct:
+        raise RuntimeError(
+            f"Ожидался JSON-ответ, получен Content-Type={ct!r}. "
+            f"Тело ответа: {resp.text[:300]!r}"
+        )
+    return resp.json()
+
 _env_path = Path(sys.executable).parent / '.env' if getattr(sys, 'frozen', False) else Path(__file__).parent / '.env'
 load_dotenv(_env_path)
 
@@ -42,7 +53,7 @@ class MaxSender:
         try:
             resp = requests.get(url, timeout=10)
             resp.raise_for_status()
-            state = resp.json().get("stateInstance", "")
+            state = _json_or_raise(resp).get("stateInstance", "")
             if state == "authorized":
                 return SendResult(True, "Подключение успешно. Аккаунт авторизован.")
             else:
@@ -60,7 +71,7 @@ class MaxSender:
         try:
             resp = requests.get(url, timeout=30)
             resp.raise_for_status()
-            return resp.json(), None
+            return _json_or_raise(resp), None
         except Exception as exc:
             return [], f"Ошибка получения чатов: {exc}"
 
@@ -91,7 +102,7 @@ class MaxSender:
         resp = requests.post(url, json=payload, timeout=30)
         resp.raise_for_status()
 
-        msg_id = resp.json().get("idMessage", "")
+        msg_id = _json_or_raise(resp).get("idMessage", "")
         return SendResult(True, f"Сообщение отправлено. ID: {msg_id}")
 
     _CAPTION_LIMIT = 4000
@@ -111,7 +122,7 @@ class MaxSender:
             )
         if not resp.ok:
             raise RuntimeError(f"Ошибка загрузки файла ({resp.status_code}): {resp.text}")
-        url_file = resp.json().get("urlFile")
+        url_file = _json_or_raise(resp).get("urlFile")
         if not url_file:
             raise RuntimeError(f"API не вернул urlFile. Ответ: {resp.text}")
         return url_file
@@ -129,7 +140,7 @@ class MaxSender:
         if not resp.ok:
             return SendResult(False, f"chatId={chat_id!r}\nОшибка отправки ({resp.status_code}): {resp.text}")
 
-        msg_id = resp.json().get("idMessage", "")
+        msg_id = _json_or_raise(resp).get("idMessage", "")
 
         if not caption and text:
             self._send_text(chat_id, text)

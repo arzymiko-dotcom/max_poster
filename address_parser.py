@@ -42,7 +42,7 @@ def normalize_text(value: str) -> str:
     for old, new in replacements.items():
         text = text.replace(old, new)
 
-    text = re.sub(r"[^\w\s/]", " ", text, flags=re.UNICODE)
+    text = re.sub(r"[^а-яёa-z0-9\s/]", " ", text, flags=re.IGNORECASE | re.UNICODE)
     text = re.sub(r"\s+", " ", text, flags=re.UNICODE).strip()
     return text
 
@@ -169,7 +169,7 @@ def extract_all_addresses(text: str) -> list[ParsedAddress]:
                     results.append(addr)
             elif first_street and re.match(r"^\d", part):
                 # Только номер дома после первого адреса на этой строке
-                m = re.match(r"^[\d\w/]+", part)
+                m = re.match(r"^[\da-zA-Zа-яА-ЯёЁ/]+", part)
                 if m:
                     addr = ParsedAddress(
                         street=first_street,
