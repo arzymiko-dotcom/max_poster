@@ -847,8 +847,69 @@ class SuccessOverlay(QWidget):
         self._do_hide()
 
 
+class ImageFrame(QFrame):
+    """Отдельный фрейм с изображением поста."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("previewCard")
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        self.image_label = QLabel()
+        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(self.image_label)
+
+        self._original_pixmap = QPixmap()
+        self._apply_placeholder_style()
+
+    def _apply_placeholder_style(self) -> None:
+        nophoto = _assets_dir() / "nophoto.png"
+        if nophoto.exists():
+            self._original_pixmap = QPixmap(str(nophoto))
+            self.image_label.setStyleSheet("background: #f0f2f5;")
+            self.image_label.setText("")
+            self._refresh_pixmap()
+        else:
+            self._original_pixmap = QPixmap()
+            self.image_label.setStyleSheet("background:#f0f2f5; color:#b0b8c1; font-size:13px;")
+            self.image_label.setText("Изображение не выбрано")
+            self.image_label.setPixmap(QPixmap())
+
+    def set_image(self, file_path: str | None) -> None:
+        if not file_path:
+            self._apply_placeholder_style()
+            return
+        pixmap = QPixmap(file_path)
+        if pixmap.isNull():
+            self._original_pixmap = QPixmap()
+            self.image_label.setText("Не удалось загрузить изображение")
+            return
+        self._original_pixmap = pixmap
+        self.image_label.setStyleSheet("")
+        self._refresh_pixmap()
+
+    def _refresh_pixmap(self) -> None:
+        if self._original_pixmap.isNull():
+            return
+        w = max(100, self.width())
+        h = max(10, self.height())
+        scaled = self._original_pixmap.scaled(
+            w, h,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        self.image_label.setPixmap(scaled)
+        self.image_label.setText("")
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._refresh_pixmap()
+
+
 class PreviewCard(QFrame):
-    """Карточка предпросмотра поста — шапка + картинка + текст + реакции."""
+    """Карточка предпросмотра поста — текст + реакции."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -868,46 +929,6 @@ class PreviewCard(QFrame):
         post_layout = QVBoxLayout(self._post_widget)
         post_layout.setContentsMargins(0, 0, 0, 0)
         post_layout.setSpacing(0)
-
-        # ── Шапка поста ──────────────────────────────────────────────
-        header_widget = QFrame()
-        header_widget.setObjectName("checklistFrame")
-        header_layout = QHBoxLayout(header_widget)
-        header_layout.setContentsMargins(14, 10, 14, 10)
-        header_layout.setSpacing(10)
-
-        # Аватар — иконка платформы (по умолчанию MAX)
-        self._avatar_lbl = QLabel()
-        self._avatar_lbl.setObjectName("postAvatar")
-        self._avatar_lbl.setFixedSize(28, 28)
-        self._avatar_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._avatar_lbl.setScaledContents(False)
-
-        # Имя + дата
-        meta_col = QVBoxLayout()
-        meta_col.setContentsMargins(0, 0, 0, 0)
-        meta_col.setSpacing(1)
-        self._name_lbl = QLabel("MAX Community")
-        self._name_lbl.setObjectName("checklistTitle")
-        self._date_lbl = QLabel("сейчас")
-        self._date_lbl.setObjectName("postDate")
-        meta_col.addWidget(self._name_lbl)
-        meta_col.addWidget(self._date_lbl)
-
-        # Кнопка "..."
-        more_btn = QPushButton("···")
-        more_btn.setObjectName("postMoreBtn")
-        more_btn.setFixedSize(28, 28)
-
-        header_layout.addWidget(self._avatar_lbl)
-        header_layout.addLayout(meta_col)
-        header_layout.addStretch()
-        header_layout.addWidget(more_btn, alignment=Qt.AlignmentFlag.AlignTop)
-
-        # ── Блок изображения ─────────────────────────────────────────
-        self.image_label = QLabel()
-        self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._apply_placeholder_style()
 
         # ── Текст поста ───────────────────────────────────────────────
         self.preview_text = QPlainTextEdit()
@@ -937,8 +958,6 @@ class PreviewCard(QFrame):
         reactions_layout.addStretch()
         reactions_layout.addWidget(share_lbl)
 
-        post_layout.addWidget(header_widget)
-        post_layout.addWidget(self.image_label)
         post_layout.addWidget(self.preview_text)
         post_layout.addWidget(reactions_widget)
         post_layout.addStretch()
@@ -946,85 +965,12 @@ class PreviewCard(QFrame):
         scroll.setWidget(self._post_widget)
         outer.addWidget(scroll)
 
-        self._original_pixmap = QPixmap()
-        self._is_placeholder = True
-
-    def set_platform_avatar(self, platform: str, assets_dir: "Path") -> None:
-        """Обновить аватар и имя в шапке предпросмотра по выбранной платформе."""
-        if platform == "vk":
-            ico_path = assets_dir / "vk_group.ico"
-            name = "ВКонтакте"
-        else:
-            ico_path = assets_dir / "max.ico"
-            name = "MAX Community"
-        self._name_lbl.setText(name)
-        if ico_path.exists():
-            px = QIcon(str(ico_path)).pixmap(QSize(34, 34))
-            self._avatar_lbl.setPixmap(px)
-            self._avatar_lbl.setText("")
-            self._avatar_lbl.setStyleSheet(
-                "background: transparent; border-radius: 17px;"
-            )
-        else:
-            self._avatar_lbl.setPixmap(QPixmap())
-            self._avatar_lbl.setText("M")
-            self._avatar_lbl.setStyleSheet("")
-
-    def _apply_placeholder_style(self) -> None:
-        self._is_placeholder = True
-        nophoto = _assets_dir() / "nophoto.png"
-        if nophoto.exists():
-            px = QPixmap(str(nophoto))
-            self._original_pixmap = px
-            self.image_label.setStyleSheet("background: #f0f2f5;")
-            self.image_label.setText("")
-            self._refresh_pixmap()
-        else:
-            self._original_pixmap = QPixmap()
-            self.image_label.setStyleSheet("background:#f0f2f5; color:#b0b8c1; font-size:13px;")
-            self.image_label.setFixedHeight(110)
-            self.image_label.setText("Изображение не выбрано")
-            self.image_label.setPixmap(QPixmap())
-
     def _adjust_text_height(self) -> None:
         doc_h = int(self.preview_text.document().size().height()) + 20
         self.preview_text.setMinimumHeight(doc_h)
 
     def set_preview_text(self, text: str) -> None:
         self.preview_text.setPlainText(text)
-
-    def set_image(self, file_path: str | None) -> None:
-        if not file_path:
-            self._apply_placeholder_style()
-            return
-
-        pixmap = QPixmap(file_path)
-        if pixmap.isNull():
-            self._original_pixmap = QPixmap()
-            self.image_label.setText("Не удалось загрузить изображение")
-            return
-
-        self._is_placeholder = False
-        self._original_pixmap = pixmap
-        self.image_label.setStyleSheet("")
-        self._refresh_pixmap()
-
-    def _refresh_pixmap(self) -> None:
-        if self._original_pixmap.isNull():
-            return
-        w = max(100, self._post_widget.width())
-        scaled = self._original_pixmap.scaled(
-            w, 150,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self.image_label.setFixedHeight(scaled.height())
-        self.image_label.setPixmap(scaled)
-        self.image_label.setText("")
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        self._refresh_pixmap()
 
 
 class MainWindow(QMainWindow):
@@ -1139,7 +1085,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(18, 18, 18, 18)
         root.setSpacing(16)
 
-        left_box = QGroupBox("Создание публикации")
+        left_box = QGroupBox()
         left_layout = QVBoxLayout(left_box)
         left_layout.setSpacing(12)
 
@@ -1331,8 +1277,44 @@ class MainWindow(QMainWindow):
         ph_layout.addWidget(self._theme_btn)
         right_layout.addWidget(preview_header_frame)
 
+        # ── Шапка платформы (отдельный фрейм) ──────────────────────
+        platform_frame = QFrame()
+        platform_frame.setObjectName("previewCard")
+        pf_layout = QHBoxLayout(platform_frame)
+        pf_layout.setContentsMargins(14, 10, 14, 10)
+        pf_layout.setSpacing(10)
+
+        self._plat_avatar_lbl = QLabel()
+        self._plat_avatar_lbl.setFixedSize(28, 28)
+        self._plat_avatar_lbl.setScaledContents(True)
+        self._plat_avatar_lbl.setStyleSheet("background: transparent;")
+
+        meta_col = QVBoxLayout()
+        meta_col.setContentsMargins(0, 0, 0, 0)
+        meta_col.setSpacing(1)
+        self._plat_name_lbl = QLabel("MAX Community")
+        self._plat_name_lbl.setObjectName("checklistTitle")
+        self._plat_date_lbl = QLabel("сейчас")
+        self._plat_date_lbl.setObjectName("postDate")
+        meta_col.addWidget(self._plat_name_lbl)
+        meta_col.addWidget(self._plat_date_lbl)
+
+        more_btn = QPushButton("···")
+        more_btn.setObjectName("postMoreBtn")
+        more_btn.setFixedSize(28, 28)
+
+        pf_layout.addWidget(self._plat_avatar_lbl)
+        pf_layout.addLayout(meta_col)
+        pf_layout.addStretch()
+        pf_layout.addWidget(more_btn, alignment=Qt.AlignmentFlag.AlignTop)
+        right_layout.addWidget(platform_frame)
+
+        self.image_frame = ImageFrame()
+        self.image_frame.setFixedHeight(160)
+        right_layout.addWidget(self.image_frame)
+
         self.preview = PreviewCard()
-        self.preview.setFixedHeight(580)
+        self.preview.setFixedHeight(290)
         right_layout.addWidget(self.preview)
 
         # ── Чеклист готовности ──────────────────────────────────────
@@ -1540,7 +1522,6 @@ class MainWindow(QMainWindow):
                 border: 1px solid #e4eaf0;
                 border-radius: 10px;
                 background: #ffffff;
-                overflow: hidden;
             }
             #postCard {
                 background: #ffffff;
@@ -1834,7 +1815,7 @@ class MainWindow(QMainWindow):
         if not file_name:
             return
         self.image_path = Path(file_name)
-        self.preview.set_image(str(self.image_path))
+        self.image_frame.set_image(str(self.image_path))
         self._set_photo_button_name(self.image_path.name)
         self._update_checklist()
         self.save_state()
@@ -1849,7 +1830,7 @@ class MainWindow(QMainWindow):
         self.text_input.clear()
         self._addr_list.clear()
         self.preview.set_preview_text("")
-        self.preview.set_image(None)
+        self.image_frame.set_image(None)
         self.image_path = None
         self.photo_button.setText("Загрузить фото")
         self.photo_button.setObjectName("photoButton")
@@ -1982,11 +1963,20 @@ class MainWindow(QMainWindow):
     # ──────────────────────────────────────────────────────────────────
 
     def _sync_preview_avatar(self, _state=None) -> None:
-        """Обновить аватар предпросмотра в зависимости от выбранной платформы."""
+        """Обновить шапку платформы в зависимости от выбранной платформы."""
+        assets = _assets_dir()
         if self.chk_vk.isChecked() and not self.chk_max.isChecked():
-            self.preview.set_platform_avatar("vk", _assets_dir())
+            ico_path = assets / "vk_group.ico"
+            name = "ВКонтакте"
         else:
-            self.preview.set_platform_avatar("max", _assets_dir())
+            ico_path = assets / "max.ico"
+            name = "MAX Community"
+        self._plat_name_lbl.setText(name)
+        if ico_path.exists():
+            px = QIcon(str(ico_path)).pixmap(QSize(28, 28))
+            self._plat_avatar_lbl.setPixmap(px)
+        else:
+            self._plat_avatar_lbl.setPixmap(QPixmap())
 
     def _add_address_manually(self) -> None:
         dlg = AddAddressDialog(parent=self)
@@ -2164,7 +2154,7 @@ class MainWindow(QMainWindow):
             path = url.toLocalFile()
             if path.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
                 self.image_path = Path(path)
-                self.preview.set_image(str(self.image_path))
+                self.image_frame.set_image(str(self.image_path))
                 self._set_photo_button_name(self.image_path.name)
                 self._update_checklist()
                 self.save_state()
@@ -2228,7 +2218,7 @@ class MainWindow(QMainWindow):
         image_path = data.get("image_path", "")
         if image_path and Path(image_path).exists():
             self.image_path = Path(image_path)
-            self.preview.set_image(str(self.image_path))
+            self.image_frame.set_image(str(self.image_path))
             self._set_photo_button_name(self.image_path.name)
 
         addresses = data.get("addresses", [])
