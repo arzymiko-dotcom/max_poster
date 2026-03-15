@@ -18,9 +18,12 @@ class MatchResult:
 class ExcelMatcher:
     def __init__(self, excel_path: str | Path) -> None:
         self.excel_path = Path(excel_path)
+        self._df: pd.DataFrame | None = None  # кэш — читаем Excel один раз
 
     def load_dataframe(self) -> pd.DataFrame:
-        return pd.read_excel(self.excel_path)
+        if self._df is None:
+            self._df = pd.read_excel(self.excel_path)
+        return self._df
 
     def _resolve_columns(self, df: pd.DataFrame) -> tuple[str, str | None, str | None]:
         """Возвращает (колонка адреса, колонка ссылки, колонка ID)."""

@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QSize, QTimer, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap, QTextCursor
+from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPixmap, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -26,11 +26,16 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit,
     QRadioButton,
     QScrollArea,
+    QShortcut,
     QSizePolicy,
+    QSlider,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
+
+# Роль для пометки вручную добавленных адресов
+_MANUAL_ROLE: int = Qt.ItemDataRole.UserRole + 1
 
 import tg_notify
 from address_parser import extract_address, extract_all_addresses
@@ -282,15 +287,17 @@ class _OverlayWidget(QWidget):
         super().__init__(parent)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._bg_pixmap: QPixmap | None = None
+        self._opacity_pct: int = 30
 
-    def set_background(self, pixmap: QPixmap | None) -> None:
+    def set_background(self, pixmap: QPixmap | None, opacity_pct: int = 30) -> None:
         self._bg_pixmap = pixmap
+        self._opacity_pct = opacity_pct
         self.update()
 
     def paintEvent(self, event) -> None:
         if self._bg_pixmap and not self._bg_pixmap.isNull():
             painter = QPainter(self)
-            painter.setOpacity(0.30)
+            painter.setOpacity(self._opacity_pct / 100)
             scaled = self._bg_pixmap.scaled(
                 self.size(),
                 Qt.AspectRatioMode.KeepAspectRatioByExpanding,
@@ -308,14 +315,16 @@ class _BgWidget(QWidget):
         super().__init__(parent)
         self._bg_pixmap: QPixmap | None = None
         self._mode: int = 0  # 0 = фон (за элементами), 1 = наложение (поверх)
+        self._opacity_pct: int = 50
         self._overlay = _OverlayWidget(self)
         self._overlay.hide()
 
-    def set_background(self, pixmap: QPixmap | None, mode: int = 0) -> None:
+    def set_background(self, pixmap: QPixmap | None, mode: int = 0, opacity_pct: int = 50) -> None:
         self._bg_pixmap = pixmap
         self._mode = mode
+        self._opacity_pct = opacity_pct
         if mode == 1 and pixmap and not pixmap.isNull():
-            self._overlay.set_background(pixmap)
+            self._overlay.set_background(pixmap, opacity_pct)
             self._overlay.setGeometry(self.rect())
             self._overlay.show()
             self._overlay.raise_()
@@ -334,7 +343,7 @@ class _BgWidget(QWidget):
         painter = QPainter(self)
         painter.fillRect(self.rect(), QColor("#f3f4f6"))
         if self._mode == 0 and self._bg_pixmap and not self._bg_pixmap.isNull():
-            painter.setOpacity(0.5)
+            painter.setOpacity(self._opacity_pct / 100)
             scaled = self._bg_pixmap.scaled(
                 self.size(),
                 Qt.AspectRatioMode.KeepAspectRatioByExpanding,
@@ -349,19 +358,21 @@ class ThemePickerDialog(QDialog):
     """Диалог выбора фонового изображения."""
 
     _COLS = 4
-    preview_changed = pyqtSignal(object, int)  # (int | None index, int mode)
+    preview_changed = pyqtSignal(object, int, int)  # (int | None index, int mode, int opacity_pct)
 
     def __init__(
         self,
         assets_dir: Path,
         current_index: int | None,
         current_mode: int = 0,
+        current_opacity: int = 50,
         parent=None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Тема оформления")
         self._selected: int | None = current_index
         self._mode: int = current_mode
+        self._opacity_pct: int = current_opacity
         self._btns: list[tuple[int | None, QPushButton]] = []
 
         layout = QVBoxLayout(self)
@@ -424,6 +435,27 @@ class ThemePickerDialog(QDialog):
         mode_layout.addStretch()
         layout.addWidget(mode_frame)
 
+        # ── Слайдер прозрачности ────────────────────────────────────
+        opacity_frame = QFrame()
+        opacity_layout = QHBoxLayout(opacity_frame)
+        opacity_layout.setContentsMargins(4, 0, 4, 4)
+        opacity_layout.setSpacing(10)
+
+        opacity_layout.addWidget(QLabel("Прозрачность:"))
+        self._opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self._opacity_slider.setRange(10, 90)
+        self._opacity_slider.setValue(current_opacity)
+        self._opacity_slider.setTickInterval(10)
+        self._opacity_slider.setFixedWidth(180)
+        self._opacity_label = QLabel(f"{current_opacity}%")
+        self._opacity_label.setFixedWidth(34)
+        self._opacity_slider.valueChanged.connect(self._on_opacity_changed)
+
+        opacity_layout.addWidget(self._opacity_slider)
+        opacity_layout.addWidget(self._opacity_label)
+        opacity_layout.addStretch()
+        layout.addWidget(opacity_frame)
+
         # ── Кнопки Применить / Отмена ───────────────────────────────
         buttons = QDialogButtonBox()
         buttons.addButton("Применить", QDialogButtonBox.ButtonRole.AcceptRole)
@@ -436,11 +468,16 @@ class ThemePickerDialog(QDialog):
         self._selected = index
         for idx, btn in self._btns:
             btn.setChecked(idx == index)
-        self.preview_changed.emit(index, self._mode)
+        self.preview_changed.emit(index, self._mode, self._opacity_pct)
 
     def _set_mode(self, mode: int) -> None:
         self._mode = mode
-        self.preview_changed.emit(self._selected, self._mode)
+        self.preview_changed.emit(self._selected, self._mode, self._opacity_pct)
+
+    def _on_opacity_changed(self, value: int) -> None:
+        self._opacity_pct = value
+        self._opacity_label.setText(f"{value}%")
+        self.preview_changed.emit(self._selected, self._mode, value)
 
 
 class AddAddressDialog(QDialog):
@@ -598,12 +635,22 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(str(_assets_dir() / "max_poster.ico")))
         self.resize(1280, 760)
 
+        # Версия — читаем один раз
+        _ver_file = (Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent) / "version.txt"
+        self._app_version: str = _ver_file.read_text(encoding="utf-8").strip() if _ver_file.exists() else "?"
+
         self.excel_path: Path = self._resolve_excel_path()
         self.image_path: Path | None = None
         self._worker: SendWorker | None = None
         self._bg_index: int | None = None
         self._bg_mode: int = 0  # 0 = фон, 1 = наложение
+        self._bg_opacity: int = 50
         self._bg_widget: _BgWidget | None = None
+
+        # Кэшированный ExcelMatcher — читает Excel только один раз
+        self._matcher: ExcelMatcher | None = (
+            ExcelMatcher(self.excel_path) if self.excel_path.exists() else None
+        )
 
         import os
         _appdata = Path(os.environ.get("APPDATA", Path.home())) / "max_poster" if getattr(sys, "frozen", False) else Path(__file__).parent
@@ -618,12 +665,22 @@ class MainWindow(QMainWindow):
         self._parse_timer.setInterval(700)
         self._parse_timer.timeout.connect(self._auto_check_addresses)
 
+        # Дебаунс сохранения состояния — не пишем на каждый символ
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(400)
+        self._save_timer.timeout.connect(self._do_save_state)
+
         self.setAcceptDrops(True)
 
         self._build_menu()
         self._build_ui()
         self._apply_styles()
         self.load_state()
+
+        # Горячие клавиши
+        QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self.send_post)
+        QShortcut(QKeySequence("Ctrl+L"), self).activated.connect(self.select_image)
 
     @staticmethod
     def _resolve_excel_path() -> Path:
@@ -808,9 +865,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self._progress_bar)
         left_layout.addLayout(bottom_actions)
 
-        _ver_file = (Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent) / "version.txt"
-        _ver = _ver_file.read_text(encoding="utf-8").strip() if _ver_file.exists() else "?"
-        version_label = QLabel(f"Version {_ver}")
+        version_label = QLabel(f"Version {self._app_version}")
         version_label.setObjectName("versionLabel")
         left_layout.addWidget(version_label, alignment=Qt.AlignmentFlag.AlignLeft)
 
@@ -1251,11 +1306,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Проверка", "Не удалось извлечь адреса из текста.")
             return
 
-        try:
-            matcher = ExcelMatcher(self.excel_path)
-        except Exception as exc:
-            QMessageBox.critical(self, "Ошибка", f"Ошибка при чтении Excel: {exc}")
-            return
+        if self._matcher is None:
+            self._matcher = ExcelMatcher(self.excel_path)
+        matcher = self._matcher
 
         self._addr_list.blockSignals(True)
         self._addr_list.clear()
@@ -1311,23 +1364,27 @@ class MainWindow(QMainWindow):
     def _open_theme_picker(self) -> None:
         prev_index = self._bg_index
         prev_mode = self._bg_mode
-        dlg = ThemePickerDialog(_assets_dir(), self._bg_index, self._bg_mode, parent=self)
-        dlg.preview_changed.connect(lambda idx, m: self._apply_theme(idx, m, save=False))
+        prev_opacity = self._bg_opacity
+        dlg = ThemePickerDialog(
+            _assets_dir(), self._bg_index, self._bg_mode, self._bg_opacity, parent=self
+        )
+        dlg.preview_changed.connect(lambda idx, m, o: self._apply_theme(idx, m, o, save=False))
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._apply_theme(dlg._selected, dlg._mode)
+            self._apply_theme(dlg._selected, dlg._mode, dlg._opacity_pct)
         else:
-            self._apply_theme(prev_index, prev_mode, save=False)
+            self._apply_theme(prev_index, prev_mode, prev_opacity, save=False)
 
-    def _apply_theme(self, index: int | None, mode: int = 0, save: bool = True) -> None:
+    def _apply_theme(self, index: int | None, mode: int = 0, opacity_pct: int = 50, save: bool = True) -> None:
         self._bg_index = index
         self._bg_mode = mode
+        self._bg_opacity = opacity_pct
         if index is None or self._bg_widget is None:
             if self._bg_widget:
                 self._bg_widget.set_background(None)
         else:
             path = _assets_dir() / f"fon_{index}.jpg"
             pix = QPixmap(str(path)) if path.exists() else QPixmap()
-            self._bg_widget.set_background(pix, mode)
+            self._bg_widget.set_background(pix, mode, opacity_pct)
         if save:
             self.save_state()
 
@@ -1340,6 +1397,7 @@ class MainWindow(QMainWindow):
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(Qt.CheckState.Checked)
         item.setData(Qt.ItemDataRole.UserRole, match)
+        item.setData(_MANUAL_ROLE, True)
         self._addr_list.addItem(item)
         self._update_checklist()
         self.save_state()
@@ -1417,10 +1475,9 @@ class MainWindow(QMainWindow):
         parsed_list = extract_all_addresses(text)
         if not parsed_list:
             return
-        try:
-            matcher = ExcelMatcher(self.excel_path)
-        except Exception:
-            return
+        if self._matcher is None:
+            self._matcher = ExcelMatcher(self.excel_path)
+        matcher = self._matcher
 
         new_items: list[MatchResult] = []
         seen_ids: set[str] = set()
@@ -1441,16 +1498,29 @@ class MainWindow(QMainWindow):
         if not new_items:
             return
 
-        # Сохраняем текущие checked_ids чтобы не сбрасывать галочки при редактировании
-        checked_ids = {m.chat_id for m in self._get_checked_matches()}
-        existing_ids = {
-            self._addr_list.item(i).data(Qt.ItemDataRole.UserRole).chat_id
-            for i in range(self._addr_list.count())
-            if self._addr_list.item(i).data(Qt.ItemDataRole.UserRole)
-        }
-        # Не перерисовываем если набор адресов не изменился
-        if {b.chat_id for b in new_items} == existing_ids:
+        # Собираем вручную добавленные адреса — они НЕ перезаписываются автопарсингом
+        manual_entries: list[tuple[MatchResult, Qt.CheckState]] = []
+        checked_ids: set[str] = set()
+        existing_auto_ids: set[str] = set()
+        for i in range(self._addr_list.count()):
+            itm = self._addr_list.item(i)
+            if not itm:
+                continue
+            m = itm.data(Qt.ItemDataRole.UserRole)
+            if not m:
+                continue
+            if itm.data(_MANUAL_ROLE):
+                manual_entries.append((m, itm.checkState()))
+            else:
+                existing_auto_ids.add(m.chat_id)
+            if itm.checkState() == Qt.CheckState.Checked:
+                checked_ids.add(m.chat_id)
+
+        # Не перерисовываем если автоадреса не изменились
+        if {b.chat_id for b in new_items} == existing_auto_ids:
             return
+
+        manual_ids = {m.chat_id for m, _ in manual_entries}
 
         self._addr_list.blockSignals(True)
         self._addr_list.clear()
@@ -1462,6 +1532,16 @@ class MainWindow(QMainWindow):
                      else Qt.CheckState.Checked)
             item.setCheckState(state)
             item.setData(Qt.ItemDataRole.UserRole, best)
+            self._addr_list.addItem(item)
+        # Возвращаем ручные адреса (если их нет среди автопарсинга)
+        for m, state in manual_entries:
+            if m.chat_id not in {b.chat_id for b in new_items} | manual_ids - {m.chat_id}:
+                pass
+            item = QListWidgetItem(m.address)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(state)
+            item.setData(Qt.ItemDataRole.UserRole, m)
+            item.setData(_MANUAL_ROLE, True)
             self._addr_list.addItem(item)
         self._addr_list.blockSignals(False)
         self._update_checklist()
@@ -1489,7 +1569,24 @@ class MainWindow(QMainWindow):
                 break
 
     def save_state(self) -> None:
+        """Запускает таймер — реальная запись через 400мс после последнего вызова."""
+        self._save_timer.start()
+
+    def _do_save_state(self) -> None:
         checked_ids = {m.chat_id for m in self._get_checked_matches()}
+        addresses = []
+        for i in range(self._addr_list.count()):
+            item = self._addr_list.item(i)
+            if not item:
+                continue
+            m = item.data(Qt.ItemDataRole.UserRole)
+            if m:
+                addresses.append({
+                    "address": m.address,
+                    "chat_id": m.chat_id,
+                    "chat_link": m.chat_link,
+                    "manual": bool(item.data(_MANUAL_ROLE)),
+                })
         self.state_manager.save({
             "image_path": str(self.image_path) if self.image_path else "",
             "text": self.text_input.toPlainText(),
@@ -1497,10 +1594,8 @@ class MainWindow(QMainWindow):
             "height": self.height(),
             "bg_index": self._bg_index,
             "bg_mode": self._bg_mode,
-            "addresses": [
-                {"address": m.address, "chat_id": m.chat_id, "chat_link": m.chat_link}
-                for m in self._get_all_matches()
-            ],
+            "bg_opacity": self._bg_opacity,
+            "addresses": addresses,
             "checked_ids": list(checked_ids),
         })
 
@@ -1510,8 +1605,9 @@ class MainWindow(QMainWindow):
 
         bg_index = data.get("bg_index", None)
         bg_mode = data.get("bg_mode", 0)
+        bg_opacity = data.get("bg_opacity", 50)
         if bg_index is not None:
-            self._apply_theme(bg_index, bg_mode)
+            self._apply_theme(bg_index, bg_mode, bg_opacity)
 
         text = data.get("text", "")
         if text:
@@ -1540,13 +1636,16 @@ class MainWindow(QMainWindow):
                 state = Qt.CheckState.Checked if (not checked_ids or match.chat_id in checked_ids) else Qt.CheckState.Unchecked
                 item.setCheckState(state)
                 item.setData(Qt.ItemDataRole.UserRole, match)
+                if a.get("manual"):
+                    item.setData(_MANUAL_ROLE, True)
                 self._addr_list.addItem(item)
             self._addr_list.blockSignals(False)
 
         self.sync_preview()
 
     def closeEvent(self, event) -> None:
-        self.save_state()
+        self._save_timer.stop()
+        self._do_save_state()  # сохраняем сразу, не через таймер
         self.max_sender.close()
         super().closeEvent(event)
 
