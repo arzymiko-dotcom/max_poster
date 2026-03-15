@@ -65,9 +65,12 @@ def _get_yadisk_direct_link(public_url: str) -> str:
     """
     api_url = "https://cloud-api.yandex.net/v1/disk/public/resources/download"
     params = {"public_key": public_url}
-    with urllib.request.urlopen(f"{api_url}?public_key={public_url}") as resp:
+    with urllib.request.urlopen(f"{api_url}?public_key={public_url}", timeout=15) as resp:
         data = json.loads(resp.read())
-        return data["href"]
+        href = data.get("href")
+        if not href:
+            raise RuntimeError(f"Яндекс.Диск не вернул ссылку: {data}")
+        return href
 
 
 class DownloadWorker(QThread):
@@ -167,7 +170,8 @@ class DownloadDialog(QDialog):
 
     def _cancel(self) -> None:
         if self._worker:
-            self._worker.terminate()
+            self._worker.quit()
+            self._worker.wait(2000)
         self.reject()
 
     def _on_finished(self, path: str) -> None:

@@ -42,6 +42,7 @@ def add_entry(addresses: list[str], sent_max: bool, sent_vk: bool) -> None:
 
     history = load()
     history.insert(0, entry)
+    history = history[:200]  # не даём файлу расти бесконечно
     _path().write_text(
         json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8"
     )

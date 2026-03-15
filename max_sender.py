@@ -111,7 +111,10 @@ class MaxSender:
             )
         if not resp.ok:
             raise RuntimeError(f"Ошибка загрузки файла ({resp.status_code}): {resp.text}")
-        return resp.json()["urlFile"]
+        url_file = resp.json().get("urlFile")
+        if not url_file:
+            raise RuntimeError(f"API не вернул urlFile. Ответ: {resp.text}")
+        return url_file
 
     def _send_with_image(self, chat_id: str, text: str, image_path: str) -> SendResult:
         caption = text if len(text) <= self._CAPTION_LIMIT else ""
