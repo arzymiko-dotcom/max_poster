@@ -870,16 +870,16 @@ class PreviewCard(QFrame):
         post_layout.setSpacing(0)
 
         # ── Шапка поста ──────────────────────────────────────────────
-        header_widget = QWidget()
-        header_widget.setObjectName("postHeader")
+        header_widget = QFrame()
+        header_widget.setObjectName("checklistFrame")
         header_layout = QHBoxLayout(header_widget)
-        header_layout.setContentsMargins(12, 10, 12, 8)
+        header_layout.setContentsMargins(14, 10, 14, 10)
         header_layout.setSpacing(10)
 
         # Аватар — иконка платформы (по умолчанию MAX)
         self._avatar_lbl = QLabel()
         self._avatar_lbl.setObjectName("postAvatar")
-        self._avatar_lbl.setFixedSize(36, 36)
+        self._avatar_lbl.setFixedSize(28, 28)
         self._avatar_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._avatar_lbl.setScaledContents(False)
 
@@ -888,7 +888,7 @@ class PreviewCard(QFrame):
         meta_col.setContentsMargins(0, 0, 0, 0)
         meta_col.setSpacing(1)
         self._name_lbl = QLabel("MAX Community")
-        self._name_lbl.setObjectName("postAuthor")
+        self._name_lbl.setObjectName("checklistTitle")
         self._date_lbl = QLabel("сейчас")
         self._date_lbl.setObjectName("postDate")
         meta_col.addWidget(self._name_lbl)
@@ -1332,7 +1332,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(preview_header_frame)
 
         self.preview = PreviewCard()
-        self.preview.setFixedHeight(255)
+        self.preview.setFixedHeight(580)
         right_layout.addWidget(self.preview)
 
         # ── Чеклист готовности ──────────────────────────────────────
