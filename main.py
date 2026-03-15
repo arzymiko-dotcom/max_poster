@@ -1473,7 +1473,10 @@ class MainWindow(QMainWindow):
     # ──────────────────────────────────────────────────────────────────
 
     def _apply_styles(self) -> None:
-        self.setStyleSheet("""
+        family = getattr(self, "_ui_font_family", "")
+        size   = getattr(self, "_ui_font_size", 13)
+        font_rule = f'* {{ font-family: "{family}"; font-size: {size}px; }}' if family else ""
+        self.setStyleSheet(font_rule + """
             QMainWindow { background: #f3f4f6; }
             QGroupBox {
                 font-size: 15px;
@@ -1901,25 +1904,27 @@ class MainWindow(QMainWindow):
         return results
 
     def _open_font_picker(self) -> None:
+        prev_family = self._ui_font_family
+        prev_size   = self._ui_font_size
         families = self._ui_font_families or ["Sans Serif"]
         dlg = FontPickerDialog(
-            families, self._ui_font_family, self._ui_font_size, parent=self
+            families, prev_family, prev_size, parent=self
         )
         dlg.font_changed.connect(self._apply_ui_font)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._apply_ui_font(dlg.selected_family(), dlg.selected_size())
             self.save_state()
         else:
-            # Откат
-            self._apply_ui_font(self._ui_font_family, self._ui_font_size)
+            self._apply_ui_font(prev_family, prev_size)  # откат к сохранённому
 
     def _apply_ui_font(self, family: str, size: int) -> None:
-        """Применить шрифт ко всему интерфейсу через QApplication."""
+        """Применить шрифт ко всему интерфейсу."""
         self._ui_font_family = family
         self._ui_font_size = size
         app = QApplication.instance()
         if app:
             app.setFont(QFont(family, size))
+        self._apply_styles()   # перегенерировать stylesheet с новым font-family
 
     def _open_theme_picker(self) -> None:
         prev_index = self._bg_index
