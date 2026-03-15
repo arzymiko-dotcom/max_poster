@@ -2,7 +2,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QRect, QSize, QTimer, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPixmap, QShortcut, QTextCursor
+from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QMovie, QPainter, QPixmap, QShortcut, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -27,7 +27,6 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QStyledItemDelegate,
     QSlider,
     QTabWidget,
@@ -598,87 +597,59 @@ class AddAddressDialog(QDialog):
         return MatchResult(address=address, score=0, chat_link=url, chat_id=chat_id)
 
 
-class FontPickerDialog(QDialog):
-    """Диалог выбора шрифта для текстового поля."""
+class SuccessOverlay(QWidget):
+    """Полупрозрачный оверлей с GIF-анимацией успешной отправки."""
 
-    font_changed = pyqtSignal(str, int)  # family, size — live preview
-
-    def __init__(self, families: list, current_family: str, current_size: int, parent=None) -> None:
+    def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Шрифт")
-        self.setMinimumWidth(380)
-        self.setFixedHeight(340)
-        self._families = families
-        self._orig_family = current_family
-        self._orig_size = current_size
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint)
+
+        self._movie: QMovie | None = None
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 14)
-        layout.setSpacing(10)
+        layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Список семейств
-        self._list = QListWidget()
-        self._list.addItems(families)
-        for i in range(self._list.count()):
-            if self._list.item(i).text() == current_family:
-                self._list.setCurrentRow(i)
-                break
-        else:
-            self._list.setCurrentRow(0)
-        self._list.currentRowChanged.connect(self._on_change)
-        layout.addWidget(self._list, 1)
+        self._gif_lbl = QLabel()
+        self._gif_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._gif_lbl.setFixedSize(160, 160)
+        self._gif_lbl.setStyleSheet("background: transparent;")
+        layout.addWidget(self._gif_lbl)
 
-        # Размер шрифта
-        size_row = QHBoxLayout()
-        size_row.addWidget(QLabel("Размер:"))
-        self._size_spin = QSpinBox()
-        self._size_spin.setRange(9, 22)
-        self._size_spin.setValue(current_size)
-        self._size_spin.valueChanged.connect(self._on_change)
-        size_row.addWidget(self._size_spin)
-        size_row.addStretch()
-        layout.addLayout(size_row)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self._do_hide)
 
-        # Превью
-        self._preview = QLabel("Пример текста · ABCDEFGabcdefg · 1234567890")
-        self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview.setMinimumHeight(60)
-        self._preview.setWordWrap(True)
-        self._preview.setStyleSheet(
-            "border: 1px solid #cfd6df; border-radius: 6px; padding: 8px; background: #fff;"
-        )
-        self._refresh_preview()
-        layout.addWidget(self._preview)
+        self.hide()
 
-        # Кнопки
-        btns = QDialogButtonBox()
-        ok_btn = btns.addButton("Применить", QDialogButtonBox.ButtonRole.AcceptRole)
-        cancel_btn = btns.addButton("Отмена", QDialogButtonBox.ButtonRole.RejectRole)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self._on_cancel)
-        layout.addWidget(btns)
+    def show_success(self, gif_path: Path, duration_ms: int = 2200) -> None:
+        if self.parent():
+            self.setGeometry(self.parent().rect())  # type: ignore[union-attr]
+        # Перезапускаем movie каждый раз
+        if self._movie:
+            self._movie.stop()
+        self._movie = QMovie(str(gif_path))
+        self._movie.setScaledSize(QSize(160, 160))
+        self._gif_lbl.setMovie(self._movie)
+        self._movie.start()
+        self.raise_()
+        self.show()
+        self._hide_timer.start(duration_ms)
 
-    def _on_change(self) -> None:
-        self._refresh_preview()
-        item = self._list.currentItem()
-        if item:
-            self.font_changed.emit(item.text(), self._size_spin.value())
+    def _do_hide(self) -> None:
+        if self._movie:
+            self._movie.stop()
+        self.hide()
 
-    def _refresh_preview(self) -> None:
-        item = self._list.currentItem()
-        if item:
-            self._preview.setFont(QFont(item.text(), self._size_spin.value()))
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 90))
+        painter.end()
 
-    def _on_cancel(self) -> None:
-        self.font_changed.emit(self._orig_family, self._orig_size)
-        self.reject()
-
-    def selected_family(self) -> str:
-        item = self._list.currentItem()
-        return item.text() if item else self._orig_family
-
-    def selected_size(self) -> int:
-        return self._size_spin.value()
+    def mousePressEvent(self, event) -> None:
+        """Клик по оверлею закрывает его досрочно."""
+        self._hide_timer.stop()
+        self._do_hide()
 
 
 class PreviewCard(QFrame):
@@ -872,11 +843,6 @@ class MainWindow(QMainWindow):
         self._bg_opacity: int = 50
         self._bg_widget: _BgWidget | None = None
 
-        # Шрифт текстового поля
-        self._current_font_family: str = ""
-        self._current_font_size: int = 14
-        self._loaded_font_families: list = self._load_app_fonts()
-
         # Кэшированный ExcelMatcher — читает Excel только один раз
         self._matcher: ExcelMatcher | None = (
             ExcelMatcher(self.excel_path) if self.excel_path.exists() else None
@@ -1010,20 +976,7 @@ class MainWindow(QMainWindow):
         self._addr_list.itemChanged.connect(self._update_checklist)
         self._addr_list.itemChanged.connect(self.save_state)
 
-        # Заголовок "Ввод данных" + кнопка выбора шрифта справа
-        input_header = QHBoxLayout()
-        input_data_lbl = QLabel("Ввод данных")
-        input_data_lbl.setObjectName("groupBoxTitle")
-        self._font_btn = QPushButton("Аа")
-        self._font_btn.setObjectName("fontMiniBtn")
-        self._font_btn.setFixedHeight(24)
-        self._font_btn.setToolTip("Выбор шрифта текстового поля")
-        self._font_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._font_btn.clicked.connect(self._open_font_picker)
-        input_header.addWidget(input_data_lbl)
-        input_header.addStretch()
-        input_header.addWidget(self._font_btn)
-        left_layout.addLayout(input_header)
+        left_layout.addWidget(QLabel("Ввод данных"))
         left_layout.addWidget(text_container, 1)
         addr_header = QHBoxLayout()
         addr_header.setContentsMargins(0, 0, 0, 0)
@@ -1189,6 +1142,9 @@ class MainWindow(QMainWindow):
 
         root.addWidget(left_box, 5)
         root.addWidget(right_box, 6)
+
+        # Оверлей успеха — поверх всего
+        self._success_overlay = SuccessOverlay(central)
 
         # Начальный аватар предпросмотра
         self._sync_preview_avatar()
@@ -1500,21 +1456,6 @@ class MainWindow(QMainWindow):
                 border-color: #2d6cdf;
                 color: #2d6cdf;
             }
-            QPushButton#fontMiniBtn {
-                min-height: 0;
-                font-size: 12px;
-                font-weight: 600;
-                padding: 2px 10px;
-                border-radius: 6px;
-                border: 1px solid #c7d0db;
-                background: #f3f4f6;
-                color: #555;
-            }
-            QPushButton#fontMiniBtn:hover {
-                background: #eef4ff;
-                border-color: #2d6cdf;
-                color: #2d6cdf;
-            }
             /* ── Секция платформ ──────────────────────────────────── */
             #sectionTitle {
                 font-size: 12px;
@@ -1770,53 +1711,6 @@ class MainWindow(QMainWindow):
             self.save_state()
 
     # ──────────────────────────────────────────────────────────────────
-    #  Шрифт текстового поля
-    # ──────────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _load_app_fonts() -> list:
-        """Загружает шрифты из папки fonts/ и возвращает список семейств."""
-        fonts_dir = (
-            Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
-        ) / "fonts"
-        seen: set = set()
-        result: list = []
-        if fonts_dir.exists():
-            for fp in sorted(fonts_dir.iterdir()):
-                if fp.suffix.lower() in (".ttf", ".otf"):
-                    fid = QFontDatabase.addApplicationFont(str(fp))
-                    if fid >= 0:
-                        for fam in QFontDatabase.applicationFontFamilies(fid):
-                            if fam not in seen:
-                                seen.add(fam)
-                                result.append(fam)
-        return result
-
-    def _open_font_picker(self) -> None:
-        families = self._loaded_font_families or [self._current_font_family]
-        dlg = FontPickerDialog(
-            families,
-            self._current_font_family,
-            self._current_font_size,
-            parent=self,
-        )
-        dlg.font_changed.connect(self._apply_text_font)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._current_font_family = dlg.selected_family()
-            self._current_font_size = dlg.selected_size()
-            self._apply_text_font(self._current_font_family, self._current_font_size)
-            self.save_state()
-        # Откат если Cancel — уже выполнен сигналом _on_cancel в диалоге
-
-    def _apply_text_font(self, family: str, size: int) -> None:
-        """Применить шрифт к текстовому полю и предпросмотру."""
-        self._current_font_family = family
-        self._current_font_size = size
-        f = QFont(family, size)
-        self.text_input.setFont(f)
-        self.preview.preview_text.setFont(f)
-
-    # ──────────────────────────────────────────────────────────────────
     #  Аватар предпросмотра
     # ──────────────────────────────────────────────────────────────────
 
@@ -1895,6 +1789,9 @@ class MainWindow(QMainWindow):
         self.check_button.setEnabled(True)
         self._progress_bar.hide()
         if success:
+            gif_path = _assets_dir() / "success.gif"
+            if gif_path.exists():
+                self._success_overlay.show_success(gif_path)
             h = self._pending_history
             history_manager.add_entry(
                 addresses=h.get("addresses", []),
@@ -1903,7 +1800,6 @@ class MainWindow(QMainWindow):
                 text=h.get("text", ""),
             )
             self._refresh_history()
-            QMessageBox.information(self, "Отправка", message)
         else:
             tg_notify.send_error("Ошибка отправки поста", message)
             QMessageBox.critical(self, "Отправка", message)
@@ -2038,8 +1934,6 @@ class MainWindow(QMainWindow):
             "bg_opacity": self._bg_opacity,
             "addresses": addresses,
             "checked_ids": list(checked_ids),
-            "font_family": self._current_font_family,
-            "font_size": self._current_font_size,
         })
 
     def load_state(self) -> None:
@@ -2084,12 +1978,12 @@ class MainWindow(QMainWindow):
                 self._addr_list.addItem(item)
             self._addr_list.blockSignals(False)
 
-        font_family = data.get("font_family", "")
-        font_size = data.get("font_size", 14)
-        if font_family:
-            self._apply_text_font(font_family, font_size)
-
         self.sync_preview()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "_success_overlay") and self._bg_widget:
+            self._success_overlay.setGeometry(self._bg_widget.rect())
 
     def closeEvent(self, event) -> None:
         self._save_timer.stop()
