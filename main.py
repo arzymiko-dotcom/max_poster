@@ -73,54 +73,15 @@ def _emoji_icon(emoji: str) -> QIcon | None:
     return None
 
 
-class _LineNumberArea(QWidget):
-    def __init__(self, editor: "LineNumberedEdit") -> None:
-        super().__init__(editor)
-        self._editor = editor
-
-    def sizeHint(self) -> QSize:
-        return QSize(self._editor._line_area_width(), 0)
-
-    def paintEvent(self, event) -> None:
-        self._editor._paint_line_numbers(event)
-
-
 class LineNumberedEdit(QPlainTextEdit):
-    """QPlainTextEdit с нумерацией строк и чередующимися полосками."""
+    """QPlainTextEdit с чередующимися полосками и номером строки справа (как в списке адресов)."""
 
-    _COLOR_ODD  = QColor("#f8f9fb")
+    _COLOR_ODD = QColor("#f8f9fb")
     _COLOR_EVEN = QColor("#ffffff")
-    _GUTTER_BG  = QColor("#f0f2f5")
-    _NUM_COLOR  = QColor("#9ba3af")
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self._line_area = _LineNumberArea(self)
-        self.blockCountChanged.connect(self._update_margins)
-        self.updateRequest.connect(self._on_update_request)
-        self._update_margins(0)
-
-    def _line_area_width(self) -> int:
-        digits = len(str(max(1, self.blockCount())))
-        return 10 + self.fontMetrics().horizontalAdvance("9") * digits
-
-    def _update_margins(self, _: int = 0) -> None:
-        self.setViewportMargins(self._line_area_width(), 0, 0, 0)
-
-    def _on_update_request(self, rect, dy: int) -> None:
-        if dy:
-            self._line_area.scroll(0, dy)
-        else:
-            self._line_area.update(0, rect.y(), self._line_area.width(), rect.height())
-        if rect.contains(self.viewport().rect()):
-            self._update_margins()
-
-    def resizeEvent(self, event) -> None:
-        super().resizeEvent(event)
-        cr = self.contentsRect()
-        self._line_area.setGeometry(cr.left(), cr.top(), self._line_area_width(), cr.height())
+    _NUM_COLOR = QColor("#c4cdd8")
 
     def paintEvent(self, event) -> None:
+        # Полоски
         painter = QPainter(self.viewport())
         block = self.firstVisibleBlock()
         offset = self.contentOffset()
@@ -135,26 +96,28 @@ class LineNumberedEdit(QPlainTextEdit):
         painter.end()
         super().paintEvent(event)
 
-    def _paint_line_numbers(self, event) -> None:
-        painter = QPainter(self._line_area)
-        painter.fillRect(event.rect(), self._GUTTER_BG)
+        # Номера справа (поверх текста)
+        painter2 = QPainter(self.viewport())
         block = self.firstVisibleBlock()
         block_num = block.blockNumber()
         offset = self.contentOffset()
-        top = int(self.blockBoundingGeometry(block).translated(offset).top())
-        line_h = self.fontMetrics().height()
-        while block.isValid() and top <= event.rect().bottom():
-            height = int(self.blockBoundingRect(block).height())
-            if block.isVisible() and top + height >= event.rect().top():
-                painter.setPen(self._NUM_COLOR)
-                painter.drawText(
-                    QRect(0, top, self._line_area.width() - 4, line_h),
+        font = painter2.font()
+        font.setPointSize(max(7, font.pointSize() - 1))
+        painter2.setFont(font)
+        painter2.setPen(self._NUM_COLOR)
+        while block.isValid():
+            rect = self.blockBoundingGeometry(block).translated(offset)
+            if rect.top() > event.rect().bottom():
+                break
+            if block.isVisible() and rect.bottom() >= event.rect().top():
+                painter2.drawText(
+                    QRect(0, int(rect.top()), self.viewport().width() - 8, int(rect.height())),
                     Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                     str(block_num + 1),
                 )
             block = block.next()
             block_num += 1
-            top += height
+        painter2.end()
 
 
 class _NumberedItemDelegate(QStyledItemDelegate):
