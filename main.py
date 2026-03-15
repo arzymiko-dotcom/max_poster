@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QSize, QTimer, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QRect, QSize, QTimer, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QSizePolicy,
+    QStyledItemDelegate,
     QSlider,
     QTabWidget,
     QVBoxLayout,
@@ -70,6 +71,108 @@ def _emoji_icon(emoji: str) -> QIcon | None:
     if path.exists():
         return QIcon(str(path))
     return None
+
+
+class _LineNumberArea(QWidget):
+    def __init__(self, editor: "LineNumberedEdit") -> None:
+        super().__init__(editor)
+        self._editor = editor
+
+    def sizeHint(self) -> QSize:
+        return QSize(self._editor._line_area_width(), 0)
+
+    def paintEvent(self, event) -> None:
+        self._editor._paint_line_numbers(event)
+
+
+class LineNumberedEdit(QPlainTextEdit):
+    """QPlainTextEdit с нумерацией строк и чередующимися полосками."""
+
+    _COLOR_ODD  = QColor("#f8f9fb")
+    _COLOR_EVEN = QColor("#ffffff")
+    _GUTTER_BG  = QColor("#f0f2f5")
+    _NUM_COLOR  = QColor("#9ba3af")
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._line_area = _LineNumberArea(self)
+        self.blockCountChanged.connect(self._update_margins)
+        self.updateRequest.connect(self._on_update_request)
+        self._update_margins(0)
+
+    def _line_area_width(self) -> int:
+        digits = len(str(max(1, self.blockCount())))
+        return 10 + self.fontMetrics().horizontalAdvance("9") * digits
+
+    def _update_margins(self, _: int = 0) -> None:
+        self.setViewportMargins(self._line_area_width(), 0, 0, 0)
+
+    def _on_update_request(self, rect, dy: int) -> None:
+        if dy:
+            self._line_area.scroll(0, dy)
+        else:
+            self._line_area.update(0, rect.y(), self._line_area.width(), rect.height())
+        if rect.contains(self.viewport().rect()):
+            self._update_margins()
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        cr = self.contentsRect()
+        self._line_area.setGeometry(cr.left(), cr.top(), self._line_area_width(), cr.height())
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self.viewport())
+        block = self.firstVisibleBlock()
+        offset = self.contentOffset()
+        while block.isValid():
+            rect = self.blockBoundingGeometry(block).translated(offset)
+            if rect.top() > event.rect().bottom():
+                break
+            if rect.bottom() >= event.rect().top():
+                color = self._COLOR_ODD if block.blockNumber() % 2 == 0 else self._COLOR_EVEN
+                painter.fillRect(QRect(0, int(rect.top()), self.viewport().width(), int(rect.height())), color)
+            block = block.next()
+        painter.end()
+        super().paintEvent(event)
+
+    def _paint_line_numbers(self, event) -> None:
+        painter = QPainter(self._line_area)
+        painter.fillRect(event.rect(), self._GUTTER_BG)
+        block = self.firstVisibleBlock()
+        block_num = block.blockNumber()
+        offset = self.contentOffset()
+        top = int(self.blockBoundingGeometry(block).translated(offset).top())
+        line_h = self.fontMetrics().height()
+        while block.isValid() and top <= event.rect().bottom():
+            height = int(self.blockBoundingRect(block).height())
+            if block.isVisible() and top + height >= event.rect().top():
+                painter.setPen(self._NUM_COLOR)
+                painter.drawText(
+                    QRect(0, top, self._line_area.width() - 4, line_h),
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                    str(block_num + 1),
+                )
+            block = block.next()
+            block_num += 1
+            top += height
+
+
+class _NumberedItemDelegate(QStyledItemDelegate):
+    """Рисует серый номер строки справа в каждом элементе QListWidget."""
+
+    def paint(self, painter, option, index) -> None:
+        super().paint(painter, option, index)
+        painter.save()
+        font = painter.font()
+        font.setPointSize(max(7, font.pointSize() - 1))
+        painter.setFont(font)
+        painter.setPen(QColor("#c4cdd8"))
+        painter.drawText(
+            option.rect.adjusted(0, 0, -8, 0),
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            str(index.row() + 1),
+        )
+        painter.restore()
 
 
 class EmojiPicker(QFrame):
@@ -735,7 +838,7 @@ class MainWindow(QMainWindow):
         left_layout = QVBoxLayout(left_box)
         left_layout.setSpacing(12)
 
-        self.text_input = QPlainTextEdit()
+        self.text_input = LineNumberedEdit()
         self.text_input.textChanged.connect(self.sync_preview)
 
         # Нижняя панель: смайлик + счётчик символов
@@ -774,6 +877,8 @@ class MainWindow(QMainWindow):
         self._addr_list = QListWidget()
         self._addr_list.setMinimumHeight(80)
         self._addr_list.setObjectName("addrList")
+        self._addr_list.setAlternatingRowColors(True)
+        self._addr_list.setItemDelegate(_NumberedItemDelegate(self._addr_list))
         self._addr_list.itemChanged.connect(self._update_checklist)
         self._addr_list.itemChanged.connect(self.save_state)
 
@@ -1143,6 +1248,7 @@ class MainWindow(QMainWindow):
                 border: 1px solid #c7d0db;
                 border-radius: 8px;
                 background: #ffffff;
+                alternate-background-color: #f8f9fb;
                 font-size: 13px;
             }
             #addrList::item { padding: 3px 6px; }
