@@ -118,9 +118,8 @@ class VkSender:
                 params["attachments"] = attachment
 
             # Публикуем от имени группы — group token
-            result = self._call("wall.post", token=self.group_token, **params)
-            post_id = result.get("post_id", "")
-            return SendResult(True, f"Опубликовано в ВК. ID поста: {post_id}")
+            self._call("wall.post", token=self.group_token, **params)
+            return SendResult(True, "Опубликовано в ВКонтакте")
 
         except Exception as exc:
             return SendResult(False, f"Ошибка ВК: {exc}")

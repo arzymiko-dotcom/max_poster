@@ -30,11 +30,14 @@ def load() -> list[dict]:
         return []
 
 
-def add_entry(addresses: list[str], sent_max: bool, sent_vk: bool) -> None:
+def add_entry(addresses: list[str], sent_max: bool, sent_vk: bool, text: str = "") -> None:
     """Добавляет запись в начало истории."""
     entry: dict = {
         "ts": datetime.now().strftime("%d.%m.%Y  %H:%M"),
     }
+    if text:
+        snippet = text.strip().replace("\n", " ")
+        entry["text"] = snippet[:60] + ("…" if len(snippet) > 60 else "")
     if sent_max:
         entry["max"] = addresses if addresses else ["—"]
     if sent_vk:
