@@ -415,9 +415,15 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(18, 18, 18, 18)
         root.setSpacing(16)
 
-        left_box = QGroupBox("Ввод данных")
+        left_box = QGroupBox()
+        left_box.setObjectName("leftCard")
         left_layout = QVBoxLayout(left_box)
         left_layout.setSpacing(12)
+        left_layout.setContentsMargins(20, 20, 20, 16)
+
+        page_title = QLabel("Создание публикации")
+        page_title.setObjectName("pageTitle")
+        left_layout.addWidget(page_title)
 
         self.text_input = QPlainTextEdit()
         self.text_input.textChanged.connect(self.sync_preview)
@@ -452,6 +458,9 @@ class MainWindow(QMainWindow):
         tc_layout = QVBoxLayout(text_container)
         tc_layout.setContentsMargins(0, 0, 0, 0)
         tc_layout.setSpacing(0)
+        text_section_lbl = QLabel("Текст публикации")
+        text_section_lbl.setObjectName("sectionLabel")
+        tc_layout.addWidget(text_section_lbl)
         tc_layout.addWidget(self.text_input)
         tc_layout.addWidget(bottom_bar)
 
@@ -463,7 +472,6 @@ class MainWindow(QMainWindow):
         self.match_selector.setEnabled(False)
         self.match_selector.currentIndexChanged.connect(self.apply_selected_match)
 
-        left_layout.addWidget(QLabel("Текст публикации"))
         left_layout.addWidget(text_container, 1)
         left_layout.addWidget(QLabel("Найденный адрес"))
         left_layout.addWidget(self.detected_address)
@@ -515,9 +523,11 @@ class MainWindow(QMainWindow):
         version_label.setObjectName("versionLabel")
         left_layout.addWidget(version_label, alignment=Qt.AlignmentFlag.AlignLeft)
 
-        right_box = QGroupBox("Предпросмотр")
+        right_box = QGroupBox()
+        right_box.setObjectName("rightPanel")
         right_layout = QVBoxLayout(right_box)
-        right_layout.setSpacing(12)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(10)
 
         self.preview = PreviewCard()
         right_layout.addWidget(self.preview, 1)
@@ -640,69 +650,78 @@ class MainWindow(QMainWindow):
     # ──────────────────────────────────────────────────────────────────
 
     def _apply_styles(self) -> None:
-        self.setStyleSheet("""
-            QMainWindow { background: #f3f4f6; }
-            QGroupBox {
+        family = getattr(self, "_ui_font_family", "")
+        size   = getattr(self, "_ui_font_size", 13)
+        font_rule = f'* {{ font-family: "{family}"; font-size: {size}px; }}' if family else ""
+        self.setStyleSheet(font_rule + """
+            QMainWindow { background: #e8eaf2; }
+            QMenuBar { background: #ffffff; border-bottom: 1px solid #e4e6ef; }
+            QMenuBar::item:selected { background: #eef4ff; border-radius: 4px; }
+            QMenu { background: #ffffff; border: 1px solid #e4e6ef; border-radius: 8px; }
+            QMenu::item:selected { background: #eef4ff; }
+
+            /* ── Левая карточка ──────────────────────────────────── */
+            QGroupBox#leftCard {
+                background: #ffffff;
+                border: 1px solid #e0e2ea;
+                border-radius: 14px;
+                margin-top: 0;
+                padding: 0;
+            }
+            QGroupBox#leftCard::title { width: 0; height: 0; }
+
+            /* ── Правая панель (прозрачный контейнер) ───────────── */
+            QGroupBox#rightPanel {
+                background: transparent;
+                border: none;
+                margin-top: 0;
+                padding: 0;
+            }
+            QGroupBox#rightPanel::title { width: 0; height: 0; }
+
+            /* ── Типографика ─────────────────────────────────────── */
+            #pageTitle {
+                font-size: 17px;
+                font-weight: 700;
+                color: #111827;
+                padding-bottom: 4px;
+            }
+            QLabel#groupBoxTitle {
                 font-size: 15px;
                 font-weight: 600;
-                border: 1px solid #cfd6df;
-                border-radius: 10px;
-                margin-top: 12px;
-                background: #ffffff;
+                color: #111827;
+                padding-left: 2px;
             }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 12px;
-                padding: 0 6px;
+            #sectionTitle {
+                font-size: 12px;
+                font-weight: 600;
+                color: #6b7280;
+                letter-spacing: 0.3px;
             }
+            #sectionLabel {
+                font-size: 11px;
+                color: #aab4bf;
+                padding: 7px 10px 2px 10px;
+            }
+            #versionLabel { font-size: 11px; color: #aab0bb; padding: 2px 0; }
+
+            /* ── Поля ввода ──────────────────────────────────────── */
             QPlainTextEdit, QTextEdit, QLineEdit, QComboBox {
-                border: 1px solid #c7d0db;
+                border: 1px solid #d1d5e0;
                 border-radius: 8px;
                 padding: 8px;
                 background: #ffffff;
-                font-size: 14px;
-            }
-            QPushButton {
-                min-height: 42px;
-                border-radius: 8px;
-                border: 1px solid #bfc8d4;
-                background: #eef2f7;
-                padding: 6px 12px;
-                font-size: 14px;
-            }
-            QPushButton#primaryButton {
-                background: #2d6cdf;
-                color: white;
-                border: none;
-                font-weight: 600;
-            }
-            #previewCard {
-                border: 1px solid #cfd6df;
-                border-radius: 10px;
-                background: #ffffff;
-                overflow: hidden;
-            }
-            #postCard {
-                background: #ffffff;
-            }
-            #postText {
-                border: none;
-                background: #ffffff;
-                font-size: 14px;
-                color: #1a1a1a;
-                padding: 14px 16px;
             }
             #textContainer {
-                border: 1px solid #c7d0db;
-                border-radius: 8px;
+                border: 1px solid #d1d5e0;
+                border-radius: 10px;
                 background: #ffffff;
             }
             #textContainer QPlainTextEdit {
                 border: none;
-                border-radius: 8px 8px 0 0;
-                padding: 8px;
+                border-radius: 0 0 8px 8px;
+                padding: 6px 10px;
                 background: #ffffff;
-                font-size: 14px;
             }
             #emojiButton {
                 min-height: 24px;
@@ -712,9 +731,170 @@ class MainWindow(QMainWindow):
                 padding: 0;
             }
             #emojiButton:hover { background: #eef2f7; border-radius: 4px; }
-            #charCounter { font-size: 12px; color: #888; }
+            #charCounter { font-size: 11px; color: #9ca3af; }
+
+            /* ── Список адресов ──────────────────────────────────── */
+            #addrList {
+                border: 1px solid #d1d5e0;
+                border-radius: 10px;
+                background: #ffffff;
+                alternate-background-color: #f8f9fb;
+            }
+            #addrList::item { padding: 4px 8px; }
+            #addrList::item:selected { background: #eef4ff; color: #1a1a1a; }
+            QPushButton#addAddrBtn {
+                min-height: 0;
+                font-size: 16px;
+                font-weight: 600;
+                color: #2d6cdf;
+                background: transparent;
+                border: 1px solid #b0c4e8;
+                border-radius: 6px;
+                padding: 0;
+            }
+            QPushButton#addAddrBtn:hover { background: #eef4ff; }
+
+            /* ── Платформы ───────────────────────────────────────── */
+            #platformChip {
+                border: 1px solid #d1d9e0;
+                border-radius: 10px;
+                background: #f8fafc;
+            }
+            #platformChip QCheckBox {
+                font-size: 13px;
+                color: #1f2937;
+                spacing: 6px;
+            }
+
+            /* ── Кнопки ──────────────────────────────────────────── */
+            QPushButton {
+                min-height: 40px;
+                border-radius: 10px;
+                border: 1px solid #d1d5e0;
+                background: #f3f4f8;
+                padding: 6px 12px;
+            }
+            QPushButton:hover { background: #e8eaf4; border-color: #b8bcd0; }
+            QPushButton#primaryButton {
+                background: #2d6cdf;
+                color: white;
+                border: none;
+                font-weight: 600;
+                min-height: 44px;
+                border-radius: 10px;
+            }
+            QPushButton#primaryButton:hover { background: #2560cc; }
+            QPushButton#clearButton {
+                min-height: 28px;
+                font-size: 12px;
+                color: #9ca3af;
+                background: transparent;
+                border: 1px solid #d1d5e0;
+                border-radius: 8px;
+                padding: 2px 16px;
+            }
+            QPushButton#clearButton:hover { background: #fff0f0; color: #d94040; border-color: #f0b0b0; }
+            QPushButton#photoButtonDone {
+                background: #eaf7ef;
+                color: #1a7a3f;
+                border: 1px solid #a8dfc0;
+                font-size: 13px;
+            }
+
+            /* ── Мини-кнопки шапки ───────────────────────────────── */
+            QPushButton#themeMiniBtn, QPushButton#fontMiniBtn {
+                min-height: 0;
+                font-size: 12px;
+                padding: 3px 12px;
+                border-radius: 7px;
+                border: 1px solid #d1d5e0;
+                background: #f3f4f8;
+                color: #555;
+            }
+            QPushButton#fontMiniBtn { font-weight: 700; }
+            QPushButton#themeMiniBtn:hover, QPushButton#fontMiniBtn:hover {
+                background: #eef4ff;
+                border-color: #2d6cdf;
+                color: #2d6cdf;
+            }
+
+            /* ── Карточка предпросмотра поста ────────────────────── */
+            #previewCard {
+                border: 1px solid #e0e2ea;
+                border-radius: 14px;
+                background: #ffffff;
+            }
+            #postCard { background: #ffffff; }
+            #postText {
+                border: none;
+                background: #ffffff;
+                color: #1a1a1a;
+                padding: 12px 16px;
+            }
+            #postAvatar {
+                background: #3b82f6;
+                color: white;
+                font-size: 16px;
+                font-weight: 700;
+                border-radius: 18px;
+            }
+            #postAuthor { font-size: 13px; font-weight: 600; color: #1f2937; }
+            #postDate { font-size: 11px; color: #9ca3af; }
+            QPushButton#postMoreBtn {
+                min-height: 0;
+                font-size: 16px;
+                color: #9ca3af;
+                background: transparent;
+                border: none;
+                padding: 0;
+            }
+            #postReactions { border-top: 1px solid #f0f4f8; }
+            #reactionItem { font-size: 13px; color: #9ca3af; }
+
+            /* ── Чеклист готовности ──────────────────────────────── */
+            #checklistFrame {
+                border: 1px solid #e0e2ea;
+                border-radius: 14px;
+                background: #ffffff;
+            }
+            #checklistTitle {
+                font-size: 12px;
+                font-weight: 600;
+                color: #6b7280;
+                letter-spacing: 0.3px;
+            }
+            #checklistItem { font-size: 13px; color: #374151; padding: 1px 0; }
+
+            /* ── История публикаций ──────────────────────────────── */
+            #historyFrame {
+                border: 1px solid #e0e2ea;
+                border-radius: 14px;
+                background: #ffffff;
+            }
+            #histEntry {
+                background: #f8fafc;
+                border: 1px solid #eaeff5;
+                border-radius: 8px;
+                padding: 5px 8px;
+            }
+            #histEmpty { font-size: 12px; color: #c0c8d4; padding: 4px 0; }
+            #histDate { font-size: 11px; color: #b0b8c4; }
+            #histText { font-size: 12px; color: #4a5568; }
+            #histPlatformFallback { font-size: 11px; color: #6b7280; font-weight: 600; }
+            QPushButton#histClearBtn {
+                min-height: 0;
+                font-size: 11px;
+                color: #9ca3af;
+                background: transparent;
+                border: 1px solid #dde3ea;
+                border-radius: 5px;
+                padding: 1px 8px;
+            }
+            QPushButton#histClearBtn:hover { background: #fff0f0; color: #e05555; }
+
+            /* ── Эмодзи и разное ─────────────────────────────────── */
             #emojiPicker {
-                border: 1px solid #c7d0db;
+                border: 1px solid #d1d5e0;
                 border-radius: 10px;
                 background: #ffffff;
             }
@@ -726,48 +906,27 @@ class MainWindow(QMainWindow):
                 padding: 0;
             }
             #emojiBtn:hover { background: #eef2f7; border-radius: 4px; }
-            #versionLabel { font-size: 11px; color: #aab0bb; padding: 2px 0; }
-            QPushButton#photoButtonDone {
-                background: #eaf7ef;
-                color: #1a7a3f;
-                border: 1px solid #a8dfc0;
-                font-size: 13px;
-            }
-            #checklistFrame {
-                border: 1px solid #e4eaf0;
-                border-radius: 10px;
-                background: #f8fafc;
-            }
-            #checklistTitle {
-                font-size: 12px;
-                font-weight: 600;
-                color: #7a8799;
-                letter-spacing: 0.5px;
-                text-transform: uppercase;
-            }
-            #checklistItem { font-size: 13px; color: #444; padding: 1px 0; }
-            #historyFrame {
-                border: 1px solid #e4eaf0;
-                border-radius: 10px;
-                background: #f8fafc;
-            }
-            #histEntry {
-                background: #ffffff;
-                border: 1px solid #eaeff5;
-                border-radius: 7px;
-                padding: 5px 8px;
-            }
-            #histEmpty { font-size: 12px; color: #c0c8d4; padding: 4px 0; }
-            QPushButton#histClearBtn {
+            QPushButton#themeThumb {
                 min-height: 0;
-                font-size: 11px;
-                color: #a0a8b4;
-                background: transparent;
-                border: 1px solid #dde3ea;
-                border-radius: 5px;
-                padding: 1px 8px;
+                border: 1px solid #d1d5e0;
+                border-radius: 6px;
+                background: #f0f2f5;
+                padding: 0;
+                font-size: 12px;
+                color: #555;
             }
-            QPushButton#histClearBtn:hover { background: #f0f4f8; color: #e05555; }
+            QPushButton#themeThumb:hover { border-color: #2d6cdf; }
+
+            /* ── Прогресс-бар ────────────────────────────────────── */
+            QProgressBar#sendProgress {
+                border: none;
+                background: #e0e4ef;
+                border-radius: 2px;
+            }
+            QProgressBar#sendProgress::chunk {
+                background: #2d6cdf;
+                border-radius: 2px;
+            }
         """)
 
     def _update_checklist(self) -> None:
