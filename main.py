@@ -473,9 +473,9 @@ class AddAddressDialog(QDialog):
         note.setStyleSheet("color: #888; font-size: 12px;")
         layout.addRow(note)
 
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
+        buttons = QDialogButtonBox()
+        buttons.addButton("Применить", QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.addButton("Отмена", QDialogButtonBox.ButtonRole.RejectRole)
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
