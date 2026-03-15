@@ -731,7 +731,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(18, 18, 18, 18)
         root.setSpacing(16)
 
-        left_box = QGroupBox("Ввод данных")
+        left_box = QGroupBox("Текст публикации")
         left_layout = QVBoxLayout(left_box)
         left_layout.setSpacing(12)
 
@@ -777,7 +777,7 @@ class MainWindow(QMainWindow):
         self._addr_list.itemChanged.connect(self._update_checklist)
         self._addr_list.itemChanged.connect(self.save_state)
 
-        left_layout.addWidget(QLabel("Текст публикации"))
+        left_layout.addWidget(QLabel("Ввод данных"))
         left_layout.addWidget(text_container, 1)
         addr_header = QHBoxLayout()
         addr_header.setContentsMargins(0, 0, 0, 0)
@@ -1023,7 +1023,7 @@ class MainWindow(QMainWindow):
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
-                left: 12px;
+                subcontrol-position: top center;
                 padding: 0 6px;
             }
             QPlainTextEdit, QTextEdit, QLineEdit, QComboBox {

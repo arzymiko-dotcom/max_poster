@@ -49,6 +49,8 @@ class ExcelMatcher:
 
             normalized_address = normalize_text(raw_address)
             score = 0
+            street_matched = False
+            house_matched = False
 
             if parsed_address.street:
                 street_words = parsed_address.street.split()
@@ -57,24 +59,33 @@ class ExcelMatcher:
                     for w in street_words
                 ):
                     score += 50
+                    street_matched = True
 
             if parsed_address.house:
                 house = parsed_address.house
-                if re.search(r"\b" + re.escape(house) + r"\b", normalized_address):
+                # Требуем "д N" — не матчим корпус/литеру по случайному совпадению числа
+                if re.search(r"\bд\s+" + re.escape(house) + r"\b", normalized_address):
                     score += 100
+                    house_matched = True
                 elif "/" in house:
                     # "32/1" может означать "д. 32, корп. 1"
                     base, korpus = house.split("/", 1)
                     if (
-                        re.search(r"\b" + re.escape(base) + r"\b", normalized_address)
+                        re.search(r"\bд\s+" + re.escape(base) + r"\b", normalized_address)
                         and re.search(r"\bкорп\s+" + re.escape(korpus) + r"\b", normalized_address)
                     ):
                         score += 90
+                        house_matched = True
 
             if parsed_address.raw_fragment and parsed_address.raw_fragment in normalized_address:
                 score += 30
 
-            if score > 0:
+            # Если дом указан — он обязан совпасть. Иначе "Скобелевский 10" ошибочно
+            # займёт "д. 16" через совпадение только по улице и вытолкнет верный "Скобелевский 16".
+            if parsed_address.house and not house_matched:
+                continue
+
+            if score > 0 and street_matched:
                 def _get(col):
                     v = str(row.get(col, "")).strip() if col else ""
                     if v == "nan":
