@@ -65,23 +65,14 @@ def _assets_dir() -> Path:
     return base / "assets"
 
 
-def _load_ui_fonts() -> list:
-    """Загружает шрифты из папки fonts/ в QFontDatabase, возвращает список семейств."""
-    fonts_dir = (
-        Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
-    ) / "fonts"
-    seen: set = set()
-    result: list = []
-    if fonts_dir.exists():
-        for fp in sorted(fonts_dir.iterdir()):
-            if fp.suffix.lower() in (".ttf", ".otf"):
-                fid = QFontDatabase.addApplicationFont(str(fp))
-                if fid >= 0:
-                    for fam in QFontDatabase.applicationFontFamilies(fid):
-                        if fam not in seen:
-                            seen.add(fam)
-                            result.append(fam)
-    return result
+def _fonts_dir() -> Path:
+    """Папка fonts (работает и в dev, и в exe)."""
+    if getattr(sys, "frozen", False):
+        base = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+    else:
+        base = Path(__file__).parent
+    return base / "fonts"
+
 
 
 def _emoji_icon(emoji: str) -> QIcon | None:
@@ -565,6 +556,94 @@ class ThemePickerDialog(QDialog):
         self.preview_changed.emit(self._selected, self._mode, value)
 
 
+class FontPickerDialog(QDialog):
+    """Диалог выбора шрифта интерфейса."""
+
+    font_changed = pyqtSignal(str, int)
+
+    def __init__(
+        self,
+        families: list,
+        current_family: str,
+        current_size: int,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Шрифт интерфейса")
+        self.setMinimumWidth(360)
+        self._reset_requested = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(10)
+
+        layout.addWidget(QLabel("Выберите шрифт:"))
+
+        self._list = QListWidget()
+        for fam in families:
+            item = QListWidgetItem(fam)
+            item.setFont(QFont(fam, 13))
+            self._list.addItem(item)
+        if current_family and current_family in families:
+            self._list.setCurrentRow(families.index(current_family))
+        self._list.currentRowChanged.connect(self._on_changed)
+        layout.addWidget(self._list)
+
+        size_row = QHBoxLayout()
+        size_row.addWidget(QLabel("Размер:"))
+        self._spin = QSpinBox()
+        self._spin.setRange(8, 24)
+        self._spin.setValue(current_size if current_size else 13)
+        self._spin.setSuffix(" pt")
+        self._spin.valueChanged.connect(self._on_changed)
+        size_row.addWidget(self._spin)
+        size_row.addStretch()
+        layout.addLayout(size_row)
+
+        self._preview = QLabel("Пример: Abc 123")
+        self._preview.setMinimumHeight(40)
+        self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview.setStyleSheet(
+            "border: 1px solid #c7d0db; border-radius: 6px; padding: 8px; background: #fff;"
+        )
+        layout.addWidget(self._preview)
+        self._update_preview()
+
+        btn_row = QHBoxLayout()
+        reset_btn = QPushButton("Сбросить")
+        reset_btn.clicked.connect(self._on_reset)
+        btn_row.addWidget(reset_btn)
+        btn_row.addStretch()
+        buttons = QDialogButtonBox()
+        buttons.addButton("Применить", QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.addButton("Отмена", QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        btn_row.addWidget(buttons)
+        layout.addLayout(btn_row)
+
+    def _on_changed(self, _=None) -> None:
+        self._update_preview()
+        self.font_changed.emit(self.selected_family(), self.selected_size())
+
+    def _update_preview(self) -> None:
+        fam = self.selected_family()
+        sz = self.selected_size()
+        self._preview.setFont(QFont(fam, sz) if fam else QFont("", sz))
+        self._preview.setText(f"{fam or 'Системный шрифт'}  Aa 123")
+
+    def _on_reset(self) -> None:
+        self._reset_requested = True
+        self.accept()
+
+    def selected_family(self) -> str:
+        item = self._list.currentItem()
+        return item.text() if item else ""
+
+    def selected_size(self) -> int:
+        return self._spin.value()
+
+
 class AddAddressDialog(QDialog):
     """Диалог ручного добавления адреса в список рассылки."""
 
@@ -615,100 +694,6 @@ class AddAddressDialog(QDialog):
         if url and not chat_id and "web.max.ru/" in url:
             chat_id = url.split("web.max.ru/")[-1].strip("/")
         return MatchResult(address=address, score=0, chat_link=url, chat_id=chat_id)
-
-
-class FontPickerDialog(QDialog):
-    """Диалог выбора шрифта для всего интерфейса приложения."""
-
-    font_changed = pyqtSignal(str, int)  # family, size — live preview
-
-    _PREVIEW_TEXT = "Привет! Hello · ABCDabc · 123"
-
-    def __init__(self, families: list, current_family: str, current_size: int, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Шрифт интерфейса")
-        self.setMinimumWidth(400)
-        self.setFixedHeight(370)
-        self._orig_family = current_family
-        self._orig_size = current_size
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 14)
-        layout.setSpacing(10)
-
-        # Список семейств шрифтов
-        self._list = QListWidget()
-        self._list.addItems(families)
-        for i in range(self._list.count()):
-            if self._list.item(i).text() == current_family:
-                self._list.setCurrentRow(i)
-                break
-        else:
-            self._list.setCurrentRow(0)
-        self._list.currentRowChanged.connect(self._on_change)
-        layout.addWidget(self._list, 1)
-
-        # Размер
-        size_row = QHBoxLayout()
-        size_row.addWidget(QLabel("Размер:"))
-        self._spin = QSpinBox()
-        self._spin.setRange(9, 18)
-        self._spin.setValue(current_size)
-        self._spin.valueChanged.connect(self._on_change)
-        size_row.addWidget(self._spin)
-        size_row.addStretch()
-        layout.addLayout(size_row)
-
-        # Превью
-        self._preview = QLabel(self._PREVIEW_TEXT)
-        self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._preview.setMinimumHeight(56)
-        self._preview.setWordWrap(True)
-        self._preview.setStyleSheet(
-            "border:1px solid #cfd6df; border-radius:7px; padding:10px; background:#fff;"
-        )
-        self._refresh_preview()
-        layout.addWidget(self._preview)
-
-        # Кнопки
-        btns = QDialogButtonBox()
-        btns.addButton("Применить", QDialogButtonBox.ButtonRole.AcceptRole)
-        reset_btn = btns.addButton("Сброс", QDialogButtonBox.ButtonRole.ResetRole)
-        btns.addButton("Отмена", QDialogButtonBox.ButtonRole.RejectRole)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self._on_cancel)
-        reset_btn.clicked.connect(self._on_reset)
-        layout.addWidget(btns)
-        self._reset_requested = False
-
-    def _on_change(self) -> None:
-        self._refresh_preview()
-        item = self._list.currentItem()
-        if item:
-            self.font_changed.emit(item.text(), self._spin.value())
-
-    def _refresh_preview(self) -> None:
-        item = self._list.currentItem()
-        if item:
-            self._preview.setFont(QFont(item.text(), self._spin.value() + 2))
-
-    def _on_cancel(self) -> None:
-        self.font_changed.emit(self._orig_family, self._orig_size)
-        self.reject()
-
-    def _on_reset(self) -> None:
-        self._reset_requested = True
-        self.font_changed.emit("", 0)
-        self.accept()
-
-    def selected_family(self) -> str:
-        if self._reset_requested:
-            return ""
-        item = self._list.currentItem()
-        return item.text() if item else self._orig_family
-
-    def selected_size(self) -> int:
-        return self._spin.value()
 
 
 class _SuccessAnimWidget(QWidget):
@@ -1028,12 +1013,10 @@ class MainWindow(QMainWindow):
         self._bg_opacity: int = 50
         self._bg_widget: _BgWidget | None = None
 
-        # Шрифт интерфейса
-        self._ui_font_families: list = _load_ui_fonts()
-        self._ui_font_family: str = "Inter" if "Inter" in self._ui_font_families else (
-            self._ui_font_families[0] if self._ui_font_families else ""
-        )
+        # Шрифты интерфейса
+        self._ui_font_family: str = ""
         self._ui_font_size: int = 13
+        self._ui_font_families: list[str] = self._load_font_families()
 
         # Кэшированный ExcelMatcher — читает Excel только один раз
         self._matcher: ExcelMatcher | None = (
@@ -1075,6 +1058,21 @@ class MainWindow(QMainWindow):
         base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
         return base / "max_address.xlsx"
 
+    @staticmethod
+    def _load_font_families() -> list[str]:
+        """Загрузить шрифты из папки fonts/ и вернуть отсортированный список семейств."""
+        fonts_dir = _fonts_dir()
+        seen: set[str] = set()
+        families: list[str] = []
+        for f in sorted(list(fonts_dir.glob("*.ttf")) + list(fonts_dir.glob("*.otf"))):
+            fid = QFontDatabase.addApplicationFont(str(f))
+            if fid >= 0:
+                for fam in QFontDatabase.applicationFontFamilies(fid):
+                    if fam not in seen:
+                        seen.add(fam)
+                        families.append(fam)
+        return sorted(families)
+
     def _build_menu(self) -> None:
         menu = self.menuBar()
 
@@ -1106,6 +1104,10 @@ class MainWindow(QMainWindow):
         theme_action = QAction("Тема оформления…", self)
         theme_action.triggered.connect(self._open_theme_picker)
         view_menu.addAction(theme_action)
+
+        font_action = QAction("Шрифт интерфейса…", self)
+        font_action.triggered.connect(self._open_font_picker)
+        view_menu.addAction(font_action)
 
         about_action = QAction("О программе", self)
         about_action.triggered.connect(self.show_about)
@@ -1309,13 +1311,6 @@ class MainWindow(QMainWindow):
         preview_title = QLabel("Предпросмотр")
         preview_title.setObjectName("checklistTitle")
 
-        self._font_btn = QPushButton("Аа")
-        self._font_btn.setObjectName("fontMiniBtn")
-        self._font_btn.setFixedHeight(24)
-        self._font_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._font_btn.setToolTip("Шрифт интерфейса")
-        self._font_btn.clicked.connect(self._open_font_picker)
-
         self._theme_btn = QPushButton("Тема")
         self._theme_btn.setObjectName("themeMiniBtn")
         self._theme_btn.setFixedHeight(24)
@@ -1324,12 +1319,11 @@ class MainWindow(QMainWindow):
 
         ph_layout.addWidget(preview_title)
         ph_layout.addStretch()
-        ph_layout.addWidget(self._font_btn)
         ph_layout.addWidget(self._theme_btn)
         right_layout.addWidget(preview_header_frame)
 
         self.preview = PreviewCard()
-        self.preview.setFixedHeight(560)
+        self.preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         right_layout.addWidget(self.preview)
 
         # ── Чеклист готовности ──────────────────────────────────────
@@ -1494,10 +1488,7 @@ class MainWindow(QMainWindow):
     # ──────────────────────────────────────────────────────────────────
 
     def _apply_styles(self) -> None:
-        family = getattr(self, "_ui_font_family", "")
-        size   = getattr(self, "_ui_font_size", 13)
-        font_rule = f'* {{ font-family: "{family}"; font-size: {size}px; }}' if family else ""
-        self.setStyleSheet(font_rule + """
+        self.setStyleSheet("""
             QMainWindow { background: #f3f4f6; }
             QGroupBox {
                 font-size: 15px;
@@ -1938,7 +1929,10 @@ class MainWindow(QMainWindow):
         )
         dlg.font_changed.connect(self._apply_ui_font)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._apply_ui_font(dlg.selected_family(), dlg.selected_size())
+            if dlg._reset_requested:
+                self._apply_ui_font("", 13)
+            else:
+                self._apply_ui_font(dlg.selected_family(), dlg.selected_size())
             self.save_state()
         else:
             self._apply_ui_font(prev_family, prev_size)  # откат к сохранённому
@@ -2214,7 +2208,8 @@ class MainWindow(QMainWindow):
         saved_size = data.get("ui_font_size", 0)
         if saved_family and saved_family in self._ui_font_families:
             self._apply_ui_font(saved_family, saved_size or self._ui_font_size)
-        elif self._ui_font_family:
+        elif "ui_font_family" not in data and self._ui_font_family:
+            # первый запуск — применяем Inter по умолчанию
             self._apply_ui_font(self._ui_font_family, self._ui_font_size)
 
         bg_index = data.get("bg_index", None)
