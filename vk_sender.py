@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 from collections.abc import Callable
@@ -6,6 +7,8 @@ from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
+
+_log = logging.getLogger(__name__)
 
 _env_path = Path(sys.executable).parent / '.env' if getattr(sys, 'frozen', False) else Path(__file__).parent / '.env'
 load_dotenv(_env_path)
@@ -44,8 +47,14 @@ class VkSender:
         resp = requests.post(f"{VK_API}/{method}", data=params, timeout=30)
         resp.raise_for_status()
         data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"Неожиданный формат ответа ВК: {data!r}")
         if "error" in data:
-            raise RuntimeError(data["error"]["error_msg"])
+            error = data["error"]
+            msg = error.get("error_msg", str(error)) if isinstance(error, dict) else str(error)
+            raise RuntimeError(msg)
+        if "response" not in data:
+            raise RuntimeError(f"Ответ ВК не содержит 'response': {data!r}")
         return data["response"]
 
     def _upload_photo(self, image_path: str, progress: Callable[[str], None] | None = None) -> str:
@@ -122,4 +131,5 @@ class VkSender:
             return SendResult(True, "Опубликовано в ВКонтакте")
 
         except Exception as exc:
+            _log.exception("Ошибка при публикации в ВК: %s", exc)
             return SendResult(False, f"Ошибка ВК: {exc}")

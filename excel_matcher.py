@@ -22,7 +22,14 @@ class ExcelMatcher:
 
     def load_dataframe(self) -> pd.DataFrame:
         if self._df is None:
-            self._df = pd.read_excel(self.excel_path)
+            try:
+                self._df = pd.read_excel(self.excel_path)
+            except FileNotFoundError:
+                raise FileNotFoundError(f"Файл адресов не найден: {self.excel_path}") from None
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Не удалось открыть файл адресов '{self.excel_path}': {exc}"
+                ) from exc
         return self._df
 
     def _resolve_columns(self, df: pd.DataFrame) -> tuple[str, str | None, str | None]:
@@ -87,9 +94,12 @@ class ExcelMatcher:
 
             if score > 0 and street_matched:
                 def _get(col):
-                    v = str(row.get(col, "")).strip() if col else ""
-                    if v == "nan":
+                    if not col:
                         return ""
+                    raw = row.get(col)
+                    if raw is None or pd.isna(raw):
+                        return ""
+                    v = str(raw).strip()
                     # убираем .0 у числовых ID
                     if v.endswith(".0"):
                         v = v[:-2]

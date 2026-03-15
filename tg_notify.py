@@ -32,6 +32,14 @@ load_dotenv(_env_path)
 _BOT_TOKEN: str = os.getenv("TG_BOT_TOKEN", "")
 _CHAT_ID: str = os.getenv("TG_CHAT_ID", "")
 
+# Предупреждаем при старте если токены заданы как пустые строки (явно присутствуют, но пусты)
+if "TG_BOT_TOKEN" in os.environ and not _BOT_TOKEN:
+    import warnings
+    warnings.warn("tg_notify: TG_BOT_TOKEN задан, но пуст — уведомления отключены.", stacklevel=1)
+if "TG_CHAT_ID" in os.environ and not _CHAT_ID:
+    import warnings
+    warnings.warn("tg_notify: TG_CHAT_ID задан, но пуст — уведомления отключены.", stacklevel=1)
+
 
 def _enabled() -> bool:
     return bool(_BOT_TOKEN and _CHAT_ID)
@@ -43,6 +51,10 @@ def _version() -> str:
         return (base / "version.txt").read_text(encoding="utf-8").strip().splitlines()[0].strip()
     except Exception:
         return "?"
+
+
+# Кэшируем версию один раз при импорте модуля
+_APP_VERSION: str = _version()
 
 
 def _public_ip() -> str:
@@ -89,7 +101,7 @@ def _sys_info() -> str:
         user = os.environ.get("USERNAME", "?")
     pc = socket.gethostname()
     win = platform.version()
-    ver = _version()
+    ver = _APP_VERSION
     pub_ip = _public_ip()
     loc_ip = _local_ip()
     return (
@@ -129,7 +141,7 @@ def send_error(title: str, details: str) -> None:
     except Exception:
         user = os.environ.get("USERNAME", "?")
     pc = socket.gethostname()
-    ver = _version()
+    ver = _APP_VERSION
     text = (
         f"❌ <b>{title}</b>\n\n"
         f"<pre>{details[:3000]}</pre>\n\n"

@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -26,7 +27,7 @@ def load() -> list[dict]:
         return []
     try:
         return json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError, ValueError):
+    except (json.JSONDecodeError, OSError):
         return []
 
 
@@ -37,19 +38,39 @@ def add_entry(addresses: list[str], sent_max: bool, sent_vk: bool, text: str = "
     }
     if text:
         snippet = text.strip().replace("\n", " ")
-        entry["text"] = snippet[:60] + ("…" if len(snippet) > 60 else "")
+        # Emoji-safe truncation: encode to UTF-32 code-points, slice, then decode
+        encoded = snippet.encode("utf-32-le")
+        cp_count = len(encoded) // 4
+        if cp_count > 60:
+            truncated = encoded[: 60 * 4].decode("utf-32-le")
+            entry["text"] = truncated + "…"
+        else:
+            entry["text"] = snippet
     if sent_max:
-        entry["max"] = addresses if addresses else ["—"]
+        entry["max"] = addresses if addresses else []
     if sent_vk:
         entry["vk"] = True
 
     history = load()
     history.insert(0, entry)
     history = history[:200]  # не даём файлу расти бесконечно
-    _path().write_text(
-        json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    _atomic_write(_path(), json.dumps(history, ensure_ascii=False, indent=2))
+
+
+def _atomic_write(path: Path, text: str) -> None:
+    """Записывает text во временный файл, затем атомарно переименовывает его в path."""
+    dir_ = path.parent
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=dir_, delete=False, suffix=".tmp"
+    ) as tmp:
+        tmp.write(text)
+        tmp_path = Path(tmp.name)
+    try:
+        tmp_path.replace(path)
+    except OSError:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def clear() -> None:
-    _path().write_text("[]", encoding="utf-8")
+    _atomic_write(_path(), "[]")

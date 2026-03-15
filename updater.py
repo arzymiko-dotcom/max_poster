@@ -8,9 +8,7 @@ GitHub version.txt — одна строка с версией (например
 import subprocess
 import sys
 import tempfile
-import json
 import zipfile
-import urllib.request
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -64,13 +62,12 @@ def _get_yadisk_direct_link(public_url: str) -> str:
     Преобразует публичную ссылку Яндекс.Диска в прямую ссылку на скачивание.
     """
     api_url = "https://cloud-api.yandex.net/v1/disk/public/resources/download"
-    params = {"public_key": public_url}
-    with urllib.request.urlopen(f"{api_url}?public_key={public_url}", timeout=15) as resp:
-        data = json.loads(resp.read())
-        href = data.get("href")
-        if not href:
-            raise RuntimeError(f"Яндекс.Диск не вернул ссылку: {data}")
-        return href
+    resp = requests.get(api_url, params={"public_key": public_url}, timeout=15)
+    resp.raise_for_status()
+    data = resp.json()
+    if not isinstance(data, dict) or "href" not in data:
+        raise RuntimeError(f"Яндекс.Диск не вернул ссылку: {data!r}")
+    return data["href"]
 
 
 class DownloadWorker(QThread):
@@ -121,14 +118,17 @@ class DownloadWorker(QThread):
                     # Ищем внутри архива .exe файл
                     exe_names = [n for n in z.namelist() if n.lower().endswith('.exe')]
                     if not exe_names:
-                        raise Exception("Внутри ZIP-архива не найден EXE-файл")
+                        raise RuntimeError("Внутри ZIP-архива не найден EXE-файл")
                     # Извлекаем первый найденный .exe во временную папку
                     exe_path = Path(tempfile.gettempdir()) / Path(exe_names[0]).name
                     with open(exe_path, 'wb') as out:
                         out.write(z.read(exe_names[0]))
-                # Удаляем скачанный zip
-                dest.unlink()
-                dest = exe_path
+                # Убеждаемся, что EXE успешно извлечён, и только потом удаляем zip
+                if exe_path.exists() and exe_path.stat().st_size > 0:
+                    dest.unlink(missing_ok=True)
+                    dest = exe_path
+                else:
+                    raise RuntimeError(f"Извлечённый EXE пустой или отсутствует: {exe_path}")
 
             self.download_finished.emit(str(dest))
 
