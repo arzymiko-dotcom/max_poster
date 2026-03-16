@@ -130,6 +130,13 @@ class DownloadWorker(QThread):
                 else:
                     raise RuntimeError(f"Извлечённый EXE пустой или отсутствует: {exe_path}")
 
+            # Проверяем PE-заголовок: настоящий EXE начинается с "MZ"
+            with open(dest, "rb") as _f:
+                magic = _f.read(2)
+            if magic != b"MZ":
+                dest.unlink(missing_ok=True)
+                raise RuntimeError("Скачанный файл не является Windows EXE (неверный заголовок)")
+
             self.download_finished.emit(str(dest))
 
         except Exception as exc:

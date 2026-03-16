@@ -37,7 +37,7 @@ class VkSender:
         if need_user_token and not self.user_token:
             return (
                 "Для загрузки фото нужен VK_USER_TOKEN в файле .env\n"
-                "Получить: https://vkhost.github.io/ → Kate Mobile → права photos + wall"
+                "Получить: oauth.vk.com → client_id=2685278 (Kate Mobile) → scope=wall,photos,offline"
             )
         return None
 

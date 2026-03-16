@@ -10,6 +10,7 @@ Telegram-уведомления для MAX Poster.
 Если TG_BOT_TOKEN или TG_CHAT_ID не заданы, уведомления молча пропускаются.
 """
 
+import html
 import os
 import platform
 import socket
@@ -143,9 +144,9 @@ def send_error(title: str, details: str) -> None:
     pc = socket.gethostname()
     ver = _APP_VERSION
     text = (
-        f"❌ <b>{title}</b>\n\n"
-        f"<pre>{details[:3000]}</pre>\n\n"
-        f"👤 {user}  💻 {pc}  📦 {ver}\n"
+        f"❌ <b>{html.escape(title)}</b>\n\n"
+        f"<pre>{html.escape(details[:3000])}</pre>\n\n"
+        f"👤 {html.escape(user)}  💻 {html.escape(pc)}  📦 {html.escape(ver)}\n"
         f"🕐 {now}"
     )
     _send_async(text)

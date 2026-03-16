@@ -7,6 +7,23 @@ import pandas as pd
 from address_parser import ParsedAddress, normalize_text
 
 
+def _get_cell(row, col) -> str:
+    """Извлекает строковое значение ячейки, убирает '.0' и разворачивает ссылки MAX."""
+    if not col:
+        return ""
+    raw = row.get(col)
+    if raw is None:
+        return ""
+    v = str(raw).strip()
+    if not v or v.lower() == "nan":
+        return ""
+    if v.endswith(".0"):
+        v = v[:-2]
+    if "web.max.ru/" in v:
+        v = v.split("web.max.ru/")[-1].strip("/")
+    return v
+
+
 @dataclass
 class MatchResult:
     address: str
@@ -23,7 +40,7 @@ class ExcelMatcher:
     def load_dataframe(self) -> pd.DataFrame:
         if self._df is None:
             try:
-                self._df = pd.read_excel(self.excel_path)
+                self._df = pd.read_excel(self.excel_path, dtype=str)
             except FileNotFoundError:
                 raise FileNotFoundError(f"Файл адресов не найден: {self.excel_path}") from None
             except Exception as exc:
@@ -93,26 +110,11 @@ class ExcelMatcher:
                 continue
 
             if score > 0 and street_matched:
-                def _get(col):
-                    if not col:
-                        return ""
-                    raw = row.get(col)
-                    if raw is None or pd.isna(raw):
-                        return ""
-                    v = str(raw).strip()
-                    # убираем .0 у числовых ID
-                    if v.endswith(".0"):
-                        v = v[:-2]
-                    # извлекаем ID из ссылки вида https://web.max.ru/-69123723250412
-                    if "web.max.ru/" in v:
-                        v = v.split("web.max.ru/")[-1].strip("/")
-                    return v
-
                 matches.append(MatchResult(
                     address=raw_address,
                     score=score,
-                    chat_link=_get(link_col),
-                    chat_id=_get(id_col),
+                    chat_link=_get_cell(row, link_col),
+                    chat_id=_get_cell(row, id_col),
                 ))
 
         matches.sort(key=lambda x: (-x.score, x.address))

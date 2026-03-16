@@ -1,8 +1,9 @@
+import os
 import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QRect, QSize, QTimer, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QShortcut, QTextCursor
+from PyQt6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QTextCursor
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -382,6 +383,7 @@ class _OverlayWidget(QWidget):
             x = (self.width() - scaled.width()) // 2
             y = (self.height() - scaled.height()) // 2
             painter.drawPixmap(x, y, scaled)
+            painter.end()
 
 
 class _BgWidget(QWidget):
@@ -540,6 +542,15 @@ class ThemePickerDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def selected_index(self) -> int | None:
+        return self._selected
+
+    def selected_mode(self) -> int:
+        return self._mode
+
+    def selected_opacity(self) -> int:
+        return self._opacity_pct
+
     def _select(self, index: int | None) -> None:
         self._selected = index
         for idx, btn in self._btns:
@@ -635,6 +646,9 @@ class FontPickerDialog(QDialog):
     def _on_reset(self) -> None:
         self._reset_requested = True
         self.accept()
+
+    def reset_requested(self) -> bool:
+        return self._reset_requested
 
     def selected_family(self) -> str:
         item = self._list.currentItem()
@@ -1023,7 +1037,6 @@ class MainWindow(QMainWindow):
             ExcelMatcher(self.excel_path) if self.excel_path.exists() else None
         )
 
-        import os
         _appdata = Path(os.environ.get("APPDATA", Path.home())) / "max_poster" if getattr(sys, "frozen", False) else Path(__file__).parent
         _appdata.mkdir(parents=True, exist_ok=True)
         self.state_manager = StateManager(_appdata / "app_state.json")
@@ -1049,9 +1062,7 @@ class MainWindow(QMainWindow):
         self._apply_styles()
         self.load_state()
 
-        # Горячие клавиши
-        QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self.send_post)
-        QShortcut(QKeySequence("Ctrl+L"), self).activated.connect(self.select_image)
+        # Горячие клавиши (Ctrl+Return и Ctrl+L заданы через QAction в меню)
 
     @staticmethod
     def _resolve_excel_path() -> Path:
@@ -1082,24 +1093,40 @@ class MainWindow(QMainWindow):
         help_menu = menu.addMenu("Справка")
 
         open_image_action = QAction("Открыть фото", self)
+        open_image_action.setShortcut(QKeySequence("Ctrl+L"))
         open_image_action.triggered.connect(self.select_image)
         file_menu.addAction(open_image_action)
+
+        clear_photo_action = QAction("Очистить фото", self)
+        clear_photo_action.triggered.connect(self._clear_photo)
+        file_menu.addAction(clear_photo_action)
+
+        file_menu.addSeparator()
 
         clear_action = QAction("Очистить форму", self)
         clear_action.triggered.connect(self.clear_form)
         file_menu.addAction(clear_action)
 
+        file_menu.addSeparator()
+
         exit_action = QAction("Выход", self)
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
-        check_action = QAction("Проверить", self)
+        check_action = QAction("Проверить адрес", self)
         check_action.triggered.connect(self.check_post)
         actions_menu.addAction(check_action)
 
         send_action = QAction("Опубликовать", self)
+        send_action.setShortcut(QKeySequence("Ctrl+Return"))
         send_action.triggered.connect(self.send_post)
         actions_menu.addAction(send_action)
+
+        actions_menu.addSeparator()
+
+        conn_action = QAction("Проверить соединение MAX…", self)
+        conn_action.triggered.connect(self._check_max_connection)
+        actions_menu.addAction(conn_action)
 
         theme_action = QAction("Тема оформления…", self)
         theme_action.triggered.connect(self._open_theme_picker)
@@ -1112,6 +1139,16 @@ class MainWindow(QMainWindow):
         about_action = QAction("О программе", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+
+        shortcuts_action = QAction("Горячие клавиши", self)
+        shortcuts_action.triggered.connect(self._show_shortcuts)
+        help_menu.addAction(shortcuts_action)
+
+        help_menu.addSeparator()
+
+        update_action = QAction("Проверить обновления…", self)
+        update_action.triggered.connect(lambda: check_for_updates(self))
+        help_menu.addAction(update_action)
 
     def _build_ui(self) -> None:
         central = _BgWidget()
@@ -1201,6 +1238,11 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(addr_header_frame)
         left_layout.addWidget(self._addr_list, 1)
 
+        # Создаём заранее — используется в строке платформ
+        self.clear_button = QPushButton("Очистить")
+        self.clear_button.setObjectName("clearButton")
+        self.clear_button.clicked.connect(self.clear_form)
+
         # ── Платформы ────────────────────────────────────────────────
         platforms_section = QWidget()
         platforms_section.setObjectName("platformsSection")
@@ -1247,6 +1289,7 @@ class MainWindow(QMainWindow):
         platforms_row.addWidget(chk_max_frame)
         platforms_row.addWidget(chk_vk_frame)
         platforms_row.addStretch()
+        platforms_row.addWidget(self.clear_button)
         pl_layout.addLayout(platforms_row)
 
         # ── Кнопки действий ─────────────────────────────────────────
@@ -1258,10 +1301,6 @@ class MainWindow(QMainWindow):
 
         self.photo_button = QPushButton("Загрузить фото")
         self.photo_button.clicked.connect(self.select_image)
-
-        self.clear_button = QPushButton("Очистить")
-        self.clear_button.setObjectName("clearButton")
-        self.clear_button.clicked.connect(self.clear_form)
 
         self.send_button = QPushButton("Опубликовать")
         self.send_button.clicked.connect(self.send_post)
@@ -1283,15 +1322,8 @@ class MainWindow(QMainWindow):
         self._progress_bar.setTextVisible(False)
         self._progress_bar.hide()
 
-        # Кнопка "Очистить" — отдельно, мелко, справа
-        bottom_actions = QHBoxLayout()
-        bottom_actions.setContentsMargins(0, 2, 0, 0)
-        bottom_actions.addStretch()
-        bottom_actions.addWidget(self.clear_button)
-
         left_layout.addLayout(buttons_row)
         left_layout.addWidget(self._progress_bar)
-        left_layout.addLayout(bottom_actions)
 
         version_label = QLabel(f"Version {self._app_version}")
         version_label.setObjectName("versionLabel")
@@ -1309,17 +1341,10 @@ class MainWindow(QMainWindow):
         ph_layout.setContentsMargins(14, 10, 14, 10)
 
         preview_title = QLabel("Предпросмотр")
-        preview_title.setObjectName("checklistTitle")
-
-        self._theme_btn = QPushButton("Тема")
-        self._theme_btn.setObjectName("themeMiniBtn")
-        self._theme_btn.setFixedHeight(24)
-        self._theme_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._theme_btn.clicked.connect(self._open_theme_picker)
+        preview_title.setObjectName("previewTitle")
 
         ph_layout.addWidget(preview_title)
         ph_layout.addStretch()
-        ph_layout.addWidget(self._theme_btn)
         right_layout.addWidget(preview_header_frame)
 
         self.preview = PreviewCard()
@@ -1910,16 +1935,6 @@ class MainWindow(QMainWindow):
                     results.append(match)
         return results
 
-    def _get_all_matches(self) -> list[MatchResult]:
-        results = []
-        for i in range(self._addr_list.count()):
-            item = self._addr_list.item(i)
-            if item:
-                match = item.data(Qt.ItemDataRole.UserRole)
-                if match:
-                    results.append(match)
-        return results
-
     def _open_font_picker(self) -> None:
         prev_family = self._ui_font_family
         prev_size   = self._ui_font_size
@@ -1929,7 +1944,7 @@ class MainWindow(QMainWindow):
         )
         dlg.font_changed.connect(self._apply_ui_font)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            if dlg._reset_requested:
+            if dlg.reset_requested():
                 self._apply_ui_font("", 13)
             else:
                 self._apply_ui_font(dlg.selected_family(), dlg.selected_size())
@@ -1955,7 +1970,7 @@ class MainWindow(QMainWindow):
         )
         dlg.preview_changed.connect(lambda idx, m, o: self._apply_theme(idx, m, o, save=False))
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            self._apply_theme(dlg._selected, dlg._mode, dlg._opacity_pct)
+            self._apply_theme(dlg.selected_index(), dlg.selected_mode(), dlg.selected_opacity())
         else:
             self._apply_theme(prev_index, prev_mode, prev_opacity, save=False)
 
@@ -1963,13 +1978,13 @@ class MainWindow(QMainWindow):
         self._bg_index = index
         self._bg_mode = mode
         self._bg_opacity = opacity_pct
-        if index is None or self._bg_widget is None:
-            if self._bg_widget:
+        if self._bg_widget is not None:
+            if index is None:
                 self._bg_widget.set_background(None)
-        else:
-            path = _assets_dir() / f"fon_{index}.jpg"
-            pix = QPixmap(str(path)) if path.exists() else QPixmap()
-            self._bg_widget.set_background(pix, mode, opacity_pct)
+            else:
+                path = _assets_dir() / f"fon_{index}.jpg"
+                pix = QPixmap(str(path)) if path.exists() else QPixmap()
+                self._bg_widget.set_background(pix, mode, opacity_pct)
         if save:
             self.save_state()
 
@@ -2068,10 +2083,35 @@ class MainWindow(QMainWindow):
     def _auto_check_addresses(self) -> None:
         """Тихий автопарсинг адресов при изменении текста (без диалогов)."""
         text = self.text_input.toPlainText().strip()
+
+        def _clear_auto_items() -> None:
+            """Удаляет из списка все автоматически найденные адреса."""
+            manual_entries = []
+            for i in range(self._addr_list.count()):
+                itm = self._addr_list.item(i)
+                if itm and itm.data(_MANUAL_ROLE):
+                    m = itm.data(Qt.ItemDataRole.UserRole)
+                    manual_entries.append((m, itm.checkState()))
+            if manual_entries or self._addr_list.count() > 0:
+                self._addr_list.blockSignals(True)
+                self._addr_list.clear()
+                for m, state in manual_entries:
+                    item = QListWidgetItem(m.address)
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(state)
+                    item.setData(Qt.ItemDataRole.UserRole, m)
+                    item.setData(_MANUAL_ROLE, True)
+                    self._addr_list.addItem(item)
+                self._addr_list.blockSignals(False)
+                self._update_checklist()
+                self.save_state()
+
         if not text or not self.excel_path.exists():
+            _clear_auto_items()
             return
         parsed_list = extract_all_addresses(text)
         if not parsed_list:
+            _clear_auto_items()
             return
         if self._matcher is None:
             self._matcher = ExcelMatcher(self.excel_path)
@@ -2094,6 +2134,7 @@ class MainWindow(QMainWindow):
             new_items.append(best)
 
         if not new_items:
+            _clear_auto_items()
             return
 
         # Собираем вручную добавленные адреса — они НЕ перезаписываются автопарсингом
@@ -2115,10 +2156,9 @@ class MainWindow(QMainWindow):
                 checked_ids.add(m.chat_id)
 
         # Не перерисовываем если автоадреса не изменились
-        if {b.chat_id for b in new_items} == existing_auto_ids:
+        new_ids = {b.chat_id for b in new_items}
+        if new_ids == existing_auto_ids:
             return
-
-        manual_ids = {m.chat_id for m, _ in manual_entries}
 
         self._addr_list.blockSignals(True)
         self._addr_list.clear()
@@ -2133,7 +2173,7 @@ class MainWindow(QMainWindow):
             self._addr_list.addItem(item)
         # Возвращаем ручные адреса (если их нет среди автопарсинга)
         for m, state in manual_entries:
-            if m.chat_id in {b.chat_id for b in new_items}:
+            if m.chat_id in new_ids:
                 continue  # уже есть в авто-результатах — не дублируем
             item = QListWidgetItem(m.address)
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -2208,9 +2248,6 @@ class MainWindow(QMainWindow):
         saved_size = data.get("ui_font_size", 0)
         if saved_family and saved_family in self._ui_font_families:
             self._apply_ui_font(saved_family, saved_size or self._ui_font_size)
-        elif "ui_font_family" not in data and self._ui_font_family:
-            # первый запуск — применяем Inter по умолчанию
-            self._apply_ui_font(self._ui_font_family, self._ui_font_size)
 
         bg_index = data.get("bg_index", None)
         bg_mode = data.get("bg_mode", 0)
@@ -2262,6 +2299,31 @@ class MainWindow(QMainWindow):
         self._do_save_state()  # сохраняем сразу, не через таймер
         self.max_sender.close()
         super().closeEvent(event)
+
+    def _clear_photo(self) -> None:
+        """Очищает только фото, не трогая текст и адреса."""
+        self.image_path = None
+        self.preview.set_image(None)
+        self.photo_button.setText("Загрузить фото")
+        self.photo_button.setObjectName("photoButton")
+        self.photo_button.setStyle(self.photo_button.style())
+        self._update_checklist()
+        self.save_state()
+
+    def _check_max_connection(self) -> None:
+        """Проверяет соединение с GREEN-API и показывает результат."""
+        result = self.max_sender.open_max_for_login()
+        if result.success:
+            QMessageBox.information(self, "Соединение MAX", result.message)
+        else:
+            QMessageBox.warning(self, "Соединение MAX", result.message)
+
+    def _show_shortcuts(self) -> None:
+        QMessageBox.information(
+            self, "Горячие клавиши",
+            "Ctrl + Enter  —  Опубликовать\n"
+            "Ctrl + L       —  Загрузить фото\n"
+        )
 
     def show_about(self) -> None:
         QMessageBox.information(

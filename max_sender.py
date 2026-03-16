@@ -143,7 +143,9 @@ class MaxSender:
         msg_id = _json_or_raise(resp).get("idMessage", "")
 
         if not caption and text:
-            self._send_text(chat_id, text)
+            text_result = self._send_text(chat_id, text)
+            if not text_result.success:
+                return SendResult(False, f"Фото отправлено (ID: {msg_id}), но текст не удалось отправить: {text_result.message}")
 
         return SendResult(True, f"Сообщение с фото отправлено. ID: {msg_id}")
 

@@ -50,10 +50,13 @@ def normalize_text(value: str) -> str:
 # Паттерн с префиксом + номер дома: "ул есенина 22", "пр просвещения д 5"
 _STREET_TYPES = r"(?:ул|пр|пер|бул|ш|наб)"
 
+# Группа номера дома: "4", "32/1", "4 корп 1" (корпус захватывается для различения адресов)
+_HOUSE_GROUP = r"(\d+[а-яa-z]?(?:/\d+[а-яa-z]?)?(?:\s+корп\s+\d+[а-яa-z]?)?)"
+
 _PATTERN_WITH_TYPE = re.compile(
     r"\b(?:" + _STREET_TYPES + r")\s+"
     r"((?:[а-яa-z\-]+\s+){1,4}?)"
-    r"(?:д\s+)?(\d+[а-яa-z]?(?:/\d+[а-яa-z]?)?)\b",
+    r"(?:д\s+)?" + _HOUSE_GROUP + r"\b",
     flags=re.IGNORECASE | re.UNICODE,
 )
 
@@ -67,13 +70,13 @@ _PATTERN_WITH_TYPE_NO_NUM = re.compile(
 # Паттерн с суффиксом типа + номер: "Сиреневый б-р, 9" → "сиреневый бул 9"
 _PATTERN_TYPE_SUFFIX = re.compile(
     r"\b([а-яa-z\-]+(?:\s+[а-яa-z\-]+){0,3}?)\s+(?:" + _STREET_TYPES + r")\s+"
-    r"(?:д\s+)?(\d+[а-яa-z]?(?:/\d+[а-яa-z]?)?)\b",
+    r"(?:д\s+)?" + _HOUSE_GROUP + r"\b",
     flags=re.IGNORECASE | re.UNICODE,
 )
 
 # Паттерн без префикса + номер: "Есенина 22", "Народного Ополчения 5"
 _PATTERN_NO_TYPE = re.compile(
-    r"\b([а-яa-z\-]+(?:\s+[а-яa-z\-]+){0,3}?)\s+(?:д\s+)?(\d+[а-яa-z]?(?:/\d+[а-яa-z]?)?)\b",
+    r"\b([а-яa-z\-]+(?:\s+[а-яa-z\-]+){0,3}?)\s+(?:д\s+)?" + _HOUSE_GROUP + r"\b",
     flags=re.IGNORECASE | re.UNICODE,
 )
 
@@ -85,6 +88,11 @@ _STOP_WORDS = {
     "в связи", "работ", "временное", "отключение", "водоснабжения",
     "часов", "ч", "мин", "утра", "вечера", "дня",
 }
+
+
+def _normalize_house(raw: str) -> str:
+    """Нормализует номер дома: '4 корп 1' → '4/1'."""
+    return re.sub(r"\s+корп\s+", "/", raw.strip())
 
 
 def _try_extract(text: str) -> ParsedAddress | None:
@@ -101,7 +109,7 @@ def _try_extract(text: str) -> ParsedAddress | None:
         if street and not all(len(w) <= 2 for w in street.split()):
             return ParsedAddress(
                 street=street,
-                house=match.group(2).strip(),
+                house=_normalize_house(match.group(2)),
                 raw_fragment=match.group(0).strip(),
             )
 
@@ -112,7 +120,7 @@ def _try_extract(text: str) -> ParsedAddress | None:
         if street and not all(len(w) <= 2 for w in street.split()):
             return ParsedAddress(
                 street=street,
-                house=match.group(2).strip(),
+                house=_normalize_house(match.group(2)),
                 raw_fragment=match.group(0).strip(),
             )
 
@@ -128,7 +136,7 @@ def _try_extract(text: str) -> ParsedAddress | None:
     # 4. Без префикса + номер — "Есенина 22"
     for match in _PATTERN_NO_TYPE.finditer(normalized):
         street_name = match.group(1).strip()
-        house = match.group(2).strip()
+        house = _normalize_house(match.group(2))
 
         words = street_name.split()
         if any(w in _STOP_WORDS for w in words):
