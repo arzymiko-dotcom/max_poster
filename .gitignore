@@ -23,8 +23,17 @@ history.json
 # Excel база (большой бинарник, не трекаем)
 max_address.xlsx
 
+# Шрифты (бинарники, восстанавливаются при разработке)
+fonts/
+
 # Twemoji (407 PNG, не трекаем)
 twemoji/
+
+# Вложенный QR-проект — имеет собственный .git, не трекаем в основном репо
+app/my_qr_app/
+
+# Claude Code служебные файлы
+.claude/
 
 # Windows
 desktop.ini

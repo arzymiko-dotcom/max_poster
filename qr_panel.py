@@ -1,19 +1,19 @@
 """
 qr_panel.py — адаптер для встраивания QR Generator в unified shell.
 
-Извлекает centralWidget из QMainWindow и помещает его в QWidget-обёртку,
-чтобы избежать проблем с QMainWindow внутри QStackedWidget.
+Подавляет showMaximized() во время __init__, чтобы окно не создавалось
+как top-level, затем конвертирует его в виджет через setWindowFlags.
 """
 
 import importlib.util
 import sys
 from pathlib import Path
 
-from PyQt6.QtWidgets import QVBoxLayout, QWidget
+from PyQt6.QtCore import Qt
 
 
 def _load_qr_module():
-    qr_path = Path("D:/my_qr_app/main.py")
+    qr_path = Path(__file__).parent / "app" / "my_qr_app" / "main.py"
     if not qr_path.exists():
         raise FileNotFoundError(f"QR Generator не найден: {qr_path}")
     qr_dir = str(qr_path.parent)
@@ -25,31 +25,32 @@ def _load_qr_module():
     return module
 
 
-def create_qr_widget() -> QWidget:
-    """Создаёт виджет QR Generator для встраивания в QStackedWidget.
+def create_qr_widget():
+    """Создаёт QR Generator как встраиваемый виджет.
 
-    Берёт centralWidget из QMainWindow и помещает его в обёртку QWidget.
-    Ссылка на исходный QMainWindow сохраняется, чтобы предотвратить GC.
+    Monkey-patch showMaximized на время __init__, чтобы окно никогда
+    не создавалось как top-level window — без скрытого Qt WState.
+    Затем setWindowFlags(Widget) делает его пригодным для QStackedWidget.
     """
     module = _load_qr_module()
-    win = module.MainWindow()
-    win.hide()
 
-    # Извлекаем centralWidget (BgWidget со всем UI)
-    central = win.centralWidget()
+    # Подавляем showMaximized на время __init__
+    _orig_show_maximized = module.MainWindow.showMaximized
+    module.MainWindow.showMaximized = lambda self: None
+    try:
+        win = module.MainWindow()
+    finally:
+        module.MainWindow.showMaximized = _orig_show_maximized
 
-    # Обёртка с нулевыми отступами
-    wrapper = QWidget()
-    wrapper.setObjectName("qrContent")
-    layout = QVBoxLayout(wrapper)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(0)
+    # Даём начальный размер — запускает layout-проход (без этого размер 0x0)
+    win.resize(1200, 800)
 
-    # Перемещаем central в обёртку (setParent выполняется автоматически)
-    layout.addWidget(central)
+    # Скрываем версию — она отображается только в MAX POST
+    if hasattr(win, "lbl_version"):
+        win.lbl_version.setVisible(False)
 
-    # Сохраняем ссылку на win, чтобы не допустить GC и сохранить
-    # все связанные сигналы, QSettings и потоки обновления
-    wrapper._qr_main_window = win
+    # Конвертируем в встраиваемый виджет
+    win.setWindowFlags(Qt.WindowType.Widget)
+    win.setObjectName("qrContent")
 
-    return wrapper
+    return win

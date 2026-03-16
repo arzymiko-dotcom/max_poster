@@ -470,14 +470,18 @@ class ThemePickerDialog(QDialog):
         grid = QGridLayout(grid_widget)
         grid.setSpacing(8)
 
-        items: list[int | None] = [None] + list(range(1, 11))
+        items: list[int | None] = [None] + list(range(1, 12))
         for pos, idx in enumerate(items):
             if idx is None:
                 btn = QPushButton("Без фона")
             else:
                 btn = QPushButton()
-                img_path = assets_dir / f"fon_{idx}.jpg"
-                if img_path.exists():
+                img_path = next(
+                    (assets_dir / f"fon_{idx}{ext}" for ext in (".jpg", ".png")
+                     if (assets_dir / f"fon_{idx}{ext}").exists()),
+                    None,
+                )
+                if img_path is not None and img_path.exists():
                     pix = QPixmap(str(img_path)).scaled(
                         96, 64,
                         Qt.AspectRatioMode.KeepAspectRatioByExpanding,
@@ -2028,7 +2032,12 @@ class MainWindow(QMainWindow):
             if index is None:
                 self._bg_widget.set_background(None)
             else:
-                path = _assets_dir() / f"fon_{index}.jpg"
+                assets = _assets_dir()
+                path = next(
+                    (assets / f"fon_{index}{ext}" for ext in (".jpg", ".png")
+                     if (assets / f"fon_{index}{ext}").exists()),
+                    assets / f"fon_{index}.jpg",
+                )
                 pix = QPixmap(str(path)) if path.exists() else QPixmap()
                 self._bg_widget.set_background(pix, mode, opacity_pct)
         if save:
