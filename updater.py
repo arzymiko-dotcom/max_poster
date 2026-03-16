@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
 # ══════════════════════════════════════════════════════════════════
 GITHUB_USER = "arzymiko-dotcom"                     # твой логин на GitHub
 GITHUB_REPO = "max_poster"                          # название репозитория
-YADISK_PUBLIC_URL = "https://disk.yandex.ru/d/-uRW5TcYt81lgQ"  # публичная ссылка на папку/файл с установщиком
+YADISK_PUBLIC_URL = "https://disk.yandex.ru/d/rDx8MZ0BVpc3xw"  # публичная ссылка на папку/файл с установщиком
 # ══════════════════════════════════════════════════════════════════
 
 GITHUB_VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/master/version.txt"
