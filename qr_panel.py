@@ -6,8 +6,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-from PyQt6.QtWidgets import QWidget
-
 
 def _load_qr_module():
     qr_path = Path("D:/my_qr_app/main.py")
@@ -23,17 +21,19 @@ def _load_qr_module():
 
 
 def create_qr_window():
-    """Создаёт QR MainWindow, скрывает его и возвращает (win, central_widget)."""
+    """Создаёт QR MainWindow, скрывает его и возвращает (win, central_widget).
+
+    ВАЖНО: НЕ вызываем setCentralWidget(QWidget()) — это может запустить
+    deleteLater() на оригинальном виджете в PyQt6. Просто берём centralWidget()
+    и позволяем addWidget() стека выполнить reparent.
+    """
     module = _load_qr_module()
     win = module.MainWindow()
-    win.hide()  # showMaximized() вызывается в __init__ — немедленно скрываем
+    win.hide()  # __init__ вызывает showMaximized() — немедленно скрываем
 
     widget = win.centralWidget()
     if widget is None:
         raise RuntimeError("QR Generator: centralWidget() вернул None")
 
-    # Правильно отцепляем виджет от QMainWindow перед встраиванием в stack
-    win.setCentralWidget(QWidget())  # даём QMainWindow пустой заглушку
-    widget.setParent(None)           # чисто отцепляем от старого родителя
     widget.setObjectName("qrContent")
     return win, widget

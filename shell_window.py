@@ -219,8 +219,14 @@ class ShellWindow(QMainWindow):
 
         # ── FadeStack ───────────────────────────────────────────
         self._stack = _FadeStack()
-        self._stack.addWidget(self._max_win.centralWidget())  # index 0
-        self._stack.addWidget(qr_widget)                      # index 1
+
+        # Переносим стили MAX POST на его centralWidget, потому что после
+        # reparent в stack стили от _max_win перестают каскадироваться
+        max_widget = self._max_win.centralWidget()
+        max_widget.setStyleSheet(self._max_win.styleSheet())
+
+        self._stack.addWidget(max_widget)   # index 0
+        self._stack.addWidget(qr_widget)    # index 1
 
         # ── Компоновка ──────────────────────────────────────────
         self._sidebar = _SideBar()
