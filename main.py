@@ -59,7 +59,7 @@ def _twemoji_dir() -> Path:
     global _twemoji_dir_cache
     if _twemoji_dir_cache is None:
         if getattr(sys, "frozen", False):
-            _twemoji_dir_cache = Path(sys.executable).parent / "twemoji"
+            _twemoji_dir_cache = Path(sys._MEIPASS) / "twemoji"  # type: ignore[attr-defined]
         else:
             _twemoji_dir_cache = Path(__file__).parent / "twemoji"
     return _twemoji_dir_cache

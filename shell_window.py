@@ -67,7 +67,10 @@ QMainWindow { background: #1e1e2e; }
 
 
 def _assets(name: str) -> str:
-    base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+    if getattr(sys, "frozen", False):
+        base = Path(sys._MEIPASS)
+    else:
+        base = Path(__file__).parent
     return str(base / "assets" / name)
 
 
