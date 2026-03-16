@@ -1,13 +1,13 @@
 @echo off
-chcp 65001 >/dev/null
+chcp 65001 >nul
 echo ========================================
-echo    Сборка + Установщик для max_poster
+echo    Сборка + Установщик для MAX POST
 echo ========================================
 
 cd /d "%~dp0"
 
 REM --- Опциональный бамп версии ---
-REM Передай аргумент: build_max_poster.bat patch|minor|major|1.2.3
+REM Передай аргумент: "build_MAX POST.bat" patch|minor|major|1.2.3
 if not "%1"=="" (
     echo [0/4] Обновляем версию: %1 ...
     python bump_version.py %1
@@ -29,8 +29,8 @@ echo [1/4] Активируем виртуальное окружение...
 call .venv\Scripts\activate.bat
 
 echo [2/4] Собираем EXE (режим папки)...
-pyinstaller --clean --windowed --name "max_poster" ^
-    --icon="assets\max_poster.ico" ^
+pyinstaller --clean --windowed --name "MAX POST" ^
+    --icon="assets\MAX POST.ico" ^
     --add-data "twemoji;twemoji" ^
     --add-data "assets;assets" ^
     --hidden-import=dotenv ^
@@ -43,7 +43,7 @@ if errorlevel 1 (
 )
 
 REM Проверяем, успешно ли прошла сборка
-if not exist dist\max_poster\max_poster.exe (
+if not exist "dist\MAX POST\MAX POST.exe" (
     echo Ошибка: EXE не создан!
     pause
     exit /b 1
@@ -52,15 +52,15 @@ if not exist dist\max_poster\max_poster.exe (
 echo [3/4] Копируем дополнительные файлы в папку с exe...
 
 if exist version.txt (
-    copy version.txt dist\max_poster\version.txt
+    copy version.txt "dist\MAX POST\version.txt"
 ) else (
     echo Предупреждение: version.txt не найден
 )
 
-copy *.xlsx dist\max_poster\ 2>NUL
+copy *.xlsx "dist\MAX POST\" 2>NUL
 
 if exist .env (
-    copy .env dist\max_poster\.env
+    copy .env "dist\MAX POST\.env"
 ) else (
     echo Предупреждение: .env не найден - токены не будут скопированы
 )
@@ -80,7 +80,7 @@ if not defined ISCC (
     pause
     exit /b 1
 )
-"%ISCC%" max_poster.iss
+"%ISCC%" "MAX POST.iss"
 if errorlevel 1 (
     echo Ошибка: Inno Setup завершился с ошибкой!
     pause
@@ -90,6 +90,6 @@ if errorlevel 1 (
 echo.
 echo ========================================
 echo    Готово! Версия: %APP_VER%
-echo    Установщик: installer\max_poster_setup.exe
+echo    Установщик: installer\MAX POST_setup.exe
 echo ========================================
 pause

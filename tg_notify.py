@@ -1,5 +1,5 @@
 """
-Telegram-уведомления для MAX Poster.
+Telegram-уведомления для MAX POST.
 
 Отправляет:
   - уведомление о запуске программы
@@ -128,7 +128,7 @@ def send_startup() -> None:
 
     def _task():
         info = _sys_info()
-        _send(f"✅ <b>MAX Poster запущен</b>\n{info}")
+        _send(f"✅ <b>MAX POST запущен</b>\n{info}")
 
     threading.Thread(target=_task, daemon=True).start()
 

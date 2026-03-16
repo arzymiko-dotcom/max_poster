@@ -14,7 +14,10 @@ _lock = threading.Lock()
 def _data_dir() -> Path:
     """Папка для пользовательских данных — APPDATA в exe, рядом со скриптом в dev."""
     if getattr(sys, "frozen", False):
-        d = Path(os.environ.get("APPDATA", Path.home())) / "max_poster"
+        d = Path(os.environ.get("APPDATA", Path.home())) / "MAX POST"
+        _old_d = Path(os.environ.get("APPDATA", Path.home())) / "max_poster"
+        if not d.exists() and _old_d.exists():
+            _old_d.rename(d)
         d.mkdir(parents=True, exist_ok=True)
         return d
     return Path(__file__).parent

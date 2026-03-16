@@ -1020,8 +1020,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
-        self.setWindowTitle("MAX Poster")
-        self.setWindowIcon(QIcon(str(_assets_dir() / "max_poster.ico")))
+        self.setWindowTitle("MAX POST")
+        self.setWindowIcon(QIcon(str(_assets_dir() / "MAX POST.ico")))
         self.resize(1280, 760)
 
         # Версия — читаем один раз
@@ -1048,7 +1048,11 @@ class MainWindow(QMainWindow):
             ExcelMatcher(self.excel_path) if self.excel_path.exists() else None
         )
 
-        _appdata = Path(os.environ.get("APPDATA", Path.home())) / "max_poster" if getattr(sys, "frozen", False) else Path(__file__).parent
+        _appdata = Path(os.environ.get("APPDATA", Path.home())) / "MAX POST" if getattr(sys, "frozen", False) else Path(__file__).parent
+        if getattr(sys, "frozen", False):
+            _old_appdata = Path(os.environ.get("APPDATA", Path.home())) / "max_poster"
+            if not _appdata.exists() and _old_appdata.exists():
+                _old_appdata.rename(_appdata)
         _appdata.mkdir(parents=True, exist_ok=True)
         self.state_manager = StateManager(_appdata / "app_state.json")
         self.max_sender = MaxSender()
@@ -2358,7 +2362,7 @@ class MainWindow(QMainWindow):
     def show_about(self) -> None:
         QMessageBox.information(
             self, "О программе",
-            "MAX Poster\n\n"
+            "MAX POST\n\n"
             "Отправка сообщений в группы MAX через GREEN-API.\n\n"
             "Emoji provided free by Twitter (Twemoji) under CC BY 4.0\n"
             "https://creativecommons.org/licenses/by/4.0/"

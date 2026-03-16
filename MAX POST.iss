@@ -1,7 +1,7 @@
-; Inno Setup Script — max_poster
+; Inno Setup Script — MAX POST
 
 [Setup]
-AppName=max_poster
+AppName=MAX POST
 AppId={{B7F32A14-5C8E-4D92-A1B3-F456789ABCDE}
 ; Чтение версии из файла version.txt с помощью препроцессора
 #define FileHandle
@@ -18,11 +18,11 @@ AppId={{B7F32A14-5C8E-4D92-A1B3-F456789ABCDE}
 AppVersion={#AppVersion}
 ; Если нужна ручная версия, закомментируй всё, что выше, и раскомментируй следующую строку:
 ; AppVersion=1.1.5
-AppPublisher=MaxPoster
-SetupIconFile="assets\max_poster.ico"
-DefaultDirName={autopf}\max_poster
-DefaultGroupName=max_poster
-OutputBaseFilename=max_poster_setup
+AppPublisher=MAX POST
+SetupIconFile="assets\MAX POST.ico"
+DefaultDirName={autopf}\MAX POST
+DefaultGroupName=MAX POST
+OutputBaseFilename=MAX POST_setup
 OutputDir=installer
 Compression=lzma
 SolidCompression=yes
@@ -37,15 +37,15 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Дополнительно:"
 
 [Files]
-Source: "dist\max_poster\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "assets\max_poster.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "dist\MAX POST\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "assets\MAX POST.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [InstallDelete]
 Type: filesandordirs; Name: "{app}"
 
 [Icons]
-Name: "{group}\max_poster"; Filename: "{app}\max_poster.exe"; IconFilename: "{app}\max_poster.ico"
-Name: "{autodesktop}\max_poster"; Filename: "{app}\max_poster.exe"; Tasks: desktopicon; IconFilename: "{app}\max_poster.ico"
+Name: "{group}\MAX POST"; Filename: "{app}\MAX POST.exe"; IconFilename: "{app}\MAX POST.ico"
+Name: "{autodesktop}\MAX POST"; Filename: "{app}\MAX POST.exe"; Tasks: desktopicon; IconFilename: "{app}\MAX POST.ico"
 
 [Run]
-Filename: "{app}\max_poster.exe"; Description: "Запустить max_poster"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\MAX POST.exe"; Description: "Запустить MAX POST"; Flags: nowait postinstall skipifsilent
