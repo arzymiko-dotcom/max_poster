@@ -1,40 +1,28 @@
 """
 shell_window.py — VS Code-style контейнер для всех модулей MAX POST.
-
-Структура:
-  ┌──────┬──────────────────────────────┐
-  │Sidebar│   QStackedWidget             │
-  │ 60px  │   (панели модулей)           │
-  └──────┴──────────────────────────────┘
-
-Сайдбар содержит иконки-кнопки. Клик переключает активную панель.
 """
 
-from pathlib import Path
 import sys
+from pathlib import Path
 
-from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QIcon, QAction
+from PyQt6.QtCore import (
+    QEasingCurve, QPropertyAnimation, QSize, Qt, QTimer,
+)
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QButtonGroup,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QMainWindow,
-    QPushButton,
-    QStackedWidget,
-    QVBoxLayout,
-    QWidget,
+    QButtonGroup, QFrame, QGraphicsOpacityEffect, QHBoxLayout,
+    QLabel, QMainWindow, QMenu, QPushButton, QStackedWidget,
+    QVBoxLayout, QWidget,
 )
 
 
 # ──────────────────────────────────────────────────────────────
-#  Стиль сайдбара
+#  Стили
 # ──────────────────────────────────────────────────────────────
 _SIDEBAR_STYLE = """
 QFrame#sidebar {
     background: #1e1e2e;
-    border-right: 1px solid #2a2a3e;
+    border-right: 1px solid #2d2d3f;
 }
 QPushButton#sideBtn {
     border: none;
@@ -43,50 +31,58 @@ QPushButton#sideBtn {
     border-radius: 0px;
     min-width: 0px;
     min-height: 0px;
+    color: #888aaa;
+    font-size: 9px;
 }
 QPushButton#sideBtn:checked {
     background: rgba(74, 108, 247, 0.18);
     border-left: 3px solid #4a6cf7;
+    color: #ffffff;
 }
 QPushButton#sideBtn:hover:!checked {
     background: rgba(255, 255, 255, 0.07);
+    color: #cccccc;
 }
-QLabel#sideLabel {
-    color: #6272a4;
-    font-size: 9px;
+QPushButton#settingsBtn {
+    border: none;
     background: transparent;
+    color: #666888;
+    font-size: 20px;
+    min-width: 0px;
+    min-height: 0px;
+}
+QPushButton#settingsBtn:hover {
+    color: #aaaacc;
+    background: rgba(255,255,255,0.07);
 }
 """
 
 _SHELL_STYLE = """
-QMainWindow {
-    background: #1e1e2e;
-}
+QMainWindow { background: #1e1e2e; }
 """
 
 
 def _assets(name: str) -> str:
-    """Возвращает путь к иконке из assets/ MAX POST."""
     base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
     return str(base / "assets" / name)
 
 
 # ──────────────────────────────────────────────────────────────
-#  Кнопка сайдбара
+#  Кнопка сайдбара с иконкой + подписью
 # ──────────────────────────────────────────────────────────────
 class _SideButton(QPushButton):
-    def __init__(self, icon_path: str, tooltip: str, label: str):
+    def __init__(self, icon_path: str, tooltip: str, fallback: str):
         super().__init__()
         self.setObjectName("sideBtn")
         self.setCheckable(True)
-        self.setFixedSize(60, 64)
+        self.setFixedSize(60, 60)
         self.setToolTip(tooltip)
         icon = QIcon(icon_path)
         if not icon.isNull():
             self.setIcon(icon)
-            self.setIconSize(QSize(28, 28))
+            self.setIconSize(QSize(26, 26))
         else:
-            self.setText(label[:2])
+            self.setText(fallback)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -99,35 +95,39 @@ class _SideBar(QFrame):
         self.setFixedWidth(60)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 8, 0, 8)
+        layout.setContentsMargins(0, 10, 0, 10)
         layout.setSpacing(0)
 
         # Логотип вверху
-        logo_label = QLabel()
-        logo_label.setObjectName("sideLabel")
-        logo_px_path = _assets("MAX POST.ico")
-        logo_icon = QIcon(logo_px_path)
-        if not logo_icon.isNull():
-            logo_label.setPixmap(logo_icon.pixmap(32, 32))
-        logo_label.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-        logo_label.setFixedHeight(48)
-        layout.addWidget(logo_label)
+        logo = QLabel()
+        icon = QIcon(_assets("MAX POST.ico"))
+        if not icon.isNull():
+            logo.setPixmap(icon.pixmap(32, 32))
+        logo.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        logo.setFixedHeight(44)
+        layout.addWidget(logo)
 
-        # Разделитель
+        # Тонкий разделитель
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet("background: #2a2a3e; max-height: 1px;")
-        sep.setFixedHeight(1)
+        sep.setStyleSheet("background:#2d2d3f; max-height:1px; border:none;")
         layout.addWidget(sep)
-        layout.addSpacing(8)
+        layout.addSpacing(10)
 
         # Кнопки модулей
-        self.btn_max  = _SideButton(_assets("MAX POST.ico"), "MAX POST — отправка сообщений", "MP")
-        self.btn_qr   = _SideButton(_assets("max.ico"),      "QR Generator — генератор карточек", "QR")
-
+        self.btn_max = _SideButton(_assets("MAX POST.ico"), "MAX POST — отправка сообщений", "MP")
+        self.btn_qr  = _SideButton(_assets("max.ico"),      "QR Generator — генератор карточек", "QR")
         layout.addWidget(self.btn_max)
         layout.addWidget(self.btn_qr)
+
         layout.addStretch()
+
+        # Кнопка настроек внизу
+        self.btn_settings = QPushButton("⚙")
+        self.btn_settings.setObjectName("settingsBtn")
+        self.btn_settings.setFixedSize(60, 50)
+        self.btn_settings.setToolTip("Настройки")
+        layout.addWidget(self.btn_settings)
 
         # Группа — только одна кнопка активна
         self._group = QButtonGroup(self)
@@ -135,6 +135,59 @@ class _SideBar(QFrame):
         self._group.addButton(self.btn_max, 0)
         self._group.addButton(self.btn_qr,  1)
         self.btn_max.setChecked(True)
+
+
+# ──────────────────────────────────────────────────────────────
+#  Плавное переключение панелей
+# ──────────────────────────────────────────────────────────────
+class _FadeStack(QStackedWidget):
+    """QStackedWidget с fade-анимацией при переключении панелей."""
+
+    DURATION = 180  # ms
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._animating = False
+
+    def switch_to(self, index: int) -> None:
+        if self._animating or index == self.currentIndex():
+            return
+        current = self.currentWidget()
+        if current is None:
+            self.setCurrentIndex(index)
+            return
+
+        self._animating = True
+
+        # Fade out текущей панели
+        eff_out = QGraphicsOpacityEffect(current)
+        current.setGraphicsEffect(eff_out)
+        anim_out = QPropertyAnimation(eff_out, b"opacity", self)
+        anim_out.setDuration(self.DURATION)
+        anim_out.setStartValue(1.0)
+        anim_out.setEndValue(0.0)
+        anim_out.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        def _do_switch():
+            self.setCurrentIndex(index)
+            new = self.currentWidget()
+            if new:
+                eff_in = QGraphicsOpacityEffect(new)
+                new.setGraphicsEffect(eff_in)
+                anim_in = QPropertyAnimation(eff_in, b"opacity", self)
+                anim_in.setDuration(self.DURATION)
+                anim_in.setStartValue(0.0)
+                anim_in.setEndValue(1.0)
+                anim_in.setEasingCurve(QEasingCurve.Type.InCubic)
+                anim_in.finished.connect(lambda: new.setGraphicsEffect(None))
+                anim_in.finished.connect(lambda: setattr(self, "_animating", False))
+                anim_in.start()
+            else:
+                self._animating = False
+            current.setGraphicsEffect(None)
+
+        anim_out.finished.connect(_do_switch)
+        anim_out.start()
 
 
 # ──────────────────────────────────────────────────────────────
@@ -146,11 +199,13 @@ class ShellWindow(QMainWindow):
         self.setWindowTitle("MAX POST")
         self.setWindowIcon(QIcon(_assets("MAX POST.ico")))
         self.setStyleSheet(_SIDEBAR_STYLE + _SHELL_STYLE)
+        self.menuBar().setVisible(False)  # убираем стандартное меню
 
-        # ── Создаём панели ──────────────────────────────────────
+        # ── Инициализируем MAX POST ─────────────────────────────
         from main import MainWindow as MaxWindow
         self._max_win = MaxWindow()
 
+        # ── Инициализируем QR Generator ────────────────────────
         try:
             from qr_panel import create_qr_window
             self._qr_win, qr_widget = create_qr_window()
@@ -160,49 +215,76 @@ class ShellWindow(QMainWindow):
             self._qr_available = False
             qr_widget = QLabel(f"QR Generator недоступен:\n{e}")
             qr_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            qr_widget.setStyleSheet("color: #888; font-size: 14px;")
+            qr_widget.setStyleSheet("color:#888; font-size:14px; background:#252535;")
 
-        # ── QStackedWidget ──────────────────────────────────────
-        self._stack = QStackedWidget()
-        self._stack.addWidget(self._max_win.centralWidget())   # index 0
-        self._stack.addWidget(qr_widget)                       # index 1
+        # ── FadeStack ───────────────────────────────────────────
+        self._stack = _FadeStack()
+        self._stack.addWidget(self._max_win.centralWidget())  # index 0
+        self._stack.addWidget(qr_widget)                      # index 1
 
-        # ── Компоновка: sidebar + stack ─────────────────────────
+        # ── Компоновка ──────────────────────────────────────────
         self._sidebar = _SideBar()
         body = QWidget()
         body.setObjectName("shellBody")
-        body_layout = QHBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(0)
-        body_layout.addWidget(self._sidebar)
-        body_layout.addWidget(self._stack)
+        bl = QHBoxLayout(body)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.setSpacing(0)
+        bl.addWidget(self._sidebar)
+        bl.addWidget(self._stack)
         self.setCentralWidget(body)
 
-        # ── Меню MAX POST переносим на ShellWindow ───────────────
-        self._attach_max_menu()
-
-        # ── Сигналы сайдбара ────────────────────────────────────
+        # ── Сигналы ─────────────────────────────────────────────
         self._sidebar._group.idClicked.connect(self._switch_panel)
-
-    # ──────────────────────────────────────────────────────────
-    def _attach_max_menu(self) -> None:
-        """Копирует QAction-ы из меню MAX POST в меню ShellWindow."""
-        outer = self.menuBar()
-        inner = self._max_win.menuBar()
-        for menu in inner.findChildren(type(inner.addMenu(""))):
-            pass  # не используем этот подход
-        # Переносим меню целиком — Qt позволяет перепривязать QMenu к другому menubar
-        for action in inner.actions():
-            outer.addAction(action)
-        inner.setVisible(False)
+        self._sidebar.btn_settings.clicked.connect(self._show_settings_menu)
 
     # ──────────────────────────────────────────────────────────
     def _switch_panel(self, index: int) -> None:
-        self._stack.setCurrentIndex(index)
-        if index == 0:
-            self.menuBar().setVisible(True)
-        else:
-            self.menuBar().setVisible(False)
+        self._stack.switch_to(index)
+
+    # ──────────────────────────────────────────────────────────
+    def _show_settings_menu(self) -> None:
+        """Показывает выпадающее меню со всеми пунктами MAX POST."""
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background: #252535;
+                color: #ccccdd;
+                border: 1px solid #3a3a55;
+                border-radius: 6px;
+                padding: 4px;
+                font-size: 13px;
+            }
+            QMenu::item {
+                padding: 6px 20px 6px 12px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background: rgba(74,108,247,0.25);
+                color: #ffffff;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #3a3a55;
+                margin: 4px 8px;
+            }
+        """)
+
+        # Копируем все пункты из меню MAX POST
+        inner_menu = self._max_win.menuBar()
+        for top_action in inner_menu.actions():
+            top_menu = top_action.menu()
+            if top_menu:
+                sub = menu.addMenu(top_action.text())
+                sub.setStyleSheet(menu.styleSheet())
+                for action in top_menu.actions():
+                    sub.addAction(action)
+            else:
+                menu.addAction(top_action)
+
+        # Показываем над кнопкой настроек
+        btn = self._sidebar.btn_settings
+        pos = btn.mapToGlobal(btn.rect().topRight())
+        menu.exec(pos)
 
     # ──────────────────────────────────────────────────────────
     def closeEvent(self, event) -> None:
