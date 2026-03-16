@@ -53,6 +53,11 @@ QPushButton#settingsBtn:hover {
     color: #aaaacc;
     background: rgba(255,255,255,0.07);
 }
+QPushButton#sideBtn:disabled {
+    color: #444455;
+    background: transparent;
+    border-left: 3px solid transparent;
+}
 """
 
 _SHELL_STYLE = """
@@ -115,9 +120,13 @@ class _SideBar(QFrame):
         # Кнопки модулей
         self.btn_max = _SideButton(_assets("MAX POST.ico"), "MAX POST — отправка сообщений", "MP")
         self.btn_qr  = _SideButton(_assets("max.ico"),      "QR Generator — генератор карточек", "QR")
+        self.btn_mkd = _SideButton(_assets("mkd.ico"),      "МКД — скоро", "МКД")
+        self.btn_mkd.setEnabled(False)
         layout.addWidget(self.btn_max)
         layout.addSpacing(2)
         layout.addWidget(self.btn_qr)
+        layout.addSpacing(2)
+        layout.addWidget(self.btn_mkd)
 
         layout.addStretch()
 
