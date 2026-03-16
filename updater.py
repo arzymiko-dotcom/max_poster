@@ -237,6 +237,8 @@ def check_for_updates(parent=None) -> None:
 
     worker.result_ready.connect(_on_result)
     worker.start()
-    # Сохраняем ссылку на worker, чтобы Qt не удалил его раньше времени
-    if parent is not None:
-        worker.setParent(parent)
+    # Сохраняем ссылку на worker, чтобы GC не удалил его до завершения потока.
+    # Если parent не передан — привязываем к экземпляру приложения.
+    owner = parent if parent is not None else QApplication.instance()
+    if owner is not None:
+        worker.setParent(owner)

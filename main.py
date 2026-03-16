@@ -1,3 +1,4 @@
+import atexit
 import os
 import sys
 from pathlib import Path
@@ -1060,6 +1061,7 @@ class MainWindow(QMainWindow):
         self.state_manager = StateManager(_appdata / "app_state.json")
         self.max_sender = MaxSender()
         self.vk_sender = VkSender()
+        atexit.register(self._do_save_state)  # сохраняем состояние и при крэше
         self._pending_history: dict = {}
 
         self._parse_timer = QTimer(self)
