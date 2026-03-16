@@ -9,7 +9,10 @@ a = Analysis(
         ('twemoji', 'twemoji'),
         ('assets', 'assets'),
         ('fonts', 'fonts'),
-        ('app/my_qr_app', 'app/my_qr_app'),
+        # QR Generator — только исходники и ассеты, без .venv/build/dist
+        ('app/my_qr_app/main.py',  'app/my_qr_app'),
+        ('app/my_qr_app/assets',   'app/my_qr_app/assets'),
+        ('app/my_qr_app/version.txt', 'app/my_qr_app'),
     ],
     hiddenimports=[
         'dotenv', 'dotenv.main',
