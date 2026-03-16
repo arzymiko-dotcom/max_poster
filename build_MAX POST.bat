@@ -23,19 +23,12 @@ echo.
 REM Очищаем артефакты прошлых сборок
 if exist dist rmdir /s /q dist
 if exist build rmdir /s /q build
-del /q *.spec 2>NUL
 
 echo [1/4] Активируем виртуальное окружение...
 call .venv\Scripts\activate.bat
 
 echo [2/4] Собираем EXE (режим папки)...
-pyinstaller --clean --windowed --name "MAX POST" ^
-    --icon="assets\MAX POST.ico" ^
-    --add-data "twemoji;twemoji" ^
-    --add-data "assets;assets" ^
-    --hidden-import=dotenv ^
-    --hidden-import=dotenv.main ^
-    main.py --noconfirm
+pyinstaller --clean "MAX POST.spec" --noconfirm
 if errorlevel 1 (
     echo Ошибка: PyInstaller завершился с ошибкой!
     pause
