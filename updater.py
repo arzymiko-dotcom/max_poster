@@ -1,10 +1,15 @@
 """
 Модуль проверки и загрузки обновлений.
 
-GitHub version.txt — одна строка с версией (например: 1.1.0)
+GitHub version.txt — две строки:
+  строка 1: версия (например: 1.2.3)
+  строка 2: sha256:<hex> — SHA256-хэш установщика (опционально)
+
+Если хэш присутствует, скачанный EXE верифицируется перед запуском.
 Установщик лежит на Яндекс.Диске (публичная ссылка).
 """
 
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -50,11 +55,26 @@ def _local_version() -> str:
 
 def _fetch_remote_version() -> str | None:
     """Возвращает версию с GitHub или None при ошибке."""
+    info = _fetch_remote_info()
+    return info[0] if info else None
+
+
+def _fetch_remote_info() -> tuple[str, str | None] | None:
+    """Возвращает (версия, sha256_или_None) с GitHub или None при ошибке."""
     try:
         resp = requests.get(GITHUB_VERSION_URL, timeout=10)
         resp.raise_for_status()
         lines = resp.text.strip().splitlines()
-        return lines[0].strip() if lines else None
+        if not lines:
+            return None
+        version = lines[0].strip()
+        sha256 = None
+        for line in lines[1:]:
+            line = line.strip()
+            if line.lower().startswith("sha256:"):
+                sha256 = line[len("sha256:"):].strip().lower()
+                break
+        return version, sha256
     except Exception:
         return None
 
@@ -77,9 +97,10 @@ class DownloadWorker(QThread):
     download_finished = pyqtSignal(str)   # путь к скачанному файлу
     failed = pyqtSignal(str)              # сообщение об ошибке
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, expected_sha256: str = "") -> None:
         super().__init__()
         self.url = url
+        self.expected_sha256 = expected_sha256.strip().lower()
 
     def run(self) -> None:
         try:
@@ -139,6 +160,17 @@ class DownloadWorker(QThread):
                 dest.unlink(missing_ok=True)
                 raise RuntimeError("Скачанный файл не является Windows EXE (неверный заголовок)")
 
+            # Проверяем SHA256, если хэш был передан из version.txt
+            if self.expected_sha256:
+                actual = hashlib.sha256(dest.read_bytes()).hexdigest().lower()
+                if actual != self.expected_sha256:
+                    dest.unlink(missing_ok=True)
+                    raise RuntimeError(
+                        f"SHA256 не совпадает — файл повреждён или подменён.\n"
+                        f"Ожидается: {self.expected_sha256}\n"
+                        f"Получено:  {actual}"
+                    )
+
             self.download_finished.emit(str(dest))
 
         except Exception as exc:
@@ -146,13 +178,14 @@ class DownloadWorker(QThread):
 
 
 class DownloadDialog(QDialog):
-    def __init__(self, remote_ver: str, local_ver: str, url: str, parent=None) -> None:
+    def __init__(self, remote_ver: str, local_ver: str, url: str, expected_sha256: str = "", parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Загрузка обновления")
         self.setFixedSize(400, 130)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowCloseButtonHint)
 
         self._url = url
+        self._expected_sha256 = expected_sha256
         self._worker: DownloadWorker | None = None
 
         layout = QVBoxLayout(self)
@@ -171,7 +204,7 @@ class DownloadDialog(QDialog):
         layout.addWidget(self._cancel_btn)
 
     def start(self) -> None:
-        self._worker = DownloadWorker(self._url)
+        self._worker = DownloadWorker(self._url, self._expected_sha256)
         self._worker.progress.connect(self._bar.setValue)
         self._worker.download_finished.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
@@ -199,29 +232,30 @@ class DownloadDialog(QDialog):
 
 class _CheckWorker(QThread):
     """Проверяет версию на GitHub в фоновом потоке."""
-    result_ready = pyqtSignal(str, str)  # (local_ver, remote_ver) — только если нужно обновление
+    result_ready = pyqtSignal(str, str, str)  # (local_ver, remote_ver, sha256_or_empty)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
 
     def run(self) -> None:
         local = _local_version()
-        remote_ver = _fetch_remote_version()
-        if remote_ver is None:
+        info = _fetch_remote_info()
+        if info is None:
             return
+        remote_ver, remote_sha256 = info
         try:
             if Version(remote_ver) <= Version(local):
                 return
         except Exception:
             return
-        self.result_ready.emit(local, remote_ver)
+        self.result_ready.emit(local, remote_ver, remote_sha256 or "")
 
 
 def check_for_updates(parent=None) -> None:
     """Проверяет обновления в фоновом потоке и показывает диалог при необходимости."""
     worker = _CheckWorker(parent)
 
-    def _on_result(local: str, remote_ver: str) -> None:
+    def _on_result(local: str, remote_ver: str, sha256: str) -> None:
         msg = QMessageBox(parent)
         msg.setWindowTitle("Доступно обновление")
         msg.setText(f"Вы используете версию {local}, вышла {remote_ver}.\n\nОбновить сейчас?")
@@ -231,7 +265,7 @@ def check_for_updates(parent=None) -> None:
         msg.exec()
         if msg.clickedButton() is not btn_yes:
             return
-        dlg = DownloadDialog(remote_ver, local, YADISK_PUBLIC_URL, parent)
+        dlg = DownloadDialog(remote_ver, local, YADISK_PUBLIC_URL, sha256, parent)
         dlg.start()
         dlg.exec()
 

@@ -87,6 +87,19 @@ if errorlevel 1 (
     exit /b 1
 )
 
+REM --- Вычисляем SHA256 установщика и записываем в version.txt ---
+echo Вычисляем SHA256 установщика...
+for /f "usebackq delims=" %%H in (`powershell -NoProfile -Command "(Get-FileHash 'installer\MAX POST_setup.exe' -Algorithm SHA256).Hash.ToLower()"`) do set "INSTALLER_HASH=%%H"
+if not defined INSTALLER_HASH (
+    echo Предупреждение: не удалось вычислить SHA256 - version.txt не обновлён
+) else (
+    (echo %APP_VER%) > version.txt
+    (echo sha256:%INSTALLER_HASH%) >> version.txt
+    echo SHA256: %INSTALLER_HASH%
+    echo Хэш записан в version.txt
+    echo ВАЖНО: закоммить и запушь version.txt на GitHub!
+)
+
 echo.
 echo ========================================
 echo    Готово! Версия: %APP_VER%
