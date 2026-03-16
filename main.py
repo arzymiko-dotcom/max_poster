@@ -50,11 +50,18 @@ from vk_sender import VkSender
 
 
 
+_twemoji_dir_cache: "Path | None" = None
+
+
 def _twemoji_dir() -> Path:
     """Папка с PNG-иконками Twemoji (работает и в dev, и в exe)."""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).parent / "twemoji"
-    return Path(__file__).parent / "twemoji"
+    global _twemoji_dir_cache
+    if _twemoji_dir_cache is None:
+        if getattr(sys, "frozen", False):
+            _twemoji_dir_cache = Path(sys.executable).parent / "twemoji"
+        else:
+            _twemoji_dir_cache = Path(__file__).parent / "twemoji"
+    return _twemoji_dir_cache
 
 
 def _assets_dir() -> Path:
@@ -1027,10 +1034,12 @@ class MainWindow(QMainWindow):
         self._bg_opacity: int = 50
         self._bg_widget: _BgWidget | None = None
 
-        # Шрифты интерфейса
+        # Шрифты интерфейса — загружаются отложено после показа окна
         self._ui_font_family: str = ""
         self._ui_font_size: int = 13
-        self._ui_font_families: list[str] = self._load_font_families()
+        self._ui_font_families: list[str] = []
+        self._pending_font_family: str = ""
+        self._pending_font_size: int = 0
 
         # Кэшированный ExcelMatcher — читает Excel только один раз
         self._matcher: ExcelMatcher | None = (
@@ -1061,6 +1070,8 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._apply_styles()
         self.load_state()
+        # Загружаем шрифты и применяем сохранённый шрифт после показа окна
+        QTimer.singleShot(0, self._deferred_font_load)
 
         # Горячие клавиши (Ctrl+Return и Ctrl+L заданы через QAction в меню)
 
@@ -1083,6 +1094,14 @@ class MainWindow(QMainWindow):
                         seen.add(fam)
                         families.append(fam)
         return sorted(families)
+
+    def _deferred_font_load(self) -> None:
+        """Загружает шрифты и применяет сохранённый шрифт. Вызывается после показа окна."""
+        self._ui_font_families = self._load_font_families()
+        fam = self._pending_font_family
+        sz = self._pending_font_size
+        if fam and fam in self._ui_font_families:
+            self._apply_ui_font(fam, sz or self._ui_font_size)
 
     def _build_menu(self) -> None:
         menu = self.menuBar()
@@ -1180,8 +1199,7 @@ class MainWindow(QMainWindow):
         self.text_input.textChanged.connect(self.sync_preview)
 
         # Нижняя панель: смайлик + счётчик символов
-        self._emoji_picker = EmojiPicker(self)
-        self._emoji_picker.emoji_selected.connect(self._insert_emoji)
+        self._emoji_picker: "EmojiPicker | None" = None
 
         self._emoji_btn = QPushButton("😊")
         self._emoji_btn.setObjectName("emojiButton")
@@ -1623,6 +1641,13 @@ class MainWindow(QMainWindow):
                 letter-spacing: 0.5px;
                 text-transform: uppercase;
             }
+            #previewTitle {
+                font-size: 13px;
+                font-weight: 600;
+                color: #7a8799;
+                letter-spacing: 0.5px;
+                text-transform: uppercase;
+            }
             #checklistItem { font-size: 13px; color: #444; padding: 1px 0; }
             #historyFrame {
                 border: 1px solid #e4eaf0;
@@ -1834,6 +1859,9 @@ class MainWindow(QMainWindow):
         self._parse_timer.start()
 
     def _toggle_emoji_picker(self) -> None:
+        if self._emoji_picker is None:
+            self._emoji_picker = EmojiPicker(self)
+            self._emoji_picker.emoji_selected.connect(self._insert_emoji)
         if self._emoji_picker.isVisible():
             self._emoji_picker.hide()
         else:
@@ -2243,11 +2271,9 @@ class MainWindow(QMainWindow):
         data = self.state_manager.load()
         self.resize(data.get("width", 1280), data.get("height", 760))
 
-        # Шрифт интерфейса — применяем первым делом
-        saved_family = data.get("ui_font_family", "")
-        saved_size = data.get("ui_font_size", 0)
-        if saved_family and saved_family in self._ui_font_families:
-            self._apply_ui_font(saved_family, saved_size or self._ui_font_size)
+        # Шрифт интерфейса — применяется в _deferred_font_load после загрузки шрифтов
+        self._pending_font_family = data.get("ui_font_family", "")
+        self._pending_font_size = data.get("ui_font_size", 0)
 
         bg_index = data.get("bg_index", None)
         bg_mode = data.get("bg_mode", 0)

@@ -2,8 +2,6 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-import pandas as pd
-
 from address_parser import ParsedAddress, normalize_text
 
 
@@ -35,10 +33,11 @@ class MatchResult:
 class ExcelMatcher:
     def __init__(self, excel_path: str | Path) -> None:
         self.excel_path = Path(excel_path)
-        self._df: pd.DataFrame | None = None  # кэш — читаем Excel один раз
+        self._df = None  # кэш — читаем Excel один раз
 
-    def load_dataframe(self) -> pd.DataFrame:
+    def load_dataframe(self):
         if self._df is None:
+            import pandas as pd
             try:
                 self._df = pd.read_excel(self.excel_path, dtype=str)
             except FileNotFoundError:
@@ -49,7 +48,7 @@ class ExcelMatcher:
                 ) from exc
         return self._df
 
-    def _resolve_columns(self, df: pd.DataFrame) -> tuple[str, str | None, str | None]:
+    def _resolve_columns(self, df) -> tuple[str, str | None, str | None]:
         """Возвращает (колонка адреса, колонка ссылки, колонка ID)."""
         columns_map = {str(col).strip().lower(): col for col in df.columns}
         address_col = columns_map.get("адрес") or df.columns[0]

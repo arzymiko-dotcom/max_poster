@@ -194,31 +194,46 @@ class DownloadDialog(QDialog):
         self._cancel_btn.setText("Закрыть")
 
 
+class _CheckWorker(QThread):
+    """Проверяет версию на GitHub в фоновом потоке."""
+    result_ready = pyqtSignal(str, str)  # (local_ver, remote_ver) — только если нужно обновление
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+
+    def run(self) -> None:
+        local = _local_version()
+        remote_ver = _fetch_remote_version()
+        if remote_ver is None:
+            return
+        try:
+            if Version(remote_ver) <= Version(local):
+                return
+        except Exception:
+            return
+        self.result_ready.emit(local, remote_ver)
+
+
 def check_for_updates(parent=None) -> None:
-    """Проверяет обновления и показывает диалог если доступна новая версия."""
-    local = _local_version()
-    remote_ver = _fetch_remote_version()
+    """Проверяет обновления в фоновом потоке и показывает диалог при необходимости."""
+    worker = _CheckWorker(parent)
 
-    if remote_ver is None:
-        return  # нет интернета или GitHub недоступен — молча пропускаем
+    def _on_result(local: str, remote_ver: str) -> None:
+        msg = QMessageBox(parent)
+        msg.setWindowTitle("Доступно обновление")
+        msg.setText(f"Вы используете версию {local}, вышла {remote_ver}.\n\nОбновить сейчас?")
+        msg.setIcon(QMessageBox.Icon.Question)
+        btn_yes = msg.addButton("Да", QMessageBox.ButtonRole.YesRole)
+        msg.addButton("Нет", QMessageBox.ButtonRole.NoRole)
+        msg.exec()
+        if msg.clickedButton() is not btn_yes:
+            return
+        dlg = DownloadDialog(remote_ver, local, YADISK_PUBLIC_URL, parent)
+        dlg.start()
+        dlg.exec()
 
-    try:
-        if Version(remote_ver) <= Version(local):
-            return  # версия актуальна
-    except Exception:
-        return
-
-    msg = QMessageBox(parent)
-    msg.setWindowTitle("Доступно обновление")
-    msg.setText(f"Вы используете версию {local}, вышла {remote_ver}.\n\nОбновить сейчас?")
-    msg.setIcon(QMessageBox.Icon.Question)
-    btn_yes = msg.addButton("Да", QMessageBox.ButtonRole.YesRole)
-    msg.addButton("Нет", QMessageBox.ButtonRole.NoRole)
-    msg.exec()
-
-    if msg.clickedButton() is not btn_yes:
-        return
-
-    dlg = DownloadDialog(remote_ver, local, YADISK_PUBLIC_URL, parent)
-    dlg.start()
-    dlg.exec()
+    worker.result_ready.connect(_on_result)
+    worker.start()
+    # Сохраняем ссылку на worker, чтобы Qt не удалил его раньше времени
+    if parent is not None:
+        worker.setParent(parent)
