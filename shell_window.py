@@ -2,6 +2,7 @@
 shell_window.py — VS Code-style контейнер для всех модулей MAX POST.
 """
 
+import ctypes
 import sys
 from pathlib import Path
 
@@ -123,9 +124,9 @@ class _SideBar(QFrame):
         self.btn_mkd = _SideButton(_assets("mkd.ico"),      "МКД — скоро", "МКД")
         self.btn_mkd.setEnabled(False)
         layout.addWidget(self.btn_max)
-        layout.addSpacing(2)
+        layout.addSpacing(8)
         layout.addWidget(self.btn_qr)
-        layout.addSpacing(2)
+        layout.addSpacing(8)
         layout.addWidget(self.btn_mkd)
 
         layout.addStretch()
@@ -210,6 +211,31 @@ class ShellWindow(QMainWindow):
         # ── Сигналы ─────────────────────────────────────────────
         self._sidebar._group.idClicked.connect(self._switch_panel)
         self._sidebar.btn_settings.clicked.connect(self._show_settings_menu)
+
+    # ──────────────────────────────────────────────────────────
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        self._apply_dark_titlebar()
+
+    # ──────────────────────────────────────────────────────────
+    def _apply_dark_titlebar(self) -> None:
+        """Включает тёмный заголовок окна через Windows DWM API."""
+        if sys.platform != "win32":
+            return
+        try:
+            hwnd = int(self.winId())
+            # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Windows 10 20H1+, Windows 11)
+            # значение 19 — для старых сборок Windows 10
+            for attr in (20, 19):
+                result = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr,
+                    ctypes.byref(ctypes.c_int(1)),
+                    ctypes.sizeof(ctypes.c_int),
+                )
+                if result == 0:  # S_OK
+                    break
+        except Exception:
+            pass
 
     # ──────────────────────────────────────────────────────────
     def _switch_panel(self, index: int) -> None:
