@@ -233,6 +233,7 @@ class DownloadDialog(QDialog):
 class _CheckWorker(QThread):
     """Проверяет версию на GitHub в фоновом потоке."""
     result_ready = pyqtSignal(str, str, str)  # (local_ver, remote_ver, sha256_or_empty)
+    up_to_date   = pyqtSignal(str)            # (local_ver) — версия актуальна
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -245,14 +246,19 @@ class _CheckWorker(QThread):
         remote_ver, remote_sha256 = info
         try:
             if Version(remote_ver) <= Version(local):
+                self.up_to_date.emit(local)
                 return
         except Exception:
             return
         self.result_ready.emit(local, remote_ver, remote_sha256 or "")
 
 
-def check_for_updates(parent=None) -> None:
-    """Проверяет обновления в фоновом потоке и показывает диалог при необходимости."""
+def check_for_updates(parent=None, silent: bool = True) -> None:
+    """Проверяет обновления в фоновом потоке.
+
+    silent=True  — при автозапуске: ничего не показывать если версия актуальна.
+    silent=False — при ручной проверке: показать сообщение «последняя версия».
+    """
     worker = _CheckWorker(parent)
 
     def _on_result(local: str, remote_ver: str, sha256: str) -> None:
@@ -269,7 +275,15 @@ def check_for_updates(parent=None) -> None:
         dlg.start()
         dlg.exec()
 
+    def _on_up_to_date(local: str) -> None:
+        if not silent:
+            QMessageBox.information(
+                parent, "Обновления",
+                f"Вы используете последнюю версию\nVersion {local}"
+            )
+
     worker.result_ready.connect(_on_result)
+    worker.up_to_date.connect(_on_up_to_date)
     worker.start()
     # Сохраняем ссылку на worker, чтобы GC не удалил его до завершения потока.
     # Если parent не передан — привязываем к экземпляру приложения.

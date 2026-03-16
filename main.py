@@ -1178,8 +1178,12 @@ class MainWindow(QMainWindow):
         help_menu.addSeparator()
 
         update_action = QAction("Проверить обновления…", self)
-        update_action.triggered.connect(lambda: check_for_updates(self))
+        update_action.triggered.connect(lambda: check_for_updates(self, silent=False))
         help_menu.addAction(update_action)
+
+        integrity_action = QAction("Проверка целостности программы…", self)
+        integrity_action.triggered.connect(self._check_integrity)
+        help_menu.addAction(integrity_action)
 
     def _build_ui(self) -> None:
         central = _BgWidget()
@@ -2372,6 +2376,33 @@ class MainWindow(QMainWindow):
             "Отправка сообщений в группы MAX через GREEN-API.\n\n"
             "Emoji provided free by Twitter (Twemoji) under CC BY 4.0\n"
             "https://creativecommons.org/licenses/by/4.0/"
+        )
+
+    def _check_integrity(self) -> None:
+        """Проверяет наличие ключевых файлов программы."""
+        base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+        results: list[str] = []
+
+        checks = [
+            (base / "version.txt",               "version.txt"),
+            (_assets_dir() / "MAX POST.ico",     "Иконка приложения"),
+            (base / ".env",                       "Файл настроек .env"),
+        ]
+        if self.excel_path:
+            checks.append((self.excel_path, f"Excel-файл ({self.excel_path.name})"))
+
+        all_ok = True
+        for path, label in checks:
+            if path.exists():
+                results.append(f"✅  {label}")
+            else:
+                results.append(f"❌  {label}  — не найден")
+                all_ok = False
+
+        status = "Все файлы на месте." if all_ok else "Обнаружены отсутствующие файлы."
+        QMessageBox.information(
+            self, "Проверка целостности",
+            f"{status}\n\n" + "\n".join(results)
         )
 
 
