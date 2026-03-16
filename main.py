@@ -1027,7 +1027,7 @@ class MainWindow(QMainWindow):
 
         # Версия — читаем один раз
         _ver_file = (Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent) / "version.txt"
-        self._app_version: str = _ver_file.read_text(encoding="utf-8").strip() if _ver_file.exists() else "?"
+        self._app_version: str = _ver_file.read_text(encoding="utf-8").splitlines()[0].strip() if _ver_file.exists() else "?"
 
         self.excel_path: Path = self._resolve_excel_path()
         self.image_path: Path | None = None
