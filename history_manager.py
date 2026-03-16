@@ -17,7 +17,10 @@ def _data_dir() -> Path:
         d = Path(os.environ.get("APPDATA", Path.home())) / "MAX POST"
         _old_d = Path(os.environ.get("APPDATA", Path.home())) / "max_poster"
         if not d.exists() and _old_d.exists():
-            _old_d.rename(d)
+            try:
+                _old_d.rename(d)
+            except OSError:
+                pass  # если переименовать не удалось — просто создадим новую папку ниже
         d.mkdir(parents=True, exist_ok=True)
         return d
     return Path(__file__).parent

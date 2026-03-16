@@ -1052,7 +1052,10 @@ class MainWindow(QMainWindow):
         if getattr(sys, "frozen", False):
             _old_appdata = Path(os.environ.get("APPDATA", Path.home())) / "max_poster"
             if not _appdata.exists() and _old_appdata.exists():
-                _old_appdata.rename(_appdata)
+                try:
+                    _old_appdata.rename(_appdata)
+                except OSError:
+                    pass  # если переименовать не удалось — просто создадим новую папку ниже
         _appdata.mkdir(parents=True, exist_ok=True)
         self.state_manager = StateManager(_appdata / "app_state.json")
         self.max_sender = MaxSender()
