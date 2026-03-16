@@ -18,6 +18,8 @@ a = Analysis(
         'dotenv', 'dotenv.main',
         'qrcode', 'qrcode.image.pil',
         'PIL', 'PIL.Image', 'PIL.ImageDraw',
+        'pandas', 'pandas.core', 'pandas.io.excel',
+        'openpyxl', 'openpyxl.reader.excel',
     ],
     hookspath=[],
     hooksconfig={},

@@ -14,6 +14,8 @@ VERSION_FILE = Path(__file__).parent / "version.txt"
 
 
 def read_version() -> str:
+    if not VERSION_FILE.exists():
+        raise SystemExit(f"Файл не найден: {VERSION_FILE}")
     lines = VERSION_FILE.read_text(encoding="utf-8").splitlines()
     return lines[0].strip() if lines else ""
 

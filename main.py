@@ -2069,6 +2069,8 @@ class MainWindow(QMainWindow):
         self.save_state()
 
     def send_post(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            return  # отправка уже идёт — игнорируем повторное нажатие
         text = self.text_input.toPlainText().strip()
         if not text:
             QMessageBox.warning(self, "Отправка", "Нельзя отправить пустой текст.")

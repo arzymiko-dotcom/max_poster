@@ -29,6 +29,8 @@ def _load_qr_module():
     if qr_dir not in sys.path:
         sys.path.insert(0, qr_dir)
     spec = importlib.util.spec_from_file_location("qr_main", str(qr_path))
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Не удалось создать spec для QR-модуля: {qr_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
