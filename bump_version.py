@@ -14,11 +14,15 @@ VERSION_FILE = Path(__file__).parent / "version.txt"
 
 
 def read_version() -> str:
-    return VERSION_FILE.read_text(encoding="utf-8").strip()
+    lines = VERSION_FILE.read_text(encoding="utf-8").splitlines()
+    return lines[0].strip() if lines else ""
 
 
 def write_version(version: str) -> None:
-    VERSION_FILE.write_text(version + "\n", encoding="utf-8")
+    # Сохраняем остальные строки (sha256 и др.) без изменений
+    lines = VERSION_FILE.read_text(encoding="utf-8").splitlines()
+    lines[0] = version
+    VERSION_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def bump(current: str, part: str) -> str:
