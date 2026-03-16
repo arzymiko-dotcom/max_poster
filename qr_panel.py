@@ -66,9 +66,13 @@ def create_qr_widget():
     if hasattr(win, "lbl_version"):
         win.lbl_version.setVisible(False)
 
-    # Останавливаем встроенный апдейт-чекер QR Generator —
+    # Отключаем встроенный апдейт-чекер QR Generator —
     # обновления управляются через MAX POST
     if hasattr(win, "_update_checker"):
+        try:
+            win._update_checker.update_available.disconnect()
+        except Exception:
+            pass
         try:
             win._update_checker.quit()
             win._update_checker.wait(2000)
