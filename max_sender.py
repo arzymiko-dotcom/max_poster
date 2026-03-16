@@ -111,8 +111,13 @@ class MaxSender:
         """Загружает файл на сервер, возвращает urlFile."""
         upload_url = f"{self.media_url}/waInstance{self.id_instance}/uploadFile/{self.api_token}"
         file_name = Path(image_path).name
+        _ALLOWED_MIME = {"image/jpeg", "image/png", "image/gif", "image/webp"}
         mime_type, _ = mimetypes.guess_type(image_path)
-        mime_type = mime_type or "image/jpeg"
+        if not mime_type or mime_type not in _ALLOWED_MIME:
+            ext = Path(image_path).suffix.lower()
+            raise RuntimeError(
+                f"Неподдерживаемый тип файла '{ext}'. Разрешены: JPEG, PNG, GIF, WEBP"
+            )
         with open(image_path, "rb") as f:
             resp = requests.post(
                 upload_url,
@@ -138,7 +143,7 @@ class MaxSender:
         resp = requests.post(send_url, json=payload, timeout=30)
 
         if not resp.ok:
-            return SendResult(False, f"chatId={chat_id!r}\nОшибка отправки ({resp.status_code}): {resp.text}")
+            return SendResult(False, f"chatId={chat_id}\nОшибка отправки ({resp.status_code}): {resp.text}")
 
         msg_id = _json_or_raise(resp).get("idMessage", "")
 

@@ -4,8 +4,11 @@ import json
 import os
 import sys
 import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
+
+_lock = threading.Lock()
 
 
 def _data_dir() -> Path:
@@ -51,10 +54,11 @@ def add_entry(addresses: list[str], sent_max: bool, sent_vk: bool, text: str = "
     if sent_vk:
         entry["vk"] = True
 
-    history = load()
-    history.insert(0, entry)
-    history = history[:200]  # не даём файлу расти бесконечно
-    _atomic_write(_path(), json.dumps(history, ensure_ascii=False, indent=2))
+    with _lock:
+        history = load()
+        history.insert(0, entry)
+        history = history[:200]  # не даём файлу расти бесконечно
+        _atomic_write(_path(), json.dumps(history, ensure_ascii=False, indent=2))
 
 
 def _atomic_write(path: Path, text: str) -> None:

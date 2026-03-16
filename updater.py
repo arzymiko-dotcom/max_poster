@@ -43,7 +43,8 @@ def _local_version() -> str:
         base = Path(__file__).parent
     path = base / "version.txt"
     if path.exists():
-        return path.read_text(encoding="utf-8").strip().splitlines()[0].strip()
+        lines = path.read_text(encoding="utf-8").strip().splitlines()
+        return lines[0].strip() if lines else "0.0.0"
     return "0.0.0"
 
 
@@ -52,7 +53,8 @@ def _fetch_remote_version() -> str | None:
     try:
         resp = requests.get(GITHUB_VERSION_URL, timeout=10)
         resp.raise_for_status()
-        return resp.text.strip().splitlines()[0].strip()
+        lines = resp.text.strip().splitlines()
+        return lines[0].strip() if lines else None
     except Exception:
         return None
 
@@ -178,7 +180,8 @@ class DownloadDialog(QDialog):
     def _cancel(self) -> None:
         if self._worker:
             self._worker.quit()
-            self._worker.wait(2000)
+            if not self._worker.wait(5000):
+                self._worker.terminate()
         self.reject()
 
     def _on_finished(self, path: str) -> None:

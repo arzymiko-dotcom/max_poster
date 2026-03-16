@@ -49,7 +49,8 @@ def _enabled() -> bool:
 def _version() -> str:
     try:
         base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
-        return (base / "version.txt").read_text(encoding="utf-8").strip().splitlines()[0].strip()
+        lines = (base / "version.txt").read_text(encoding="utf-8").strip().splitlines()
+        return lines[0].strip() if lines else "?"
     except Exception:
         return "?"
 

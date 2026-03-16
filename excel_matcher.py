@@ -50,8 +50,12 @@ class ExcelMatcher:
 
     def _resolve_columns(self, df) -> tuple[str, str | None, str | None]:
         """Возвращает (колонка адреса, колонка ссылки, колонка ID)."""
+        import sys as _sys
         columns_map = {str(col).strip().lower(): col for col in df.columns}
-        address_col = columns_map.get("адрес") or df.columns[0]
+        address_col = columns_map.get("адрес")
+        if address_col is None:
+            print("[warn] Колонка 'адрес' не найдена в Excel, используется первая колонка", file=_sys.stderr)
+            address_col = df.columns[0]
         link_col = columns_map.get("ссылка") or (df.columns[1] if len(df.columns) > 1 else None)
         id_col = columns_map.get("id") or (df.columns[2] if len(df.columns) > 2 else None)
         return address_col, link_col, id_col

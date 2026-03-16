@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 from PyQt6.QtCore import QRect, QSize, QTimer, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap, QTextCursor
+from PyQt6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -713,7 +713,9 @@ class AddAddressDialog(QDialog):
         url = self._url_edit.text().strip()
         chat_id = self._id_edit.text().strip()
         if url and not chat_id and "web.max.ru/" in url:
-            chat_id = url.split("web.max.ru/")[-1].strip("/")
+            extracted = url.split("web.max.ru/")[-1].strip("/")
+            if extracted:
+                chat_id = extracted
         return MatchResult(address=address, score=0, chat_link=url, chat_id=chat_id)
 
 
@@ -1930,7 +1932,8 @@ class MainWindow(QMainWindow):
         for parsed in parsed_list:
             try:
                 matches = matcher.find_matches(parsed)
-            except Exception:
+            except Exception as exc:
+                print(f"[warn] find_matches failed for {parsed!r}: {exc}", file=sys.stderr)
                 continue
             if not matches:
                 continue
@@ -2150,7 +2153,8 @@ class MainWindow(QMainWindow):
         for parsed in parsed_list:
             try:
                 matches = matcher.find_matches(parsed)
-            except Exception:
+            except Exception as exc:
+                print(f"[warn] find_matches failed for {parsed!r}: {exc}", file=sys.stderr)
                 continue
             if not matches:
                 continue
@@ -2269,11 +2273,11 @@ class MainWindow(QMainWindow):
 
     def load_state(self) -> None:
         data = self.state_manager.load()
-        self.resize(data.get("width", 1280), data.get("height", 760))
+        self.resize(int(data.get("width", 1280)), int(data.get("height", 760)))
 
         # Шрифт интерфейса — применяется в _deferred_font_load после загрузки шрифтов
         self._pending_font_family = data.get("ui_font_family", "")
-        self._pending_font_size = data.get("ui_font_size", 0)
+        self._pending_font_size = int(data.get("ui_font_size", 0))
 
         bg_index = data.get("bg_index", None)
         bg_mode = data.get("bg_mode", 0)
