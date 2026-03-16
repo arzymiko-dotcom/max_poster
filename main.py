@@ -41,7 +41,7 @@ from PyQt6.QtWidgets import (
 _MANUAL_ROLE: int = Qt.ItemDataRole.UserRole + 1
 
 import tg_notify
-from address_parser import extract_address, extract_all_addresses
+from address_parser import extract_all_addresses
 from excel_matcher import ExcelMatcher, MatchResult
 import history_manager
 from max_sender import MaxSender
@@ -1027,7 +1027,8 @@ class MainWindow(QMainWindow):
 
         # Версия — читаем один раз
         _ver_file = (Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent) / "version.txt"
-        self._app_version: str = _ver_file.read_text(encoding="utf-8").splitlines()[0].strip() if _ver_file.exists() else "?"
+        _ver_lines = _ver_file.read_text(encoding="utf-8").splitlines() if _ver_file.exists() else []
+        self._app_version: str = _ver_lines[0].strip() if _ver_lines else "?"
 
         self.excel_path: Path = self._resolve_excel_path()
         self.image_path: Path | None = None

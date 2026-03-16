@@ -20,8 +20,11 @@ def read_version() -> str:
 
 def write_version(version: str) -> None:
     # Сохраняем остальные строки (sha256 и др.) без изменений
-    lines = VERSION_FILE.read_text(encoding="utf-8").splitlines()
-    lines[0] = version
+    lines = VERSION_FILE.read_text(encoding="utf-8").splitlines() if VERSION_FILE.exists() else []
+    if lines:
+        lines[0] = version
+    else:
+        lines = [version]
     VERSION_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
