@@ -2258,6 +2258,10 @@ class MainWindow(QMainWindow):
         self._save_timer.start()
 
     def _do_save_state(self) -> None:
+        try:
+            _ = self._addr_list.count()  # проверяем, живы ли C++ объекты
+        except RuntimeError:
+            return  # Qt уже уничтожил объекты (вызов через atexit при завершении)
         checked_ids = {m.chat_id for m in self._get_checked_matches()}
         addresses = []
         for i in range(self._addr_list.count()):

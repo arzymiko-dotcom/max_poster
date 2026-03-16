@@ -148,6 +148,11 @@ class _FadeStack(QStackedWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._animating = False
+        # Хранить ссылки, чтобы Python GC не удалил объекты до конца анимации
+        self._eff_out = None
+        self._anim_out = None
+        self._eff_in = None
+        self._anim_in = None
 
     def switch_to(self, index: int) -> None:
         if self._animating or index == self.currentIndex():
@@ -160,34 +165,34 @@ class _FadeStack(QStackedWidget):
         self._animating = True
 
         # Fade out текущей панели
-        eff_out = QGraphicsOpacityEffect(current)
-        current.setGraphicsEffect(eff_out)
-        anim_out = QPropertyAnimation(eff_out, b"opacity", self)
-        anim_out.setDuration(self.DURATION)
-        anim_out.setStartValue(1.0)
-        anim_out.setEndValue(0.0)
-        anim_out.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._eff_out = QGraphicsOpacityEffect(current)
+        current.setGraphicsEffect(self._eff_out)
+        self._anim_out = QPropertyAnimation(self._eff_out, b"opacity", self)
+        self._anim_out.setDuration(self.DURATION)
+        self._anim_out.setStartValue(1.0)
+        self._anim_out.setEndValue(0.0)
+        self._anim_out.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         def _do_switch():
             self.setCurrentIndex(index)
             new = self.currentWidget()
+            current.setGraphicsEffect(None)
             if new:
-                eff_in = QGraphicsOpacityEffect(new)
-                new.setGraphicsEffect(eff_in)
-                anim_in = QPropertyAnimation(eff_in, b"opacity", self)
-                anim_in.setDuration(self.DURATION)
-                anim_in.setStartValue(0.0)
-                anim_in.setEndValue(1.0)
-                anim_in.setEasingCurve(QEasingCurve.Type.InCubic)
-                anim_in.finished.connect(lambda: new.setGraphicsEffect(None))
-                anim_in.finished.connect(lambda: setattr(self, "_animating", False))
-                anim_in.start()
+                self._eff_in = QGraphicsOpacityEffect(new)
+                new.setGraphicsEffect(self._eff_in)
+                self._anim_in = QPropertyAnimation(self._eff_in, b"opacity", self)
+                self._anim_in.setDuration(self.DURATION)
+                self._anim_in.setStartValue(0.0)
+                self._anim_in.setEndValue(1.0)
+                self._anim_in.setEasingCurve(QEasingCurve.Type.InCubic)
+                self._anim_in.finished.connect(lambda: new.setGraphicsEffect(None))
+                self._anim_in.finished.connect(lambda: setattr(self, "_animating", False))
+                self._anim_in.start()
             else:
                 self._animating = False
-            current.setGraphicsEffect(None)
 
-        anim_out.finished.connect(_do_switch)
-        anim_out.start()
+        self._anim_out.finished.connect(_do_switch)
+        self._anim_out.start()
 
 
 # ──────────────────────────────────────────────────────────────
@@ -207,8 +212,9 @@ class ShellWindow(QMainWindow):
 
         # ── Инициализируем QR Generator ────────────────────────
         try:
-            from qr_panel import create_qr_window
-            self._qr_win, qr_widget = create_qr_window()
+            from qr_panel import create_qr_widget
+            self._qr_win = create_qr_widget()
+            qr_widget = self._qr_win
             self._qr_available = True
         except Exception as e:
             self._qr_win = None
@@ -296,5 +302,8 @@ class ShellWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self._max_win.close()
         if self._qr_win is not None:
-            self._qr_win.close()
+            try:
+                self._qr_win.close()
+            except Exception:
+                pass
         super().closeEvent(event)
