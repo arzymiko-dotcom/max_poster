@@ -1187,6 +1187,7 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         central = _BgWidget()
+        central.setObjectName("maxPosterContent")
         self._bg_widget = central
         self.setCentralWidget(central)
 
@@ -1548,7 +1549,7 @@ class MainWindow(QMainWindow):
 
     def _apply_styles(self) -> None:
         self.setStyleSheet("""
-            QMainWindow { background: #f3f4f6; }
+            #maxPosterContent { background: #f3f4f6; }
             QGroupBox {
                 font-size: 15px;
                 font-weight: 600;
