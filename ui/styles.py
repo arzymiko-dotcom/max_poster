@@ -294,4 +294,23 @@ def get_stylesheet() -> str:
                 background: #2d6cdf;
                 border-radius: 2px;
             }
+            QPushButton#cancelSendBtn {
+                min-height: 0;
+                font-size: 11px;
+                font-weight: 600;
+                color: #c0392b;
+                background: #fff5f5;
+                border: 1px solid #f5c6c6;
+                border-radius: 5px;
+                padding: 1px 10px;
+            }
+            QPushButton#cancelSendBtn:hover {
+                background: #ffe0e0;
+                border-color: #e05555;
+            }
+            QPushButton#cancelSendBtn:disabled {
+                color: #aaa;
+                background: #f5f5f5;
+                border-color: #e0e0e0;
+            }
         """

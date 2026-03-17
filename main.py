@@ -90,6 +90,11 @@ class SendWorker(QThread):
         self.image_path = image_path
         self.send_max = send_max
         self.send_vk = send_vk
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        """Запрашивает отмену — поток остановится после текущей отправки."""
+        self._cancelled = True
 
     def run(self) -> None:
         lines: list[str] = []
@@ -98,6 +103,10 @@ class SendWorker(QThread):
         if self.send_max:
             total = len(self.chat_ids)
             for i, chat_id in enumerate(self.chat_ids, 1):
+                if self._cancelled:
+                    lines.append(f"⛔ Отменено после {i - 1}/{total} отправок.")
+                    self.result_ready.emit(False, "\n".join(lines))
+                    return
                 self.progress.emit(f"MAX {i}/{total}…")
                 r = self.max_sender.send_post(
                     chat_link=chat_id,
@@ -108,7 +117,7 @@ class SendWorker(QThread):
                 if not r.success:
                     success = False
 
-        if self.send_vk:
+        if not self._cancelled and self.send_vk:
             r = self.vk_sender.send_post(
                 text=self.text,
                 image_path=self.image_path,
@@ -453,7 +462,7 @@ class MainWindow(QMainWindow):
 
         left_layout.addWidget(platforms_section)
 
-        # Прогресс-бар (скрыт в режиме ожидания)
+        # Прогресс-бар + кнопка отмены (скрыты в режиме ожидания)
         self._progress_bar = QProgressBar()
         self._progress_bar.setObjectName("sendProgress")
         self._progress_bar.setRange(0, 0)  # indeterminate
@@ -461,8 +470,20 @@ class MainWindow(QMainWindow):
         self._progress_bar.setTextVisible(False)
         self._progress_bar.hide()
 
+        self._cancel_button = QPushButton("✕  Отмена")
+        self._cancel_button.setObjectName("cancelSendBtn")
+        self._cancel_button.setFixedHeight(22)
+        self._cancel_button.hide()
+        self._cancel_button.clicked.connect(self._cancel_send)
+
+        progress_row = QHBoxLayout()
+        progress_row.setContentsMargins(0, 0, 0, 0)
+        progress_row.setSpacing(8)
+        progress_row.addWidget(self._progress_bar, 1)
+        progress_row.addWidget(self._cancel_button)
+
         left_layout.addLayout(buttons_row)
-        left_layout.addWidget(self._progress_bar)
+        left_layout.addLayout(progress_row)
 
         version_label = QLabel(f"Version {self._app_version}")
         version_label.setObjectName("versionLabel")
@@ -899,10 +920,28 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Отправка", "Нет отмеченных адресов. Нажми «Проверить адрес».")
             return
 
+        # Подтверждение при массовой рассылке (> 5 групп)
+        if send_max and len(chat_ids) > 5:
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle("Подтверждение отправки")
+            dlg.setText(
+                f"Публикация будет отправлена в <b>{len(chat_ids)}</b> групп MAX."
+                f"<br><br>Продолжить?"
+            )
+            dlg.setIcon(QMessageBox.Icon.Question)
+            btn_yes = dlg.addButton("Отправить", QMessageBox.ButtonRole.AcceptRole)
+            dlg.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
+            dlg.exec()
+            if dlg.clickedButton() != btn_yes:
+                return
+
         self.send_button.setEnabled(False)
         self.send_button.setText("Публикуется…")
         self.check_button.setEnabled(False)
         self._progress_bar.show()
+        self._cancel_button.setEnabled(True)
+        self._cancel_button.setText("✕  Отмена")
+        self._cancel_button.show()
 
         self._pending_history = {
             "addresses": [m.address for m in checked],
@@ -927,11 +966,19 @@ class MainWindow(QMainWindow):
     def _on_send_progress(self, step: str) -> None:
         self.send_button.setText(step)
 
+    def _cancel_send(self) -> None:
+        """Запрашивает отмену текущей рассылки."""
+        if self._worker and self._worker.isRunning():
+            self._worker.cancel()
+            self._cancel_button.setEnabled(False)
+            self._cancel_button.setText("Отменяется…")
+
     def _on_send_finished(self, success: bool, message: str) -> None:
         self.send_button.setEnabled(True)
         self.send_button.setText("Опубликовать")
         self.check_button.setEnabled(True)
         self._progress_bar.hide()
+        self._cancel_button.hide()
         if success:
             self._success_overlay.show_success()
             h = self._pending_history

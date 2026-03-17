@@ -11,11 +11,11 @@ from datetime import datetime, timedelta
 from html.parser import HTMLParser
 
 import requests
-from PyQt6.QtCore import QThread, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont
+from PyQt6.QtCore import QThread, QTimer, QUrl, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QDesktopServices, QFont
 from PyQt6.QtWidgets import (
-    QFrame, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
+    QApplication, QFrame, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QMenu, QPushButton, QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 _log = logging.getLogger(__name__)
@@ -233,6 +233,9 @@ class StatsPanel(QWidget):
         self._table.setSortingEnabled(True)
         self._table.verticalHeader().setVisible(False)
         self._table.horizontalHeader().setSortIndicatorShown(True)
+        self._table.cellDoubleClicked.connect(self._on_double_click)
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._show_context_menu)
         root.addWidget(self._table)
 
         # ── Статус-строка ─────────────────────────────────────────
@@ -365,6 +368,52 @@ class StatsPanel(QWidget):
 
         self._table.setSortingEnabled(True)
         self._table.resizeRowsToContents()
+
+    # ── Взаимодействие с таблицей ────────────────────────────────
+
+    def _get_row_link(self, row: int) -> str:
+        item = self._table.item(row, _COL_LINK)
+        return item.text().strip() if item else ""
+
+    def _on_double_click(self, row: int, _col: int) -> None:
+        """Двойной клик по строке — открывает ссылку группы в браузере."""
+        link = self._get_row_link(row)
+        if link.startswith("http"):
+            QDesktopServices.openUrl(QUrl(link))
+
+    def _show_context_menu(self, pos) -> None:
+        """Правый клик — контекстное меню: открыть в браузере / копировать ссылку."""
+        row = self._table.rowAt(pos.y())
+        if row < 0:
+            return
+        link = self._get_row_link(row)
+        name_item = self._table.item(row, _COL_NAME)
+        name = name_item.text() if name_item else ""
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu { background:#ffffff; border:1px solid #e4eaf0;
+                    border-radius:8px; padding:4px; font-size:13px; }
+            QMenu::item { padding:6px 18px 6px 10px; border-radius:5px; }
+            QMenu::item:selected { background:#dbeafe; color:#1d4ed8; }
+            QMenu::separator { height:1px; background:#f0f4f8; margin:3px 6px; }
+        """)
+
+        act_open = menu.addAction("🌐  Открыть в браузере")
+        act_open.setEnabled(link.startswith("http"))
+        act_copy_link = menu.addAction("📋  Копировать ссылку")
+        act_copy_link.setEnabled(bool(link))
+        menu.addSeparator()
+        act_copy_name = menu.addAction("📝  Копировать название")
+        act_copy_name.setEnabled(bool(name))
+
+        chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
+        if chosen == act_open and link.startswith("http"):
+            QDesktopServices.openUrl(QUrl(link))
+        elif chosen == act_copy_link and link:
+            QApplication.clipboard().setText(link)
+        elif chosen == act_copy_name and name:
+            QApplication.clipboard().setText(name)
 
     # ── Стили ────────────────────────────────────────────────────
 

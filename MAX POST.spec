@@ -20,11 +20,14 @@ a = Analysis(
         'PIL', 'PIL.Image', 'PIL.ImageDraw',
         'pandas', 'pandas.core', 'pandas.io.excel',
         'openpyxl', 'openpyxl.reader.excel',
+        # Новые модули
         'stats_panel',
+        'html', 'html.parser',       # парсер отчёта в stats_panel
+        'log_setup', 'constants',
+        # ui-пакет — импортируются внутри try/except, PyInstaller может пропустить
         'ui', 'ui.paths', 'ui.widgets', 'ui.emoji_picker',
         'ui.background', 'ui.animations', 'ui.preview_card',
         'ui.dialogs', 'ui.styles',
-        'log_setup', 'constants',
     ],
     hookspath=[],
     hooksconfig={},
