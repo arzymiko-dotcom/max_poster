@@ -30,11 +30,12 @@ from PyQt6.QtWidgets import (
 
 try:
     from PyQt6.QtWebEngineWidgets import QWebEngineView
+    from PyQt6.QtWebEngineCore import QWebEnginePage
     _WEB_ENGINE_AVAILABLE = True
-except ImportError:
+except Exception:
     _WEB_ENGINE_AVAILABLE = False
 
-_WEB_REPORT_URL = "https://bot-dev.gkh.spb.ru/gks2vyb-report.php"
+_WEB_REPORT_URL = "http://bot-dev.gkh.spb.ru/gks2vyb-report.php"
 
 from env_utils import get_env_path
 
@@ -122,6 +123,10 @@ class _FetchWorker(QThread):
     finished = pyqtSignal(list, list, dict)  # (rows, summary_texts, group_cache)
     failed   = pyqtSignal(str)
     progress = pyqtSignal(str)               # текст для строки статуса
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._stop = False
 
     def run(self) -> None:
         load_dotenv(get_env_path())
@@ -228,6 +233,8 @@ class _FetchWorker(QThread):
         first_request = True
 
         for chat_id, link, address in entries:
+            if self._stop:
+                return
             cached = group_cache.get(chat_id, {})
             cache_age = now_ts - cached.get("cached_at", 0)
 
@@ -320,6 +327,8 @@ class StatsPanel(QWidget):
         self._auto_timer.timeout.connect(self.refresh)
         self._auto_timer.start()
 
+        QApplication.instance().aboutToQuit.connect(self._shutdown)
+
         # Первая загрузка
         QTimer.singleShot(0, self.refresh)
 
@@ -359,6 +368,9 @@ class StatsPanel(QWidget):
         # ── Страница 0: WEB версия ────────────────────────────────
         if _WEB_ENGINE_AVAILABLE:
             self._web_view = QWebEngineView()
+            _page = QWebEnginePage(self._web_view)
+            _page.certificateError.connect(lambda err: err.acceptCertificate())
+            self._web_view.setPage(_page)
             self._web_view.setUrl(QUrl(_WEB_REPORT_URL))
             self._stack.addWidget(self._web_view)
         else:
@@ -801,11 +813,15 @@ class StatsPanel(QWidget):
 
     # ── Тема / закрытие ──────────────────────────────────────────
 
-    def closeEvent(self, event) -> None:
+    def _shutdown(self) -> None:
         self._auto_timer.stop()
         if self._worker and self._worker.isRunning():
+            self._worker._stop = True
             self._worker.quit()
-            self._worker.wait(2000)
+            self._worker.wait(10000)
+
+    def closeEvent(self, event) -> None:
+        self._shutdown()
         super().closeEvent(event)
 
     def set_dark(self, dark: bool) -> None:

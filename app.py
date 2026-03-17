@@ -20,6 +20,21 @@ def main() -> None:
     tg_notify.install_excepthook()
     tg_notify.send_startup()
 
+    import os
+    os.environ.setdefault(
+        "QTWEBENGINE_CHROMIUM_FLAGS", "--ignore-certificate-errors"
+    )
+
+    try:
+        from PyQt6.QtWebEngineQuick import QtWebEngineQuick
+        QtWebEngineQuick.initialize()
+    except Exception:
+        pass
+    try:
+        import PyQt6.QtWebEngineWidgets  # noqa: F401 — должен быть до QApplication
+    except Exception:
+        pass
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
