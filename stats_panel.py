@@ -24,9 +24,17 @@ from PyQt6.QtCore import QThread, QTimer, QUrl, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QMenu, QProgressBar, QPushButton, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QLineEdit, QMenu, QProgressBar, QPushButton, QStackedWidget, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget,
 )
+
+try:
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    _WEB_ENGINE_AVAILABLE = True
+except ImportError:
+    _WEB_ENGINE_AVAILABLE = False
+
+_WEB_REPORT_URL = "https://bot-dev.gkh.spb.ru/gks2vyb-report.php"
 
 from env_utils import get_env_path
 
@@ -322,6 +330,52 @@ class StatsPanel(QWidget):
         root.setContentsMargins(16, 14, 16, 14)
         root.setSpacing(10)
 
+        # ── Переключатель режимов (pill) ─────────────────────────
+        toggle_row = QHBoxLayout()
+        toggle_row.setSpacing(0)
+
+        self._btn_web   = QPushButton("🌐  WEB версия")
+        self._btn_smart = QPushButton("⚡  Smart версия")
+        for btn in (self._btn_web, self._btn_smart):
+            btn.setCheckable(True)
+            btn.setFixedHeight(34)
+            btn.setObjectName("statsToggleBtn")
+        self._btn_smart.setObjectName("statsToggleBtnActive")
+        self._btn_web.setChecked(False)
+        self._btn_smart.setChecked(True)
+        self._btn_web.clicked.connect(lambda: self._switch_mode(0))
+        self._btn_smart.clicked.connect(lambda: self._switch_mode(1))
+
+        toggle_row.addStretch()
+        toggle_row.addWidget(self._btn_web)
+        toggle_row.addWidget(self._btn_smart)
+        toggle_row.addStretch()
+        root.addLayout(toggle_row)
+
+        # ── Стек страниц ─────────────────────────────────────────
+        self._stack = QStackedWidget()
+        root.addWidget(self._stack)
+
+        # ── Страница 0: WEB версия ────────────────────────────────
+        if _WEB_ENGINE_AVAILABLE:
+            self._web_view = QWebEngineView()
+            self._web_view.setUrl(QUrl(_WEB_REPORT_URL))
+            self._stack.addWidget(self._web_view)
+        else:
+            no_web = QLabel(
+                "⚠️  Для WEB версии требуется пакет PyQt6-WebEngine.\n"
+                "Установите его командой: pip install PyQt6-WebEngine"
+            )
+            no_web.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            no_web.setObjectName("statsStatus")
+            self._stack.addWidget(no_web)
+
+        # ── Страница 1: Smart версия (наша) ──────────────────────
+        smart_page = QWidget()
+        smart_layout = QVBoxLayout(smart_page)
+        smart_layout.setContentsMargins(0, 0, 0, 0)
+        smart_layout.setSpacing(10)
+
         # ── Заголовок ────────────────────────────────────────────
         hdr = QHBoxLayout()
         title = QLabel("Статистика групп")
@@ -345,7 +399,7 @@ class StatsPanel(QWidget):
         self._refresh_btn.setFixedHeight(32)
         self._refresh_btn.clicked.connect(self.refresh)
         hdr.addWidget(self._refresh_btn)
-        root.addLayout(hdr)
+        smart_layout.addLayout(hdr)
 
         # ── Сводка ───────────────────────────────────────────────
         self._summary_frame = QFrame()
@@ -362,14 +416,14 @@ class StatsPanel(QWidget):
         for w in (self._lbl_groups, self._lbl_members, self._lbl_active, self._lbl_missing):
             sf_layout.addWidget(w)
         sf_layout.addStretch()
-        root.addWidget(self._summary_frame)
+        smart_layout.addWidget(self._summary_frame)
 
         # ── Баннер кэша (скрыт по умолчанию) ────────────────────
         self._cache_banner = QLabel()
         self._cache_banner.setObjectName("statsCacheBanner")
         self._cache_banner.setWordWrap(True)
         self._cache_banner.hide()
-        root.addWidget(self._cache_banner)
+        smart_layout.addWidget(self._cache_banner)
 
         # ── Прогресс-бар загрузки (скрыт по умолчанию) ──────────
         self._progress_bar = QProgressBar()
@@ -379,7 +433,7 @@ class StatsPanel(QWidget):
         self._progress_bar.setValue(0)
         self._progress_bar.setTextVisible(False)
         self._progress_bar.hide()
-        root.addWidget(self._progress_bar)
+        smart_layout.addWidget(self._progress_bar)
 
         # ── Поиск ────────────────────────────────────────────────
         search_row = QHBoxLayout()
@@ -395,7 +449,7 @@ class StatsPanel(QWidget):
         self._dead_btn.setEnabled(False)
         self._dead_btn.toggled.connect(self._on_dead_toggled)
         search_row.addWidget(self._dead_btn)
-        root.addLayout(search_row)
+        smart_layout.addLayout(search_row)
 
         # ── Таблица ───────────────────────────────────────────────
         self._table = QTableWidget(0, 4)
@@ -418,12 +472,15 @@ class StatsPanel(QWidget):
         self._table.cellDoubleClicked.connect(self._on_double_click)
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._show_context_menu)
-        root.addWidget(self._table)
+        smart_layout.addWidget(self._table)
 
         # ── Статус-строка ─────────────────────────────────────────
         self._status_lbl = QLabel("Загрузка…")
         self._status_lbl.setObjectName("statsStatus")
-        root.addWidget(self._status_lbl)
+        smart_layout.addWidget(self._status_lbl)
+
+        self._stack.addWidget(smart_page)
+        self._stack.setCurrentIndex(1)  # по умолчанию Smart версия
 
     @staticmethod
     def _make_stat_lbl(value: str, label: str) -> QWidget:
@@ -439,6 +496,18 @@ class StatsPanel(QWidget):
         lay.addWidget(lbl_lbl, alignment=Qt.AlignmentFlag.AlignHCenter)
         w._val_lbl = val_lbl  # type: ignore[attr-defined]
         return w
+
+    def _switch_mode(self, index: int) -> None:
+        self._stack.setCurrentIndex(index)
+        self._btn_web.setChecked(index == 0)
+        self._btn_smart.setChecked(index == 1)
+        self._btn_web.setObjectName("statsToggleBtnActive" if index == 0 else "statsToggleBtn")
+        self._btn_smart.setObjectName("statsToggleBtnActive" if index == 1 else "statsToggleBtn")
+        # Переприменяем стиль чтобы Qt подхватил новый objectName
+        self._btn_web.style().unpolish(self._btn_web)
+        self._btn_web.style().polish(self._btn_web)
+        self._btn_smart.style().unpolish(self._btn_smart)
+        self._btn_smart.style().polish(self._btn_smart)
 
     # ── Логика обновления ────────────────────────────────────────
 
@@ -746,6 +815,20 @@ class StatsPanel(QWidget):
         if dark:
             self.setStyleSheet("""
                 StatsPanel { background: #1e1e2e; }
+                QPushButton#statsToggleBtn {
+                    font-size: 13px; font-weight: 600; padding: 6px 22px;
+                    border: 1px solid #3a3a55; background: #2d2d45; color: #7878aa;
+                    border-radius: 0px;
+                }
+                QPushButton#statsToggleBtn:first-child { border-radius: 8px 0px 0px 8px; }
+                QPushButton#statsToggleBtn:last-child  { border-radius: 0px 8px 8px 0px; }
+                QPushButton#statsToggleBtnActive {
+                    font-size: 13px; font-weight: 700; padding: 6px 22px;
+                    border: 1px solid #4a6cf7; background: #1e2a5a; color: #8899ff;
+                    border-radius: 0px;
+                }
+                QPushButton#statsToggleBtnActive:first-child { border-radius: 8px 0px 0px 8px; }
+                QPushButton#statsToggleBtnActive:last-child  { border-radius: 0px 8px 8px 0px; }
                 QLabel#statsPanelTitle { font-size: 18px; font-weight: 700; color: #d0d0f0; }
                 QLabel#statsLastRefresh { font-size: 11px; color: #6868aa; padding-right: 8px; }
                 QPushButton#statsRefreshBtn {
@@ -802,6 +885,20 @@ class StatsPanel(QWidget):
             return
         self.setStyleSheet("""
             StatsPanel { background: #f3f4f6; }
+            QPushButton#statsToggleBtn {
+                font-size: 13px; font-weight: 600; padding: 6px 22px;
+                border: 1px solid #c7d0db; background: #eef2f7; color: #94a3b8;
+                border-radius: 0px;
+            }
+            QPushButton#statsToggleBtn:first-child { border-radius: 8px 0px 0px 8px; }
+            QPushButton#statsToggleBtn:last-child  { border-radius: 0px 8px 8px 0px; }
+            QPushButton#statsToggleBtnActive {
+                font-size: 13px; font-weight: 700; padding: 6px 22px;
+                border: 1px solid #2d6cdf; background: #dbeafe; color: #1d4ed8;
+                border-radius: 0px;
+            }
+            QPushButton#statsToggleBtnActive:first-child { border-radius: 8px 0px 0px 8px; }
+            QPushButton#statsToggleBtnActive:last-child  { border-radius: 0px 8px 8px 0px; }
             QLabel#statsPanelTitle { font-size: 18px; font-weight: 700; color: #1a1a2e; }
             QLabel#statsLastRefresh { font-size: 11px; color: #9ca3af; padding-right: 8px; }
             QPushButton#statsRefreshBtn {
