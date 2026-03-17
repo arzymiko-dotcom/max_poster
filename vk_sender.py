@@ -100,8 +100,8 @@ class VkSender:
             photo=photo_str,
             hash=uploaded["hash"],
         )
-        if not saved:
-            raise RuntimeError("ВК не вернул сохранённое фото (пустой ответ photos.saveWallPhoto)")
+        if not isinstance(saved, list) or not saved:
+            raise RuntimeError(f"ВК не вернул сохранённое фото (photos.saveWallPhoto): {saved!r}")
         photo = saved[0]
         return f"photo{photo['owner_id']}_{photo['id']}"
 

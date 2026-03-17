@@ -194,6 +194,12 @@ class _FetchWorker(QThread):
         rows: list[dict] = []
         total   = len(entries)
 
+        # Удаляем из кэша записи групп, которых нет в текущем Excel
+        current_ids = {cid for cid, _, _ in entries}
+        stale_keys  = [k for k in group_cache if k not in current_ids]
+        for k in stale_keys:
+            del group_cache[k]
+
         # Считаем сколько групп нужно запросить (не в кэше или кэш устарел)
         need_fetch = sum(
             1 for cid, _, _ in entries

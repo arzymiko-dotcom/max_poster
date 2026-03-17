@@ -177,7 +177,8 @@ class MaxSender:
         if not caption and text:
             text_result = self._send_text(chat_id, text)
             if not text_result.success:
-                return SendResult(False, f"Фото отправлено (ID: {msg_id}), но текст не удалось отправить: {text_result.message}")
+                # Фото уже отправлено — частичный успех, а не ошибка
+                return SendResult(True, f"Фото отправлено (ID: {msg_id}), текст — отдельным сообщением не удалось: {text_result.message}")
 
         return SendResult(True, f"Сообщение с фото отправлено. ID: {msg_id}")
 

@@ -68,8 +68,7 @@ def add_entry(addresses: list[str], sent_max: bool, sent_vk: bool, text: str = "
 
     with _lock:
         history = load()
-        history.insert(0, entry)
-        history = history[:_MAX_ENTRIES]
+        history = [entry] + history[:_MAX_ENTRIES - 1]
         _atomic_write(_path(), json.dumps(history, ensure_ascii=False, indent=2))
 
 
