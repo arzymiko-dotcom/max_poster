@@ -6,8 +6,11 @@ stats_panel.py — Панель «Статистика групп» MAX POST.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 import sys
+import tempfile
 from datetime import datetime, timedelta
 from html.parser import HTMLParser
 from pathlib import Path
@@ -42,8 +45,46 @@ def _norm_link(link: str) -> str:
     return link
 
 
-_AUTO_REFRESH_MS = 5 * 60 * 1000   # 5 минут
-_REQUEST_TIMEOUT = 20               # секунд
+_AUTO_REFRESH_MS  = 5 * 60 * 1000  # авто-обновление каждые 5 минут
+_REQUEST_TIMEOUT  = 8              # секунд — быстрый таймаут, не вешаем UI
+
+
+def _cache_path() -> Path:
+    """Путь к файлу кэша последней успешной загрузки."""
+    if getattr(sys, "frozen", False):
+        base = Path(os.environ.get("APPDATA", Path.home())) / "MAX POST"
+    else:
+        base = Path(__file__).parent
+    base.mkdir(parents=True, exist_ok=True)
+    return base / "stats_cache.json"
+
+
+def _save_cache(rows: list[dict], summary_texts: list[str]) -> None:
+    path = _cache_path()
+    data = {
+        "ts": datetime.now().isoformat(),
+        "rows": rows,
+        "summary_texts": summary_texts,
+    }
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=path.parent, delete=False, suffix=".tmp"
+        ) as tmp:
+            json.dump(data, tmp, ensure_ascii=False, indent=2)
+            tmp_path = Path(tmp.name)
+        tmp_path.replace(path)
+    except Exception as exc:
+        _log.warning("stats cache write error: %s", exc)
+
+
+def _load_cache() -> tuple[list[dict], list[str], datetime | None]:
+    """Загружает кэш. Возвращает (rows, summary_texts, timestamp) или ([], [], None)."""
+    try:
+        raw = json.loads(_cache_path().read_text(encoding="utf-8"))
+        ts = datetime.fromisoformat(raw["ts"])
+        return raw["rows"], raw.get("summary_texts", []), ts
+    except Exception:
+        return [], [], None
 
 # Индексы колонок
 _COL_NAME    = 0
@@ -155,7 +196,14 @@ class _FetchWorker(QThread):
             resp = requests.get(REPORT_URL, timeout=_REQUEST_TIMEOUT)
             resp.raise_for_status()
             rows, summary = _parse_html(resp.text)
+            if not rows:
+                self.failed.emit("Сервер вернул пустой ответ — возможно, изменилась структура страницы")
+                return
             self.finished.emit(rows, summary)
+        except requests.exceptions.Timeout:
+            self.failed.emit("Сервер не ответил за 8 секунд (таймаут)")
+        except requests.exceptions.ConnectionError:
+            self.failed.emit("Нет соединения с сервером")
         except Exception as exc:
             _log.warning("stats fetch error: %s", exc)
             self.failed.emit(str(exc))
@@ -237,6 +285,13 @@ class StatsPanel(QWidget):
         sf_layout.addStretch()
         root.addWidget(self._summary_frame)
 
+        # ── Баннер кэша (скрыт по умолчанию) ────────────────────
+        self._cache_banner = QLabel()
+        self._cache_banner.setObjectName("statsCacheBanner")
+        self._cache_banner.setWordWrap(True)
+        self._cache_banner.hide()
+        root.addWidget(self._cache_banner)
+
         # ── Поиск ────────────────────────────────────────────────
         search_row = QHBoxLayout()
         self._search = QLineEdit()
@@ -313,6 +368,8 @@ class StatsPanel(QWidget):
         self._all_rows = rows
         self._last_refresh = datetime.now()
         self._last_lbl.setText(f"Обновлено в {self._last_refresh.strftime('%H:%M:%S')}")
+        self._cache_banner.hide()          # сервер ответил — баннер не нужен
+        _save_cache(rows, summary_texts)   # сохраняем кэш для резервного показа
         self._refresh_btn.setEnabled(True)
         self._refresh_btn.setText("⟳  Обновить")
         self._export_btn.setEnabled(True)
@@ -388,7 +445,20 @@ class StatsPanel(QWidget):
     def _on_error(self, msg: str) -> None:
         self._refresh_btn.setEnabled(True)
         self._refresh_btn.setText("⟳  Обновить")
-        self._status_lbl.setText(f"Ошибка загрузки: {msg}")
+        cached_rows, cached_summary, cached_ts = _load_cache()
+        if cached_rows:
+            self._all_rows = cached_rows
+            ts_str = cached_ts.strftime("%d.%m.%Y %H:%M") if cached_ts else "неизвестно"
+            self._cache_banner.setText(
+                f"⚠️  Сервер недоступен: {msg}  ·  Показаны данные от {ts_str}"
+            )
+            self._cache_banner.show()
+            self._export_btn.setEnabled(True)
+            self._apply_filter()
+            self._status_lbl.setText(f"Кэш от {ts_str} · {len(cached_rows)} групп")
+        else:
+            self._cache_banner.hide()
+            self._status_lbl.setText(f"Ошибка: {msg}  ·  Кэш недоступен")
 
     def _on_dead_toggled(self, checked: bool) -> None:
         self._dead_only = checked
@@ -692,6 +762,15 @@ class StatsPanel(QWidget):
                 color: #ccc;
                 background: #f9f9f9;
                 border-color: #e5e7eb;
+            }
+            QLabel#statsCacheBanner {
+                font-size: 12px;
+                font-weight: 600;
+                color: #92400e;
+                background: #fef3c7;
+                border: 1px solid #fcd34d;
+                border-radius: 7px;
+                padding: 6px 12px;
             }
         """)
 
