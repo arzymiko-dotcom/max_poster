@@ -639,7 +639,60 @@ class StatsPanel(QWidget):
 
     # ── Стили ────────────────────────────────────────────────────
 
-    def _apply_styles(self) -> None:
+    def set_dark(self, dark: bool) -> None:
+        """Переключает тёмную/светлую тему панели."""
+        self._apply_styles(dark=dark)
+
+    def _apply_styles(self, dark: bool = False) -> None:
+        if dark:
+            self.setStyleSheet("""
+                StatsPanel { background: #1e1e2e; }
+                QLabel#statsPanelTitle { font-size: 18px; font-weight: 700; color: #d0d0f0; }
+                QLabel#statsLastRefresh { font-size: 11px; color: #6868aa; padding-right: 8px; }
+                QPushButton#statsRefreshBtn {
+                    min-height: 0; font-size: 13px; font-weight: 600; padding: 4px 16px;
+                    border-radius: 7px; border: 1px solid #3a3a55; background: #2d2d45; color: #c8c8e0;
+                }
+                QPushButton#statsRefreshBtn:hover { background: #1e2a5a; border-color: #4a6cf7; color: #8899ff; }
+                QPushButton#statsRefreshBtn:disabled { color: #5a5a88; }
+                QFrame#statsSummary { background: #252535; border: 1px solid #3a3a55; border-radius: 10px; }
+                QLabel#statsStatValue { font-size: 24px; font-weight: 700; color: #a0c0ff; }
+                QLabel#statsStatLabel { font-size: 11px; color: #6868aa; font-weight: 500; }
+                QLineEdit#statsSearch {
+                    font-size: 13px; padding: 7px 12px; border: 1px solid #3a3a55;
+                    border-radius: 8px; background: #2a2a3e; color: #d0d0f0;
+                }
+                QTableWidget#statsTable {
+                    border: 1px solid #3a3a55; border-radius: 8px; background: #252535;
+                    alternate-background-color: #222232; gridline-color: #2d2d45;
+                    font-size: 12px; color: #d0d0f0;
+                }
+                QTableWidget#statsTable QHeaderView::section {
+                    background: #222232; color: #7878aa; font-size: 11px; font-weight: 700;
+                    padding: 6px 10px; border: none; border-bottom: 2px solid #3a3a55;
+                    text-transform: uppercase; letter-spacing: 0.4px;
+                }
+                QTableWidget#statsTable::item:selected { background: #1e3a8a; color: #e0e0ff; }
+                QLabel#statsStatus { font-size: 11px; color: #6868aa; padding: 2px 0; }
+                QPushButton#statsExportBtn {
+                    min-height: 0; font-size: 13px; font-weight: 600; padding: 4px 14px;
+                    border-radius: 7px; border: 1px solid #2a5a3e; background: #1a3a2e; color: #4ade80;
+                }
+                QPushButton#statsExportBtn:hover { background: #1e4a36; border-color: #22c55e; }
+                QPushButton#statsExportBtn:disabled { color: #5a5a88; background: #222232; border-color: #333344; }
+                QPushButton#statsDeadBtn {
+                    min-height: 0; font-size: 12px; padding: 5px 12px; border-radius: 7px;
+                    border: 1px solid #6b2020; background: #2a1a1a; color: #f87171; font-weight: 600;
+                }
+                QPushButton#statsDeadBtn:checked { background: #dc2626; color: #ffffff; border-color: #dc2626; }
+                QPushButton#statsDeadBtn:disabled { color: #5a5a88; background: #222232; border-color: #333344; }
+                QLabel#statsCacheBanner {
+                    font-size: 12px; font-weight: 600; color: #fcd34d;
+                    background: #3a2a00; border: 1px solid #78580a;
+                    border-radius: 7px; padding: 6px 12px;
+                }
+            """)
+            return
         self.setStyleSheet("""
             StatsPanel {
                 background: #f3f4f6;

@@ -71,6 +71,7 @@ _log = logging.getLogger(__name__)
 class SendWorker(QThread):
     result_ready = pyqtSignal(bool, str)
     progress = pyqtSignal(str)
+    progress_step = pyqtSignal(int, int)   # (current, total)
 
     def __init__(
         self,
@@ -108,6 +109,7 @@ class SendWorker(QThread):
                     self.result_ready.emit(False, "\n".join(lines))
                     return
                 self.progress.emit(f"MAX {i}/{total}…")
+                self.progress_step.emit(i, total)
                 r = self.max_sender.send_post(
                     chat_link=chat_id,
                     text=self.text,
@@ -1014,11 +1016,18 @@ class MainWindow(QMainWindow):
             send_vk=send_vk,
         )
         self._worker.progress.connect(self._on_send_progress)
+        self._worker.progress_step.connect(self._on_send_step)
         self._worker.result_ready.connect(self._on_send_finished)
+        self._progress_bar.setRange(0, len(chat_ids) if send_max else 0)
+        self._progress_bar.setValue(0)
         self._worker.start()
 
     def _on_send_progress(self, step: str) -> None:
         self.send_button.setText(step)
+
+    def _on_send_step(self, current: int, total: int) -> None:
+        self._progress_bar.setRange(0, total)
+        self._progress_bar.setValue(current)
 
     def _cancel_send(self) -> None:
         """Запрашивает отмену текущей рассылки."""
