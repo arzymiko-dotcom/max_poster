@@ -23,7 +23,7 @@ from PyQt6.QtCore import QThread, QTimer, QUrl, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QMenu, QPushButton, QTableWidget, QTableWidgetItem,
+    QLineEdit, QMenu, QProgressBar, QPushButton, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
 
@@ -294,6 +294,16 @@ class StatsPanel(QWidget):
         self._cache_banner.hide()
         root.addWidget(self._cache_banner)
 
+        # ── Прогресс-бар загрузки (скрыт по умолчанию) ──────────
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setObjectName("statsProgressBar")
+        self._progress_bar.setFixedHeight(6)
+        self._progress_bar.setRange(0, 100)
+        self._progress_bar.setValue(0)
+        self._progress_bar.setTextVisible(False)
+        self._progress_bar.hide()
+        root.addWidget(self._progress_bar)
+
         # ── Поиск ────────────────────────────────────────────────
         search_row = QHBoxLayout()
         self._search = QLineEdit()
@@ -368,19 +378,49 @@ class StatsPanel(QWidget):
         self._spin_frame = 0
         self._spin_timer.start()
         self._refresh_btn.setText(f"{self._SPINNER[0]}  Загрузка…")
-        self._status_lbl.setText("Получение данных…")
+
+        # Сразу показываем кэш, чтобы пользователь видел данные во время загрузки
+        cached_rows, _, cached_ts = _load_cache()
+        if cached_rows and not self._all_rows:
+            self._all_rows = cached_rows
+            self._apply_filter()
+            ts_str = cached_ts.strftime("%d.%m.%Y %H:%M") if cached_ts else "ранее"
+            self._cache_banner.setText(f"🔄  Обновление данных… показаны данные от {ts_str}")
+            self._cache_banner.show()
+        else:
+            self._cache_banner.hide()
+
+        self._progress_bar.setValue(0)
+        self._progress_bar.show()
+        self._status_lbl.setText("Подключение к GREEN-API…")
+
         self._worker = _FetchWorker(self)
         self._worker.finished.connect(self._on_data)
         self._worker.failed.connect(self._on_error)
-        self._worker.progress.connect(self._status_lbl.setText)
+        self._worker.progress.connect(self._on_progress)
         self._worker.finished.connect(self._worker.deleteLater)
         self._worker.failed.connect(self._worker.deleteLater)
         self._worker.finished.connect(lambda *_: setattr(self, "_worker", None))
         self._worker.failed.connect(lambda *_: setattr(self, "_worker", None))
         self._worker.start()
 
+    def _on_progress(self, text: str) -> None:
+        self._status_lbl.setText(text)
+        # Парсим "Загрузка групп… X / Y" для прогресс-бара
+        if "/" in text:
+            try:
+                parts = text.split("…")[-1].strip().split("/")
+                current = int(parts[0].strip())
+                total   = int(parts[1].strip())
+                if total > 0:
+                    self._progress_bar.setValue(int(current / total * 100))
+            except (ValueError, IndexError):
+                pass
+
     def _on_data(self, rows: list[dict], summary_texts: list[str]) -> None:
         self._spin_timer.stop()
+        self._progress_bar.setValue(100)
+        self._progress_bar.hide()
         self._all_rows = rows
         self._last_refresh = datetime.now()
         self._last_lbl.setText(f"Обновлено в {self._last_refresh.strftime('%H:%M:%S')}")
@@ -430,6 +470,7 @@ class StatsPanel(QWidget):
 
     def _on_error(self, msg: str) -> None:
         self._spin_timer.stop()
+        self._progress_bar.hide()
         self._refresh_btn.setEnabled(True)
         self._refresh_btn.setText("⟳  Обновить")
         cached_rows, cached_summary, cached_ts = _load_cache()
@@ -672,6 +713,14 @@ class StatsPanel(QWidget):
                     background: #3a2a00; border: 1px solid #78580a;
                     border-radius: 7px; padding: 6px 12px;
                 }
+                QProgressBar#statsProgressBar {
+                    border: none; border-radius: 3px; background: #2d2d45;
+                }
+                QProgressBar#statsProgressBar::chunk {
+                    border-radius: 3px; background: qlineargradient(
+                        x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #4a6cf7, stop:1 #7c3aed);
+                }
             """)
             return
         self.setStyleSheet("""
@@ -719,6 +768,14 @@ class StatsPanel(QWidget):
                 font-size: 12px; font-weight: 600; color: #92400e;
                 background: #fef3c7; border: 1px solid #fcd34d;
                 border-radius: 7px; padding: 6px 12px;
+            }
+            QProgressBar#statsProgressBar {
+                border: none; border-radius: 3px; background: #e2e8f0;
+            }
+            QProgressBar#statsProgressBar::chunk {
+                border-radius: 3px; background: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #3b82f6, stop:1 #8b5cf6);
             }
         """)
 
