@@ -45,13 +45,10 @@ QPushButton#sideBtn:hover:!checked {
 QPushButton#settingsBtn {
     border: none;
     background: transparent;
-    color: #666888;
-    font-size: 20px;
     min-width: 0px;
     min-height: 0px;
 }
 QPushButton#settingsBtn:hover {
-    color: #aaaacc;
     background: rgba(255,255,255,0.07);
 }
 QPushButton#sideBtn:disabled {
@@ -122,29 +119,39 @@ class _SideBar(QFrame):
         layout.addSpacing(10)
 
         # Кнопки модулей
-        self.btn_max = _SideButton(_assets("MAX POST.ico"), "MAX POST — отправка сообщений", "MP")
-        self.btn_qr  = _SideButton(_assets("max.ico"),      "QR Generator — генератор карточек", "QR")
-        self.btn_mkd = _SideButton(_assets("mkd.ico"),      "МКД — в разработке", "МКД")
+        self.btn_max   = _SideButton(_assets("MAX POST.ico"), "MAX POST — отправка сообщений",    "MP")
+        self.btn_qr    = _SideButton(_assets("max.ico"),      "QR Generator — генератор карточек", "QR")
+        self.btn_stats = _SideButton(_assets("state.ico"),    "Статистика групп",                  "📊")
+        self.btn_mkd   = _SideButton(_assets("mkd.ico"),      "МКД — в разработке",                "МКД")
         layout.addWidget(self.btn_max)
         layout.addSpacing(8)
         layout.addWidget(self.btn_qr)
+        layout.addSpacing(8)
+        layout.addWidget(self.btn_stats)
         layout.addSpacing(8)
         layout.addWidget(self.btn_mkd)
 
         layout.addStretch()
 
-        # Кнопка настроек внизу
-        self.btn_settings = QPushButton("⚙")
+        # Кнопка настроек внизу — иконка settings.ico
+        self.btn_settings = QPushButton()
         self.btn_settings.setObjectName("settingsBtn")
         self.btn_settings.setFixedSize(60, 50)
         self.btn_settings.setToolTip("Настройки")
+        _settings_icon = QIcon(_assets("settings.ico"))
+        if not _settings_icon.isNull():
+            self.btn_settings.setIcon(_settings_icon)
+            self.btn_settings.setIconSize(QSize(24, 24))
+        else:
+            self.btn_settings.setText("⚙")
         layout.addWidget(self.btn_settings)
 
         # Группа — только одна кнопка активна
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
-        self._group.addButton(self.btn_max, 0)
-        self._group.addButton(self.btn_qr,  1)
+        self._group.addButton(self.btn_max,   0)
+        self._group.addButton(self.btn_qr,    1)
+        self._group.addButton(self.btn_stats, 2)
         self.btn_max.setChecked(True)
 
 
@@ -188,6 +195,15 @@ class ShellWindow(QMainWindow):
             qr_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
             qr_widget.setStyleSheet("color:#888; font-size:14px; background:#252535;")
 
+        # ── Инициализируем Статистику групп ────────────────────
+        try:
+            from stats_panel import StatsPanel
+            self._stats_panel = StatsPanel()
+        except Exception as e:
+            self._stats_panel = QLabel(f"Статистика недоступна:\n{e}")
+            self._stats_panel.setAlignment(Qt.AlignmentFlag.AlignCenter)  # type: ignore[union-attr]
+            self._stats_panel.setStyleSheet("color:#888; font-size:14px; background:#f3f4f6;")  # type: ignore[union-attr]
+
         # ── FadeStack ───────────────────────────────────────────
         self._stack = _FadeStack()
 
@@ -196,8 +212,9 @@ class ShellWindow(QMainWindow):
         max_widget = self._max_win.centralWidget()
         max_widget.setStyleSheet(self._max_win.styleSheet())
 
-        self._stack.addWidget(max_widget)   # index 0
-        self._stack.addWidget(qr_widget)    # index 1
+        self._stack.addWidget(max_widget)        # index 0
+        self._stack.addWidget(qr_widget)         # index 1
+        self._stack.addWidget(self._stats_panel) # index 2
 
         # ── Компоновка ──────────────────────────────────────────
         self._sidebar = _SideBar()
@@ -214,6 +231,7 @@ class ShellWindow(QMainWindow):
         self._sidebar._group.idClicked.connect(self._switch_panel)
         self._sidebar.btn_settings.clicked.connect(self._show_settings_menu)
         self._sidebar.btn_mkd.clicked.connect(self._show_mkd_coming_soon)
+        self._sidebar.btn_stats.clicked.connect(self._on_stats_clicked)
 
     # ──────────────────────────────────────────────────────────
     def showEvent(self, event) -> None:
@@ -239,6 +257,11 @@ class ShellWindow(QMainWindow):
                     break
         except Exception:
             pass
+
+    # ──────────────────────────────────────────────────────────
+    def _on_stats_clicked(self) -> None:
+        """Переключает на панель статистики."""
+        self._stack.switch_to(2)
 
     # ──────────────────────────────────────────────────────────
     def _show_mkd_coming_soon(self) -> None:
