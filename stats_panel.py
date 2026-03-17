@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import time
@@ -40,6 +41,21 @@ _COL_NAME    = 0
 _COL_MEMBERS = 1
 _COL_TIME    = 2
 _COL_LINK    = 3
+
+
+def _extract_chat_id(raw: str) -> str:
+    """Извлекает числовой chat_id из URL или возвращает строку как есть.
+
+    Примеры:
+      https://web.max.ru/-69098384919255  → -69098384919255
+      https://web.max.ru/-69098384919255/ → -69098384919255
+      -69098384919255                     → -69098384919255  (без изменений)
+    """
+    if raw.startswith("http"):
+        m = re.search(r"(-\d+)/?$", raw)
+        if m:
+            return m.group(1)
+    return raw
 
 
 def _resolve_excel_path() -> Path:
@@ -120,13 +136,20 @@ class _FetchWorker(QThread):
 
         entries: list[tuple[str, str, str]] = []   # (chat_id, link, address)
         for _, row in df.iterrows():
-            chat_id = str(row.get(id_col, "")).strip() if id_col else ""
+            raw_id  = str(row.get(id_col, "")).strip() if id_col else ""
             link    = str(row.get(link_col, "")).strip() if link_col else ""
             address = str(row.get(addr_col, "")).strip()
-            if not chat_id or chat_id.lower() in ("nan", ""):
+
+            # Убираем .0 (числовые ID из Excel читаются как float)
+            if raw_id.endswith(".0"):
+                raw_id = raw_id[:-2]
+
+            # Пробуем получить числовой ID: из колонки ID или из ссылки
+            chat_id = _extract_chat_id(raw_id) if raw_id and raw_id.lower() not in ("nan", "") \
+                      else _extract_chat_id(link)
+
+            if not chat_id or chat_id.lower() in ("nan", "") or not chat_id.lstrip("-").isdigit():
                 continue
-            if chat_id.endswith(".0"):
-                chat_id = chat_id[:-2]
             entries.append((chat_id, link, address))
 
         if not entries:
@@ -168,7 +191,7 @@ class _FetchWorker(QThread):
 
             try:
                 url  = f"{api_url}/waInstance{id_inst}/getGroupData/{api_token}"
-                resp = requests.post(url, json={"chatId": chat_id}, timeout=15)
+                resp = requests.post(url, json={"chatId": chat_id}, timeout=8)
 
                 if resp.ok:
                     data       = resp.json()
