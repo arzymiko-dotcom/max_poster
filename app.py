@@ -11,10 +11,12 @@ from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
 
 import tg_notify
+from log_setup import setup_logging
 from updater import check_for_updates
 
 
 def main() -> None:
+    setup_logging()
     tg_notify.install_excepthook()
     tg_notify.send_startup()
 

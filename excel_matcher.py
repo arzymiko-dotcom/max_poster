@@ -1,8 +1,11 @@
+import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from address_parser import ParsedAddress, normalize_text
+
+_log = logging.getLogger(__name__)
 
 
 def _get_cell(row, col) -> str:
@@ -37,6 +40,11 @@ class ExcelMatcher:
 
     def load_dataframe(self):
         if self._df is None:
+            # Поддержка тестового режима: _rows задаётся напрямую как list[dict]
+            if hasattr(self, "_rows") and self._rows is not None:
+                import pandas as pd
+                self._df = pd.DataFrame(self._rows)
+                return self._df
             import pandas as pd
             try:
                 self._df = pd.read_excel(self.excel_path, dtype=str)
@@ -50,11 +58,10 @@ class ExcelMatcher:
 
     def _resolve_columns(self, df) -> tuple[str, str | None, str | None]:
         """Возвращает (колонка адреса, колонка ссылки, колонка ID)."""
-        import sys as _sys
         columns_map = {str(col).strip().lower(): col for col in df.columns}
         address_col = columns_map.get("адрес")
         if address_col is None:
-            print("[warn] Колонка 'адрес' не найдена в Excel, используется первая колонка", file=_sys.stderr)
+            _log.warning("Колонка 'адрес' не найдена в Excel, используется первая колонка")
             address_col = df.columns[0]
         link_col = columns_map.get("ссылка") or (df.columns[1] if len(df.columns) > 1 else None)
         id_col = columns_map.get("id") or (df.columns[2] if len(df.columns) > 2 else None)

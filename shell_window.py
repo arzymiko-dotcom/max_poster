@@ -10,7 +10,7 @@ from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QButtonGroup, QFrame, QHBoxLayout,
-    QLabel, QMainWindow, QMenu, QPushButton, QStackedWidget,
+    QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QStackedWidget,
     QVBoxLayout, QWidget,
 )
 
@@ -124,8 +124,7 @@ class _SideBar(QFrame):
         # Кнопки модулей
         self.btn_max = _SideButton(_assets("MAX POST.ico"), "MAX POST — отправка сообщений", "MP")
         self.btn_qr  = _SideButton(_assets("max.ico"),      "QR Generator — генератор карточек", "QR")
-        self.btn_mkd = _SideButton(_assets("mkd.ico"),      "МКД — скоро", "МКД")
-        self.btn_mkd.setEnabled(False)
+        self.btn_mkd = _SideButton(_assets("mkd.ico"),      "МКД — в разработке", "МКД")
         layout.addWidget(self.btn_max)
         layout.addSpacing(8)
         layout.addWidget(self.btn_qr)
@@ -214,6 +213,7 @@ class ShellWindow(QMainWindow):
         # ── Сигналы ─────────────────────────────────────────────
         self._sidebar._group.idClicked.connect(self._switch_panel)
         self._sidebar.btn_settings.clicked.connect(self._show_settings_menu)
+        self._sidebar.btn_mkd.clicked.connect(self._show_mkd_coming_soon)
 
     # ──────────────────────────────────────────────────────────
     def showEvent(self, event) -> None:
@@ -239,6 +239,17 @@ class ShellWindow(QMainWindow):
                     break
         except Exception:
             pass
+
+    # ──────────────────────────────────────────────────────────
+    def _show_mkd_coming_soon(self) -> None:
+        """Показывает сообщение о том, что модуль МКД ещё в разработке."""
+        QMessageBox.information(
+            self,
+            "Модуль МКД",
+            "Этот модуль находится в разработке и будет доступен в следующих версиях.",
+        )
+        # Кнопка не должна оставаться «нажатой» — возвращаем фокус на активную панель
+        self._sidebar.btn_mkd.setChecked(False)
 
     # ──────────────────────────────────────────────────────────
     def _switch_panel(self, index: int) -> None:

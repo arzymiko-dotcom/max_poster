@@ -10,6 +10,10 @@ from pathlib import Path
 
 _lock = threading.Lock()
 
+# Переопределяемые в тестах переменные
+_HISTORY_FILE: "Path | None" = None   # None = вычислять через _path()
+_MAX_ENTRIES: int = 200
+
 
 def _data_dir() -> Path:
     """Папка для пользовательских данных — APPDATA в exe, рядом со скриптом в dev."""
@@ -27,6 +31,8 @@ def _data_dir() -> Path:
 
 
 def _path() -> Path:
+    if _HISTORY_FILE is not None:
+        return _HISTORY_FILE
     return _data_dir() / "history.json"
 
 
@@ -63,7 +69,7 @@ def add_entry(addresses: list[str], sent_max: bool, sent_vk: bool, text: str = "
     with _lock:
         history = load()
         history.insert(0, entry)
-        history = history[:200]  # не даём файлу расти бесконечно
+        history = history[:_MAX_ENTRIES]
         _atomic_write(_path(), json.dumps(history, ensure_ascii=False, indent=2))
 
 

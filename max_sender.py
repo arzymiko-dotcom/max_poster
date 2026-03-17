@@ -1,3 +1,4 @@
+import logging
 import mimetypes
 import os
 import sys
@@ -6,6 +7,8 @@ from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
+
+_log = logging.getLogger(__name__)
 
 
 def _json_or_raise(resp: requests.Response) -> dict | list:
