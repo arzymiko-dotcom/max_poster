@@ -48,6 +48,15 @@ class MaxSender:
             return "Не заполнен MAX_API_TOKEN в файле .env"
         return None
 
+    def is_authorized(self) -> bool:
+        """Быстрая проверка: аккаунт авторизован прямо сейчас?"""
+        try:
+            url = f"{self.api_url}/waInstance{self.id_instance}/getStateInstance/{self.api_token}"
+            resp = requests.get(url, timeout=8)
+            return resp.ok and resp.json().get("stateInstance") == "authorized"
+        except Exception:
+            return False
+
     def open_max_for_login(self) -> SendResult:
         """Проверяет подключение к GREEN-API."""
         err = self._check_credentials()

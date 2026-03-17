@@ -1,6 +1,7 @@
 import atexit
 import logging
 import os
+import random
 import sys
 import time
 from pathlib import Path
@@ -103,18 +104,27 @@ class SendWorker(QThread):
         success = True
 
         if self.send_max:
+            # Проверяем авторизацию перед стартом рассылки
+            self.progress.emit("Проверка авторизации MAX…")
+            if not self.max_sender.is_authorized():
+                self.result_ready.emit(False,
+                    "❌ Аккаунт MAX не авторизован. "
+                    "Проверьте подключение в настройках (🔑) и попробуйте снова.")
+                return
+
             total = len(self.chat_ids)
             for i, chat_id in enumerate(self.chat_ids, 1):
                 if self._cancelled:
                     lines.append(f"⛔ Отменено после {i - 1}/{total} отправок.")
                     self.result_ready.emit(False, "\n".join(lines))
                     return
-                # Пауза между отправками — защита от блокировки за спам
+                # Случайная пауза между отправками — имитирует живого человека
                 if i > 1:
-                    for sec in range(5):
+                    delay = random.randint(5, 12)
+                    for sec in range(delay):
                         if self._cancelled:
                             break
-                        self.progress.emit(f"MAX {i}/{total} · пауза {5 - sec}с…")
+                        self.progress.emit(f"MAX {i}/{total} · пауза {delay - sec}с…")
                         time.sleep(1)
                 self.progress.emit(f"MAX {i}/{total}…")
                 self.progress_step.emit(i, total)
