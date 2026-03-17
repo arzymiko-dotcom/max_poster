@@ -32,9 +32,7 @@ from env_utils import get_env_path
 _log = logging.getLogger(__name__)
 
 _AUTO_REFRESH_MS        = 5 * 60 * 1000   # авто-обновление каждые 5 минут
-_BATCH_SIZE             = 5               # запросов getGroupData за раз
-_BATCH_PAUSE            = 1.5             # секунд между батчами (~40 req/min — безопасно)
-_REQUEST_DELAY          = 0.1             # секунд между каждым запросом внутри батча
+_REQUEST_DELAY          = 1.1             # секунд между запросами (лимит GREEN-API: 1 req/s)
 _ACTIVITY_WINDOW_MIN    = 43200           # 30 дней в минутах для lastIncomingMessages
 
 # Индексы колонок таблицы
@@ -156,15 +154,15 @@ class _FetchWorker(QThread):
             _log.warning("lastIncomingMessages error: %s", exc)
             # Не критично — продолжаем без данных об активности
 
-        # ── 3. Загружаем данные каждой группы батчами ────────────
+        # ── 3. Загружаем данные каждой группы (1 req/s) ─────────
         rows: list[dict] = []
         total = len(entries)
+        est_min = round(total * _REQUEST_DELAY / 60, 1)
+        self.progress.emit(f"Загрузка {total} групп (~{est_min} мин)…  0 / {total}")
 
         for i, (chat_id, link, address) in enumerate(entries):
-            if i > 0 and i % _BATCH_SIZE == 0:
-                time.sleep(_BATCH_PAUSE)
-            elif i > 0:
-                time.sleep(_REQUEST_DELAY)
+            if i > 0:
+                time.sleep(_REQUEST_DELAY)   # GREEN-API лимит: 1 req/s для group-методов
 
             self.progress.emit(f"Загрузка групп… {i + 1} / {total}")
 
