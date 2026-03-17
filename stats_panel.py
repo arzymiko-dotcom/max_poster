@@ -1,8 +1,9 @@
 """
 stats_panel.py — Панель «Статистика групп» MAX POST.
 
-Загружает HTML-отчёт с report-сервера, парсит таблицу групп и отображает
-в реальном времени: название, участников, время последней активности, ссылку.
+Загружает данные о группах напрямую через GREEN-API (независимо от внешнего сервера):
+  - lastIncomingMessages → время последней активности (1 запрос на все группы)
+  - getGroupData          → название + кол-во участников (~190 запросов батчами)
 """
 from __future__ import annotations
 
@@ -11,12 +12,13 @@ import logging
 import os
 import sys
 import tempfile
+import time
 from datetime import datetime, timedelta
-from html.parser import HTMLParser
 from pathlib import Path
 
 import pandas as pd
 import requests
+from dotenv import load_dotenv
 from PyQt6.QtCore import QThread, QTimer, QUrl, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QFont
 from PyQt6.QtWidgets import (
@@ -25,9 +27,21 @@ from PyQt6.QtWidgets import (
     QVBoxLayout, QWidget,
 )
 
+from env_utils import get_env_path
+
 _log = logging.getLogger(__name__)
 
-REPORT_URL = "https://bot-dev.gkh.spb.ru/gks2vyb-report.php"
+_AUTO_REFRESH_MS        = 5 * 60 * 1000   # авто-обновление каждые 5 минут
+_BATCH_SIZE             = 5               # запросов getGroupData за раз
+_BATCH_PAUSE            = 1.5             # секунд между батчами (~40 req/min — безопасно)
+_REQUEST_DELAY          = 0.1             # секунд между каждым запросом внутри батча
+_ACTIVITY_WINDOW_MIN    = 43200           # 30 дней в минутах для lastIncomingMessages
+
+# Индексы колонок таблицы
+_COL_NAME    = 0
+_COL_MEMBERS = 1
+_COL_TIME    = 2
+_COL_LINK    = 3
 
 
 def _resolve_excel_path() -> Path:
@@ -35,22 +49,7 @@ def _resolve_excel_path() -> Path:
     return base / "max_address.xlsx"
 
 
-def _norm_link(link: str) -> str:
-    """Normalize join link for comparison."""
-    link = link.strip().lower().rstrip("/")
-    if "max.ru/join/" in link:
-        return "join:" + link.split("max.ru/join/")[-1].strip("/")
-    if "web.max.ru/" in link:
-        return "web:" + link.split("web.max.ru/")[-1].strip("/")
-    return link
-
-
-_AUTO_REFRESH_MS  = 5 * 60 * 1000  # авто-обновление каждые 5 минут
-_REQUEST_TIMEOUT  = 8              # секунд — быстрый таймаут, не вешаем UI
-
-
 def _cache_path() -> Path:
-    """Путь к файлу кэша последней успешной загрузки."""
     if getattr(sys, "frozen", False):
         base = Path(os.environ.get("APPDATA", Path.home())) / "MAX POST"
     else:
@@ -61,11 +60,7 @@ def _cache_path() -> Path:
 
 def _save_cache(rows: list[dict], summary_texts: list[str]) -> None:
     path = _cache_path()
-    data = {
-        "ts": datetime.now().isoformat(),
-        "rows": rows,
-        "summary_texts": summary_texts,
-    }
+    data = {"ts": datetime.now().isoformat(), "rows": rows, "summary_texts": summary_texts}
     try:
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=path.parent, delete=False, suffix=".tmp"
@@ -78,7 +73,6 @@ def _save_cache(rows: list[dict], summary_texts: list[str]) -> None:
 
 
 def _load_cache() -> tuple[list[dict], list[str], datetime | None]:
-    """Загружает кэш. Возвращает (rows, summary_texts, timestamp) или ([], [], None)."""
     try:
         raw = json.loads(_cache_path().read_text(encoding="utf-8"))
         ts = datetime.fromisoformat(raw["ts"])
@@ -86,127 +80,130 @@ def _load_cache() -> tuple[list[dict], list[str], datetime | None]:
     except Exception:
         return [], [], None
 
-# Индексы колонок
-_COL_NAME    = 0
-_COL_MEMBERS = 1
-_COL_TIME    = 2
-_COL_LINK    = 3
-
 
 # ────────────────────────────────────────────────────────────────
-#  HTML-парсер
-# ────────────────────────────────────────────────────────────────
-
-class _ReportParser(HTMLParser):
-    """Извлекает строки таблицы и сводные данные из HTML-отчёта."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.rows: list[dict] = []
-        self.summary_texts: list[str] = []
-
-        self._in_table = False
-        self._in_row   = False
-        self._in_cell  = False
-        self._is_th    = False                        # строка-заголовок?
-        self._row_cells: list[tuple[str, str]] = []  # (text, href)
-        self._cell_text = ""
-        self._cell_href = ""
-
-        self._in_p    = False
-        self._p_text  = ""
-
-    # ── handlers ────────────────────────────────────────────────
-
-    def handle_starttag(self, tag: str, attrs: list) -> None:
-        d = dict(attrs)
-        if tag == "table":
-            self._in_table = True
-        elif tag == "tr" and self._in_table:
-            self._in_row = True
-            self._is_th  = False
-            self._row_cells = []
-        elif tag == "th" and self._in_row:
-            self._in_cell = True
-            self._is_th   = True
-            self._cell_text = ""
-            self._cell_href = ""
-        elif tag == "td" and self._in_row:
-            self._in_cell = True
-            self._cell_text = ""
-            self._cell_href = ""
-        elif tag == "a" and self._in_cell:
-            href = d.get("href", "")
-            if href and href.startswith("http"):
-                self._cell_href = href
-        elif tag == "p":
-            self._in_p   = True
-            self._p_text = ""
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag == "table":
-            self._in_table = False
-        elif tag in ("td", "th") and self._in_cell:
-            self._in_cell = False
-            self._row_cells.append((self._cell_text.strip(), self._cell_href.strip()))
-        elif tag == "tr" and self._in_row:
-            self._in_row = False
-            if not self._is_th and len(self._row_cells) >= 3:
-                name    = self._row_cells[0][0]
-                members = self._row_cells[1][0]
-                t_event = self._row_cells[2][0]
-                link_text, link_href = self._row_cells[3] if len(self._row_cells) > 3 else ("", "")
-                link = link_href or link_text
-                if name:
-                    self.rows.append({
-                        "name":       name,
-                        "members":    members,
-                        "last_event": t_event,
-                        "link":       link,
-                    })
-        elif tag == "p":
-            self._in_p = False
-            t = self._p_text.strip()
-            if t:
-                self.summary_texts.append(t)
-
-    def handle_data(self, data: str) -> None:
-        if self._in_cell:
-            self._cell_text += data
-        if self._in_p:
-            self._p_text += data
-
-
-def _parse_html(html: str) -> tuple[list[dict], list[str]]:
-    p = _ReportParser()
-    p.feed(html)
-    return p.rows, p.summary_texts
-
-
-# ────────────────────────────────────────────────────────────────
-#  Фоновый поток загрузки
+#  Фоновый поток — GREEN-API
 # ────────────────────────────────────────────────────────────────
 
 class _FetchWorker(QThread):
     finished = pyqtSignal(list, list)   # (rows, summary_texts)
     failed   = pyqtSignal(str)
+    progress = pyqtSignal(str)          # текст для строки статуса
 
     def run(self) -> None:
+        load_dotenv(get_env_path())
+        api_url   = os.getenv("MAX_API_URL", "https://api.green-api.com")
+        id_inst   = os.getenv("MAX_ID_INSTANCE", "")
+        api_token = os.getenv("MAX_API_TOKEN", "")
+
+        if not id_inst or not api_token:
+            self.failed.emit(
+                "Не заданы MAX_ID_INSTANCE или MAX_API_TOKEN.\n"
+                "Откройте Настройки подключений (🔑) и заполните данные GREEN-API."
+            )
+            return
+
+        # ── 1. Читаем chat_id из Excel ───────────────────────────
+        excel_path = _resolve_excel_path()
+        if not excel_path.exists():
+            self.failed.emit(f"Файл {excel_path.name} не найден рядом с программой.")
+            return
+
         try:
-            resp = requests.get(REPORT_URL, timeout=_REQUEST_TIMEOUT)
-            resp.raise_for_status()
-            rows, summary = _parse_html(resp.text)
-            if not rows:
-                self.failed.emit("Сервер вернул пустой ответ — возможно, изменилась структура страницы")
-                return
-            self.finished.emit(rows, summary)
-        except requests.exceptions.Timeout:
-            self.failed.emit("Сервер не ответил за 8 секунд (таймаут)")
-        except requests.exceptions.ConnectionError:
-            self.failed.emit("Нет соединения с сервером")
+            df = pd.read_excel(excel_path, dtype=str).fillna("")
         except Exception as exc:
-            _log.warning("stats fetch error: %s", exc)
-            self.failed.emit(str(exc))
+            self.failed.emit(f"Ошибка чтения {excel_path.name}: {exc}")
+            return
+
+        cols     = {str(c).strip().lower(): c for c in df.columns}
+        addr_col = cols.get("адрес") or df.columns[0]
+        link_col = cols.get("ссылка") or (df.columns[1] if len(df.columns) > 1 else None)
+        id_col   = cols.get("id")    or (df.columns[2] if len(df.columns) > 2 else None)
+
+        entries: list[tuple[str, str, str]] = []   # (chat_id, link, address)
+        for _, row in df.iterrows():
+            chat_id = str(row.get(id_col, "")).strip() if id_col else ""
+            link    = str(row.get(link_col, "")).strip() if link_col else ""
+            address = str(row.get(addr_col, "")).strip()
+            if not chat_id or chat_id.lower() in ("nan", ""):
+                continue
+            if chat_id.endswith(".0"):
+                chat_id = chat_id[:-2]
+            entries.append((chat_id, link, address))
+
+        if not entries:
+            self.failed.emit(f"В файле {excel_path.name} не найдены ID групп (колонка «ID»).")
+            return
+
+        # ── 2. Получаем активность одним запросом ────────────────
+        self.progress.emit("Получение активности групп…")
+        last_activity: dict[str, int] = {}   # chat_id → unix-timestamp
+        try:
+            url  = (
+                f"{api_url}/waInstance{id_inst}/lastIncomingMessages/{api_token}"
+                f"?minutes={_ACTIVITY_WINDOW_MIN}"
+            )
+            resp = requests.get(url, timeout=30)
+            if resp.ok:
+                msgs = resp.json()
+                if isinstance(msgs, list):
+                    for msg in msgs:
+                        cid = str(msg.get("chatId", "")).strip()
+                        ts  = msg.get("timestamp", 0)
+                        if cid and ts and ts > last_activity.get(cid, 0):
+                            last_activity[cid] = ts
+        except Exception as exc:
+            _log.warning("lastIncomingMessages error: %s", exc)
+            # Не критично — продолжаем без данных об активности
+
+        # ── 3. Загружаем данные каждой группы батчами ────────────
+        rows: list[dict] = []
+        total = len(entries)
+
+        for i, (chat_id, link, address) in enumerate(entries):
+            if i > 0 and i % _BATCH_SIZE == 0:
+                time.sleep(_BATCH_PAUSE)
+            elif i > 0:
+                time.sleep(_REQUEST_DELAY)
+
+            self.progress.emit(f"Загрузка групп… {i + 1} / {total}")
+
+            try:
+                url  = f"{api_url}/waInstance{id_inst}/getGroupData/{api_token}"
+                resp = requests.post(url, json={"chatId": chat_id}, timeout=15)
+
+                if resp.ok:
+                    data       = resp.json()
+                    name       = data.get("subject") or address
+                    members    = str(data.get("size", 0))
+                    ts         = last_activity.get(chat_id)
+                    last_event = (
+                        datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M")
+                        if ts else "Нет данных"
+                    )
+                else:
+                    name       = address
+                    members    = "—"
+                    last_event = "Нет доступа"
+
+            except Exception as exc:
+                _log.warning("getGroupData %s: %s", chat_id, exc)
+                name       = address
+                members    = "—"
+                last_event = "Ошибка"
+
+            rows.append({
+                "name":       name,
+                "members":    members,
+                "last_event": last_event,
+                "link":       link,
+            })
+
+        if not rows:
+            self.failed.emit("Не удалось получить данные ни по одной группе.")
+            return
+
+        self.finished.emit(rows, [])
 
 
 # ────────────────────────────────────────────────────────────────
@@ -214,7 +211,7 @@ class _FetchWorker(QThread):
 # ────────────────────────────────────────────────────────────────
 
 class StatsPanel(QWidget):
-    """Панель «Статистика групп» — таблица с реалтайм-данными."""
+    """Панель «Статистика групп» — таблица с реалтайм-данными из GREEN-API."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -283,7 +280,7 @@ class StatsPanel(QWidget):
         self._lbl_groups  = self._make_stat_lbl("—", "Групп")
         self._lbl_members = self._make_stat_lbl("—", "Участников")
         self._lbl_active  = self._make_stat_lbl("—", "Активны сегодня")
-        self._lbl_missing = self._make_stat_lbl("—", "Нет в отчёте")
+        self._lbl_missing = self._make_stat_lbl("—", "Нет доступа")
 
         for w in (self._lbl_groups, self._lbl_members, self._lbl_active, self._lbl_missing):
             sf_layout.addWidget(w)
@@ -305,7 +302,7 @@ class StatsPanel(QWidget):
         self._search.textChanged.connect(self._apply_filter)
         search_row.addWidget(self._search)
 
-        self._dead_btn = QPushButton("🔴 Отсутствующие")
+        self._dead_btn = QPushButton("🔴 Нет доступа")
         self._dead_btn.setObjectName("statsDeadBtn")
         self._dead_btn.setCheckable(True)
         self._dead_btn.setEnabled(False)
@@ -375,6 +372,7 @@ class StatsPanel(QWidget):
         self._worker = _FetchWorker(self)
         self._worker.finished.connect(self._on_data)
         self._worker.failed.connect(self._on_error)
+        self._worker.progress.connect(self._status_lbl.setText)
         self._worker.finished.connect(self._worker.deleteLater)
         self._worker.failed.connect(self._worker.deleteLater)
         self._worker.finished.connect(lambda *_: setattr(self, "_worker", None))
@@ -386,8 +384,8 @@ class StatsPanel(QWidget):
         self._all_rows = rows
         self._last_refresh = datetime.now()
         self._last_lbl.setText(f"Обновлено в {self._last_refresh.strftime('%H:%M:%S')}")
-        self._cache_banner.hide()          # сервер ответил — баннер не нужен
-        _save_cache(rows, summary_texts)   # сохраняем кэш для резервного показа
+        self._cache_banner.hide()
+        _save_cache(rows, summary_texts)
         self._refresh_btn.setEnabled(True)
         self._refresh_btn.setText("⟳  Обновить")
         self._export_btn.setEnabled(True)
@@ -400,9 +398,8 @@ class StatsPanel(QWidget):
         for r in rows:
             try:
                 total_members += int(r["members"])
-            except ValueError:
+            except (ValueError, TypeError):
                 pass
-            # Считаем активными — последнее событие сегодня
             try:
                 ev_dt = datetime.strptime(r["last_event"][:10], "%d.%m.%Y")
                 if ev_dt.date() == today:
@@ -410,50 +407,21 @@ class StatsPanel(QWidget):
             except ValueError:
                 pass
 
-        self._lbl_groups._val_lbl.setText(str(total))  # type: ignore[attr-defined]
+        self._lbl_groups._val_lbl.setText(str(total))   # type: ignore[attr-defined]
         self._lbl_members._val_lbl.setText(f"{total_members:,}".replace(",", " "))  # type: ignore[attr-defined]
         self._lbl_active._val_lbl.setText(str(active_today))  # type: ignore[attr-defined]
 
-        # Мёртвые группы: загружаем Excel и ищем отсутствующие в отчёте
-        self._missing_rows = []
-        try:
-            excel_path = _resolve_excel_path()
-            if excel_path.exists():
-                df = pd.read_excel(excel_path, usecols=[0, 1], dtype=str)
-                df = df.fillna("")
-                # Нормализованные ссылки из отчёта
-                report_links: set[str] = set()
-                for r in rows:
-                    lnk = r.get("link", "").strip()
-                    if lnk:
-                        report_links.add(_norm_link(lnk))
-                for _, row_data in df.iterrows():
-                    addr = str(row_data.iloc[0]).strip()
-                    link = str(row_data.iloc[1]).strip()
-                    if not link:
-                        continue
-                    if _norm_link(link) not in report_links:
-                        self._missing_rows.append({
-                            "name":       addr,
-                            "members":    "—",
-                            "last_event": "Нет данных",
-                            "link":       link,
-                        })
-        except Exception as exc:
-            _log.warning("dead groups check error: %s", exc)
-
+        # "Нет доступа" — группы, у которых members == "—"
+        self._missing_rows = [r for r in rows if r["members"] == "—"]
         missing_count = len(self._missing_rows)
         missing_val_lbl = self._lbl_missing._val_lbl  # type: ignore[attr-defined]
-        missing_val_lbl.setText(str(missing_count) if missing_count >= 0 else "—")
-        if missing_count > 0:
-            missing_val_lbl.setStyleSheet(
-                "color: #dc2626; font-size: 24px; font-weight: 700;"
-            )
-        else:
-            missing_val_lbl.setStyleSheet("")
+        missing_val_lbl.setText(str(missing_count))
+        missing_val_lbl.setStyleSheet(
+            "color: #dc2626; font-size: 24px; font-weight: 700;"
+            if missing_count > 0 else ""
+        )
 
         self._dead_btn.setEnabled(True)
-
         self._apply_filter()
         self._status_lbl.setText(
             f"Загружено {total} групп · "
@@ -469,7 +437,7 @@ class StatsPanel(QWidget):
             self._all_rows = cached_rows
             ts_str = cached_ts.strftime("%d.%m.%Y %H:%M") if cached_ts else "неизвестно"
             self._cache_banner.setText(
-                f"⚠️  Сервер недоступен: {msg}  ·  Показаны данные от {ts_str}"
+                f"⚠️  Ошибка загрузки: {msg}  ·  Показаны данные от {ts_str}"
             )
             self._cache_banner.show()
             self._export_btn.setEnabled(True)
@@ -486,15 +454,12 @@ class StatsPanel(QWidget):
     def _apply_filter(self) -> None:
         query = self._search.text().strip().lower()
         if self._dead_only:
-            rows = [
-                r for r in self._missing_rows
-                if not query or query in r["name"].lower()
-            ]
+            rows = [r for r in self._missing_rows if not query or query in r["name"].lower()]
             self._fill_table(rows, dead_mode=True)
             shown = len(rows)
             total = len(self._missing_rows)
             self._status_lbl.setText(
-                f"Отсутствующих: показано {shown} из {total}"
+                f"Нет доступа: показано {shown} из {total}"
                 + (f" · фильтр: «{query}»" if query else "")
             )
         else:
@@ -510,7 +475,6 @@ class StatsPanel(QWidget):
 
     def _fill_table(self, rows: list[dict], *, dead_mode: bool = False) -> None:
         today = datetime.now().date()
-
         self._table.setSortingEnabled(False)
         self._table.setRowCount(len(rows))
 
@@ -525,7 +489,6 @@ class StatsPanel(QWidget):
             if dead_mode:
                 row_bg = dead_bg
             else:
-                # Определяем «свежесть» события для окраски
                 fresh_today = False
                 fresh_week  = False
                 try:
@@ -534,12 +497,10 @@ class StatsPanel(QWidget):
                     fresh_week  = (ev_dt >= today - timedelta(days=7))
                 except ValueError:
                     pass
-
-                # Цвет строки
                 if fresh_today:
-                    row_bg = QColor("#f0faf2")  # зеленоватый — активны сегодня
+                    row_bg = QColor("#f0faf2")
                 elif fresh_week:
-                    row_bg = QColor("#fffbee")  # желтоватый — активны на этой неделе
+                    row_bg = QColor("#fffbee")
                 else:
                     row_bg = None
 
@@ -565,13 +526,11 @@ class StatsPanel(QWidget):
         return item.text().strip() if item else ""
 
     def _on_double_click(self, row: int, _col: int) -> None:
-        """Двойной клик по строке — открывает ссылку группы в браузере."""
         link = self._get_row_link(row)
         if link.startswith("http"):
             QDesktopServices.openUrl(QUrl(link))
 
     def _show_context_menu(self, pos) -> None:
-        """Правый клик — контекстное меню: открыть в браузере / копировать ссылку."""
         row = self._table.rowAt(pos.y())
         if row < 0:
             return
@@ -588,7 +547,7 @@ class StatsPanel(QWidget):
             QMenu::separator { height:1px; background:#f0f4f8; margin:3px 6px; }
         """)
 
-        act_open = menu.addAction("🌐  Открыть в браузере")
+        act_open      = menu.addAction("🌐  Открыть в браузере")
         act_open.setEnabled(link.startswith("http"))
         act_copy_link = menu.addAction("📋  Копировать ссылку")
         act_copy_link.setEnabled(bool(link))
@@ -607,7 +566,6 @@ class StatsPanel(QWidget):
     # ── Экспорт в Excel ──────────────────────────────────────────
 
     def _export_excel(self) -> None:
-        """Экспортирует текущее содержимое таблицы в .xlsx через openpyxl."""
         try:
             import openpyxl
             from openpyxl.styles import Font, PatternFill, Alignment
@@ -617,8 +575,7 @@ class StatsPanel(QWidget):
             return
 
         path, _ = QFileDialog.getSaveFileName(
-            self, "Сохранить статистику", "статистика_групп.xlsx",
-            "Excel (*.xlsx)"
+            self, "Сохранить статистику", "статистика_групп.xlsx", "Excel (*.xlsx)"
         )
         if not path:
             return
@@ -644,7 +601,6 @@ class StatsPanel(QWidget):
                 value = item.text() if item else ""
                 ws.cell(row=row_idx + 2, column=col_idx + 1, value=value)
 
-        # Автоширина колонок
         for col in ws.columns:
             max_len = max((len(str(c.value)) if c.value else 0) for c in col)
             ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 60)
@@ -656,7 +612,7 @@ class StatsPanel(QWidget):
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Экспорт", f"Ошибка сохранения: {exc}")
 
-    # ── Стили ────────────────────────────────────────────────────
+    # ── Тема / закрытие ──────────────────────────────────────────
 
     def closeEvent(self, event) -> None:
         self._auto_timer.stop()
@@ -666,7 +622,6 @@ class StatsPanel(QWidget):
         super().closeEvent(event)
 
     def set_dark(self, dark: bool) -> None:
-        """Переключает тёмную/светлую тему панели."""
         self._apply_styles(dark=dark)
 
     def _apply_styles(self, dark: bool = False) -> None:
@@ -720,136 +675,50 @@ class StatsPanel(QWidget):
             """)
             return
         self.setStyleSheet("""
-            StatsPanel {
-                background: #f3f4f6;
-            }
-            QLabel#statsPanelTitle {
-                font-size: 18px;
-                font-weight: 700;
-                color: #1a1a2e;
-            }
-            QLabel#statsLastRefresh {
-                font-size: 11px;
-                color: #9ca3af;
-                padding-right: 8px;
-            }
+            StatsPanel { background: #f3f4f6; }
+            QLabel#statsPanelTitle { font-size: 18px; font-weight: 700; color: #1a1a2e; }
+            QLabel#statsLastRefresh { font-size: 11px; color: #9ca3af; padding-right: 8px; }
             QPushButton#statsRefreshBtn {
-                min-height: 0;
-                font-size: 13px;
-                font-weight: 600;
-                padding: 4px 16px;
-                border-radius: 7px;
-                border: 1px solid #c7d0db;
-                background: #eef2f7;
-                color: #334155;
+                min-height: 0; font-size: 13px; font-weight: 600; padding: 4px 16px;
+                border-radius: 7px; border: 1px solid #c7d0db; background: #eef2f7; color: #334155;
             }
-            QPushButton#statsRefreshBtn:hover {
-                background: #dbeafe;
-                border-color: #2d6cdf;
-                color: #1d4ed8;
-            }
-            QPushButton#statsRefreshBtn:disabled {
-                color: #9ca3af;
-            }
-            QFrame#statsSummary {
-                background: #ffffff;
-                border: 1px solid #e4eaf0;
-                border-radius: 10px;
-            }
-            QLabel#statsStatValue {
-                font-size: 24px;
-                font-weight: 700;
-                color: #1e3a5f;
-            }
-            QLabel#statsStatLabel {
-                font-size: 11px;
-                color: #9ca3af;
-                font-weight: 500;
-            }
+            QPushButton#statsRefreshBtn:hover { background: #dbeafe; border-color: #2d6cdf; color: #1d4ed8; }
+            QPushButton#statsRefreshBtn:disabled { color: #9ca3af; }
+            QFrame#statsSummary { background: #ffffff; border: 1px solid #e4eaf0; border-radius: 10px; }
+            QLabel#statsStatValue { font-size: 24px; font-weight: 700; color: #1e3a5f; }
+            QLabel#statsStatLabel { font-size: 11px; color: #9ca3af; font-weight: 500; }
             QLineEdit#statsSearch {
-                font-size: 13px;
-                padding: 7px 12px;
-                border: 1px solid #c7d0db;
-                border-radius: 8px;
-                background: #ffffff;
-                color: #1a1a2e;
+                font-size: 13px; padding: 7px 12px; border: 1px solid #c7d0db;
+                border-radius: 8px; background: #ffffff; color: #1a1a2e;
             }
             QTableWidget#statsTable {
-                border: 1px solid #e4eaf0;
-                border-radius: 8px;
-                background: #ffffff;
-                alternate-background-color: #f8fafc;
-                gridline-color: #f0f4f8;
-                font-size: 12px;
-                color: #1a1a2e;
+                border: 1px solid #e4eaf0; border-radius: 8px; background: #ffffff;
+                alternate-background-color: #f8fafc; gridline-color: #f0f4f8;
+                font-size: 12px; color: #1a1a2e;
             }
             QTableWidget#statsTable QHeaderView::section {
-                background: #f1f5f9;
-                color: #64748b;
-                font-size: 11px;
-                font-weight: 700;
-                padding: 6px 10px;
-                border: none;
-                border-bottom: 2px solid #e2e8f0;
-                text-transform: uppercase;
-                letter-spacing: 0.4px;
+                background: #f1f5f9; color: #64748b; font-size: 11px; font-weight: 700;
+                padding: 6px 10px; border: none; border-bottom: 2px solid #e2e8f0;
+                text-transform: uppercase; letter-spacing: 0.4px;
             }
-            QTableWidget#statsTable::item:selected {
-                background: #dbeafe;
-                color: #1e3a5f;
-            }
-            QLabel#statsStatus {
-                font-size: 11px;
-                color: #9ca3af;
-                padding: 2px 0;
-            }
+            QTableWidget#statsTable::item:selected { background: #dbeafe; color: #1e3a5f; }
+            QLabel#statsStatus { font-size: 11px; color: #9ca3af; padding: 2px 0; }
             QPushButton#statsExportBtn {
-                min-height: 0;
-                font-size: 13px;
-                font-weight: 600;
-                padding: 4px 14px;
-                border-radius: 7px;
-                border: 1px solid #a7f3d0;
-                background: #ecfdf5;
-                color: #065f46;
+                min-height: 0; font-size: 13px; font-weight: 600; padding: 4px 14px;
+                border-radius: 7px; border: 1px solid #a7f3d0; background: #ecfdf5; color: #065f46;
             }
-            QPushButton#statsExportBtn:hover {
-                background: #d1fae5;
-                border-color: #34d399;
-            }
-            QPushButton#statsExportBtn:disabled {
-                color: #9ca3af;
-                background: #f3f4f6;
-                border-color: #e5e7eb;
-            }
+            QPushButton#statsExportBtn:hover { background: #d1fae5; border-color: #34d399; }
+            QPushButton#statsExportBtn:disabled { color: #9ca3af; background: #f3f4f6; border-color: #e5e7eb; }
             QPushButton#statsDeadBtn {
-                min-height: 0;
-                font-size: 12px;
-                padding: 5px 12px;
-                border-radius: 7px;
-                border: 1px solid #f5c6c6;
-                background: #fff5f5;
-                color: #dc2626;
-                font-weight: 600;
+                min-height: 0; font-size: 12px; padding: 5px 12px; border-radius: 7px;
+                border: 1px solid #f5c6c6; background: #fff5f5; color: #dc2626; font-weight: 600;
             }
-            QPushButton#statsDeadBtn:checked {
-                background: #dc2626;
-                color: #ffffff;
-                border-color: #dc2626;
-            }
-            QPushButton#statsDeadBtn:disabled {
-                color: #ccc;
-                background: #f9f9f9;
-                border-color: #e5e7eb;
-            }
+            QPushButton#statsDeadBtn:checked { background: #dc2626; color: #ffffff; border-color: #dc2626; }
+            QPushButton#statsDeadBtn:disabled { color: #ccc; background: #f9f9f9; border-color: #e5e7eb; }
             QLabel#statsCacheBanner {
-                font-size: 12px;
-                font-weight: 600;
-                color: #92400e;
-                background: #fef3c7;
-                border: 1px solid #fcd34d;
-                border-radius: 7px;
-                padding: 6px 12px;
+                font-size: 12px; font-weight: 600; color: #92400e;
+                background: #fef3c7; border: 1px solid #fcd34d;
+                border-radius: 7px; padding: 6px 12px;
             }
         """)
 
