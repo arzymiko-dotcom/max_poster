@@ -224,6 +224,11 @@ class StatsPanel(QWidget):
         self._dead_only: bool = False
         self._last_refresh: datetime | None = None
 
+        self._spin_frame: int = 0
+        self._spin_timer = QTimer(self)
+        self._spin_timer.setInterval(100)
+        self._spin_timer.timeout.connect(self._spin_step)
+
         self._build_ui()
         self._apply_styles()
 
@@ -353,20 +358,31 @@ class StatsPanel(QWidget):
 
     # ── Логика обновления ────────────────────────────────────────
 
+    _SPINNER = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+
+    def _spin_step(self) -> None:
+        self._spin_frame = (self._spin_frame + 1) % len(self._SPINNER)
+        self._refresh_btn.setText(f"{self._SPINNER[self._spin_frame]}  Загрузка…")
+
     def refresh(self) -> None:
         if self._worker and self._worker.isRunning():
             return
         self._refresh_btn.setEnabled(False)
-        self._refresh_btn.setText("Загрузка…")
+        self._spin_frame = 0
+        self._spin_timer.start()
+        self._refresh_btn.setText(f"{self._SPINNER[0]}  Загрузка…")
         self._status_lbl.setText("Получение данных…")
         self._worker = _FetchWorker(self)
         self._worker.finished.connect(self._on_data)
         self._worker.failed.connect(self._on_error)
         self._worker.finished.connect(self._worker.deleteLater)
         self._worker.failed.connect(self._worker.deleteLater)
+        self._worker.finished.connect(lambda *_: setattr(self, "_worker", None))
+        self._worker.failed.connect(lambda *_: setattr(self, "_worker", None))
         self._worker.start()
 
     def _on_data(self, rows: list[dict], summary_texts: list[str]) -> None:
+        self._spin_timer.stop()
         self._all_rows = rows
         self._last_refresh = datetime.now()
         self._last_lbl.setText(f"Обновлено в {self._last_refresh.strftime('%H:%M:%S')}")
@@ -445,6 +461,7 @@ class StatsPanel(QWidget):
         )
 
     def _on_error(self, msg: str) -> None:
+        self._spin_timer.stop()
         self._refresh_btn.setEnabled(True)
         self._refresh_btn.setText("⟳  Обновить")
         cached_rows, cached_summary, cached_ts = _load_cache()

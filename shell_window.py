@@ -123,7 +123,7 @@ def _verify_pw(password: str, stored: str) -> bool:
             salt = bytes.fromhex(salt_hex)
             key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 260_000)
             return key.hex() == hash_hex
-        except Exception:
+        except (ValueError, IndexError):
             return False
     # Устаревший SHA256 — принимаем, но при следующем сохранении обновится
     return hashlib.sha256(password.encode("utf-8")).hexdigest() == stored
@@ -280,7 +280,7 @@ class _SideBar(QFrame):
 
         # Кнопки модулей
         self.btn_max   = _SideButton(_assets("MAX POST.ico"), "MAX POST — отправка сообщений",    "MP")
-        self.btn_qr    = _SideButton(_assets("max.ico"),      "QR Generator — генератор карточек", "QR")
+        self.btn_qr    = _SideButton(_assets("qr.ico"),       "QR Generator — генератор карточек", "QR")
         self.btn_stats = _SideButton(_assets("state.ico"),    "Статистика групп",                  "📊")
         self.btn_mkd   = _SideButton(_assets("mkd.ico"),      "МКД — в разработке",                "МКД")
         layout.addWidget(self.btn_max)

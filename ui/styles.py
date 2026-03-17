@@ -1,9 +1,7 @@
 """Таблица стилей QSS для MAX POST."""
 
 
-def get_dark_stylesheet() -> str:
-    """Возвращает QSS тёмной темы приложения."""
-    return """
+_DARK_STYLESHEET = """
             #maxPosterContent { background: #1e1e2e; }
             QGroupBox {
                 font-size: 15px;
@@ -314,9 +312,11 @@ def get_dark_stylesheet() -> str:
         """
 
 
-def get_stylesheet() -> str:
-    """Возвращает полную QSS-строку стилей приложения."""
-    return """
+def get_dark_stylesheet() -> str:
+    return _DARK_STYLESHEET
+
+
+_LIGHT_STYLESHEET = """
             #maxPosterContent { background: #f3f4f6; }
             QGroupBox {
                 font-size: 15px;
@@ -627,3 +627,7 @@ def get_stylesheet() -> str:
                 border-color: #e0e0e0;
             }
         """
+
+
+def get_stylesheet() -> str:
+    return _LIGHT_STYLESHEET

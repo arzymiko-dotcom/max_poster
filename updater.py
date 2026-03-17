@@ -21,6 +21,7 @@ import requests
 from packaging.version import Version
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
+    QApplication,
     QDialog,
     QLabel,
     QMessageBox,

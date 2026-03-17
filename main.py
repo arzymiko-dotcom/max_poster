@@ -303,6 +303,12 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        reload_excel_action = QAction("Обновить реестр адресов", self)
+        reload_excel_action.triggered.connect(self._reload_excel)
+        file_menu.addAction(reload_excel_action)
+
+        file_menu.addSeparator()
+
         clear_action = QAction("Очистить форму", self)
         clear_action.triggered.connect(self.clear_form)
         file_menu.addAction(clear_action)
@@ -830,31 +836,31 @@ class MainWindow(QMainWindow):
         matcher = self._matcher
 
         self._addr_list.blockSignals(True)
-        self._addr_list.clear()
         seen_ids: set[str] = set()
         found = 0
-
-        for parsed in parsed_list:
-            try:
-                matches = matcher.find_matches(parsed)
-            except Exception as exc:
-                _log.warning("find_matches failed for %r: %s", parsed, exc)
-                continue
-            if not matches:
-                continue
-            best = matches[0]
-            if best.chat_id and best.chat_id in seen_ids:
-                continue
-            if best.chat_id:
-                seen_ids.add(best.chat_id)
-            item = QListWidgetItem(best.address)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked)
-            item.setData(Qt.ItemDataRole.UserRole, best)
-            self._addr_list.addItem(item)
-            found += 1
-
-        self._addr_list.blockSignals(False)
+        try:
+            self._addr_list.clear()
+            for parsed in parsed_list:
+                try:
+                    matches = matcher.find_matches(parsed)
+                except Exception as exc:
+                    _log.warning("find_matches failed for %r: %s", parsed, exc)
+                    continue
+                if not matches:
+                    continue
+                best = matches[0]
+                if best.chat_id and best.chat_id in seen_ids:
+                    continue
+                if best.chat_id:
+                    seen_ids.add(best.chat_id)
+                item = QListWidgetItem(best.address)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Checked)
+                item.setData(Qt.ItemDataRole.UserRole, best)
+                self._addr_list.addItem(item)
+                found += 1
+        finally:
+            self._addr_list.blockSignals(False)
         self._update_checklist()
         self.save_state()
 
@@ -1070,15 +1076,17 @@ class MainWindow(QMainWindow):
                     manual_entries.append((m, itm.checkState()))
             if manual_entries or self._addr_list.count() > 0:
                 self._addr_list.blockSignals(True)
-                self._addr_list.clear()
-                for m, state in manual_entries:
-                    item = QListWidgetItem(m.address)
-                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                    item.setCheckState(state)
-                    item.setData(Qt.ItemDataRole.UserRole, m)
-                    item.setData(_MANUAL_ROLE, True)
-                    self._addr_list.addItem(item)
-                self._addr_list.blockSignals(False)
+                try:
+                    self._addr_list.clear()
+                    for m, state in manual_entries:
+                        item = QListWidgetItem(m.address)
+                        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                        item.setCheckState(state)
+                        item.setData(Qt.ItemDataRole.UserRole, m)
+                        item.setData(_MANUAL_ROLE, True)
+                        self._addr_list.addItem(item)
+                finally:
+                    self._addr_list.blockSignals(False)
                 self._update_checklist()
                 self.save_state()
 
@@ -1138,27 +1146,29 @@ class MainWindow(QMainWindow):
             return
 
         self._addr_list.blockSignals(True)
-        self._addr_list.clear()
-        for best in new_items:
-            item = QListWidgetItem(best.address)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            state = (Qt.CheckState.Unchecked
-                     if (checked_ids and best.chat_id not in checked_ids)
-                     else Qt.CheckState.Checked)
-            item.setCheckState(state)
-            item.setData(Qt.ItemDataRole.UserRole, best)
-            self._addr_list.addItem(item)
-        # Возвращаем ручные адреса (если их нет среди автопарсинга)
-        for m, state in manual_entries:
-            if m.chat_id in new_ids:
-                continue  # уже есть в авто-результатах — не дублируем
-            item = QListWidgetItem(m.address)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(state)
-            item.setData(Qt.ItemDataRole.UserRole, m)
-            item.setData(_MANUAL_ROLE, True)
-            self._addr_list.addItem(item)
-        self._addr_list.blockSignals(False)
+        try:
+            self._addr_list.clear()
+            for best in new_items:
+                item = QListWidgetItem(best.address)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                state = (Qt.CheckState.Unchecked
+                         if (checked_ids and best.chat_id not in checked_ids)
+                         else Qt.CheckState.Checked)
+                item.setCheckState(state)
+                item.setData(Qt.ItemDataRole.UserRole, best)
+                self._addr_list.addItem(item)
+            # Возвращаем ручные адреса (если их нет среди автопарсинга)
+            for m, state in manual_entries:
+                if m.chat_id in new_ids:
+                    continue  # уже есть в авто-результатах — не дублируем
+                item = QListWidgetItem(m.address)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(state)
+                item.setData(Qt.ItemDataRole.UserRole, m)
+                item.setData(_MANUAL_ROLE, True)
+                self._addr_list.addItem(item)
+        finally:
+            self._addr_list.blockSignals(False)
         self._update_checklist()
         self.save_state()
 
@@ -1187,6 +1197,21 @@ class MainWindow(QMainWindow):
         """Пересоздаёт sender-объекты после обновления токенов в .env."""
         self.max_sender = MaxSender()
         self.vk_sender = VkSender()
+
+    def _reload_excel(self) -> None:
+        """Перезагружает Excel-реестр адресов с диска."""
+        self._matcher = None
+        if self.excel_path.exists():
+            self._matcher = ExcelMatcher(self.excel_path)
+            QMessageBox.information(
+                self, "Реестр обновлён",
+                f"Файл {self.excel_path.name} перезагружен."
+            )
+        else:
+            QMessageBox.warning(
+                self, "Файл не найден",
+                f"Файл {self.excel_path.name} не найден.\nПоложите его рядом с программой."
+            )
 
     def save_state(self) -> None:
         """Запускает таймер — реальная запись через 400мс после последнего вызова."""
@@ -1253,23 +1278,25 @@ class MainWindow(QMainWindow):
         checked_ids = set(data.get("checked_ids", []))
         if addresses:
             self._addr_list.blockSignals(True)
-            self._addr_list.clear()
-            for a in addresses:
-                match = MatchResult(
-                    address=a.get("address", ""),
-                    score=0,
-                    chat_link=a.get("chat_link", ""),
-                    chat_id=a.get("chat_id", ""),
-                )
-                item = QListWidgetItem(match.address)
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                state = Qt.CheckState.Checked if (not checked_ids or match.chat_id in checked_ids) else Qt.CheckState.Unchecked
-                item.setCheckState(state)
-                item.setData(Qt.ItemDataRole.UserRole, match)
-                if a.get("manual"):
-                    item.setData(_MANUAL_ROLE, True)
-                self._addr_list.addItem(item)
-            self._addr_list.blockSignals(False)
+            try:
+                self._addr_list.clear()
+                for a in addresses:
+                    match = MatchResult(
+                        address=a.get("address", ""),
+                        score=0,
+                        chat_link=a.get("chat_link", ""),
+                        chat_id=a.get("chat_id", ""),
+                    )
+                    item = QListWidgetItem(match.address)
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    state = Qt.CheckState.Checked if (not checked_ids or match.chat_id in checked_ids) else Qt.CheckState.Unchecked
+                    item.setCheckState(state)
+                    item.setData(Qt.ItemDataRole.UserRole, match)
+                    if a.get("manual"):
+                        item.setData(_MANUAL_ROLE, True)
+                    self._addr_list.addItem(item)
+            finally:
+                self._addr_list.blockSignals(False)
 
         self.sync_preview()
 
