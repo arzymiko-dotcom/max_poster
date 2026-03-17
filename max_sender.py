@@ -1,6 +1,7 @@
 import logging
 import mimetypes
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -79,6 +80,19 @@ class MaxSender:
         except Exception as exc:
             return [], f"Ошибка получения чатов: {exc}"
 
+    @staticmethod
+    def _resolve_chat_id(raw: str) -> str:
+        """Извлекает числовой chat_id из URL или возвращает строку как есть.
+
+        https://web.max.ru/-69098384919255 → -69098384919255
+        """
+        raw = raw.strip()
+        if raw.startswith("http"):
+            m = re.search(r"(-\d+)/?$", raw)
+            if m:
+                return m.group(1)
+        return raw
+
     def send_post(
         self,
         chat_link: str,
@@ -89,7 +103,7 @@ class MaxSender:
         if err:
             return SendResult(False, err)
 
-        chat_id = chat_link.strip()
+        chat_id = self._resolve_chat_id(chat_link)
 
         try:
             if image_path and Path(image_path).exists():

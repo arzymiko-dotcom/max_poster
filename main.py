@@ -2,6 +2,7 @@ import atexit
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 from PyQt6.QtCore import QSize, QTimer, Qt, QThread, pyqtSignal
@@ -108,6 +109,13 @@ class SendWorker(QThread):
                     lines.append(f"⛔ Отменено после {i - 1}/{total} отправок.")
                     self.result_ready.emit(False, "\n".join(lines))
                     return
+                # Пауза между отправками — защита от блокировки за спам
+                if i > 1:
+                    for sec in range(5):
+                        if self._cancelled:
+                            break
+                        self.progress.emit(f"MAX {i}/{total} · пауза {5 - sec}с…")
+                        time.sleep(1)
                 self.progress.emit(f"MAX {i}/{total}…")
                 self.progress_step.emit(i, total)
                 r = self.max_sender.send_post(
