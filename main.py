@@ -130,6 +130,60 @@ class SendWorker(QThread):
         self.result_ready.emit(success, "\n".join(lines))
 
 
+class SendResultDialog(QDialog):
+    """Диалог с детальными результатами отправки."""
+
+    def __init__(self, message: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Результаты отправки")
+        self.setMinimumWidth(520)
+        self.setMinimumHeight(300)
+
+        lines = [l for l in message.strip().splitlines() if l.strip()]
+        ok_count = sum(1 for l in lines if "Отправлено" in l or "отправлено" in l.lower())
+        fail_count = sum(1 for l in lines if "Ошибка" in l or "ошибка" in l.lower() or "⛔" in l)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(10)
+
+        # Summary row
+        summary_row = QHBoxLayout()
+        ok_lbl = QLabel(f"✅  Успешно: {ok_count}")
+        ok_lbl.setStyleSheet("font-size:14px; font-weight:600; color:#16a34a;")
+        fail_lbl = QLabel(f"❌  Ошибок: {fail_count}")
+        fail_lbl.setStyleSheet("font-size:14px; font-weight:600; color:#dc2626;")
+        summary_row.addWidget(ok_lbl)
+        summary_row.addSpacing(24)
+        summary_row.addWidget(fail_lbl)
+        summary_row.addStretch()
+        layout.addLayout(summary_row)
+
+        # Results list
+        list_w = QListWidget()
+        list_w.setAlternatingRowColors(True)
+        list_w.setStyleSheet("""
+            QListWidget { border:1px solid #e4eaf0; border-radius:8px;
+                          font-size:13px; background:#ffffff;
+                          alternate-background-color:#f8fafc; }
+            QListWidget::item { padding:5px 8px; }
+        """)
+        for line in lines:
+            item = QListWidgetItem(line)
+            low = line.lower()
+            if "ошибка" in low or "⛔" in line or "error" in low:
+                item.setForeground(QColor("#dc2626"))
+                item.setBackground(QColor("#fff5f5"))
+            elif "отправлено" in low or "ok" in low:
+                item.setForeground(QColor("#16a34a"))
+            list_w.addItem(item)
+        layout.addWidget(list_w)
+
+        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
+        btn_box.accepted.connect(self.accept)
+        layout.addWidget(btn_box)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -991,7 +1045,7 @@ class MainWindow(QMainWindow):
             self._refresh_history()
         else:
             tg_notify.send_error("Ошибка отправки поста", message)
-            QMessageBox.critical(self, "Отправка", message)
+            SendResultDialog(message, self).exec()
 
     def _auto_check_addresses(self) -> None:
         """Тихий автопарсинг адресов при изменении текста (без диалогов)."""
