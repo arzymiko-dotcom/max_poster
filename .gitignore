@@ -16,6 +16,8 @@ __pycache__/
 # App state & history (user data)
 app_state.json
 history.json
+max_poster.log
+stats_cache.json
 
 # Secrets
 .env
