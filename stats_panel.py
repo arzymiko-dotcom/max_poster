@@ -35,6 +35,7 @@ _log = logging.getLogger(__name__)
 _AUTO_REFRESH_MS        = 5 * 60 * 1000   # авто-обновление каждые 5 минут
 _REQUEST_DELAY          = 1.1             # секунд между запросами (лимит GREEN-API: 1 req/s)
 _ACTIVITY_WINDOW_MIN    = 43200           # 30 дней в минутах для lastIncomingMessages
+_GROUP_CACHE_TTL        = 3600            # секунд — как долго кэшируем данные группы (1 час)
 
 # Индексы колонок таблицы
 _COL_NAME    = 0
@@ -72,9 +73,15 @@ def _cache_path() -> Path:
     return base / "stats_cache.json"
 
 
-def _save_cache(rows: list[dict], summary_texts: list[str]) -> None:
+def _save_cache(rows: list[dict], summary_texts: list[str],
+                group_cache: dict | None = None) -> None:
     path = _cache_path()
-    data = {"ts": datetime.now().isoformat(), "rows": rows, "summary_texts": summary_texts}
+    data = {
+        "ts":           datetime.now().isoformat(),
+        "rows":         rows,
+        "summary_texts": summary_texts,
+        "group_cache":  group_cache or {},
+    }
     try:
         with tempfile.NamedTemporaryFile(
             mode="w", encoding="utf-8", dir=path.parent, delete=False, suffix=".tmp"
@@ -86,13 +93,17 @@ def _save_cache(rows: list[dict], summary_texts: list[str]) -> None:
         _log.warning("stats cache write error: %s", exc)
 
 
-def _load_cache() -> tuple[list[dict], list[str], datetime | None]:
+def _load_cache() -> tuple[list[dict], list[str], datetime | None, dict]:
+    """Возвращает (rows, summary_texts, ts, group_cache).
+
+    group_cache: {chat_id: {"name": str, "members": str, "cached_at": int}}
+    """
     try:
         raw = json.loads(_cache_path().read_text(encoding="utf-8"))
         ts = datetime.fromisoformat(raw["ts"])
-        return raw["rows"], raw.get("summary_texts", []), ts
+        return raw["rows"], raw.get("summary_texts", []), ts, raw.get("group_cache", {})
     except Exception:
-        return [], [], None
+        return [], [], None, {}
 
 
 # ────────────────────────────────────────────────────────────────
@@ -100,9 +111,9 @@ def _load_cache() -> tuple[list[dict], list[str], datetime | None]:
 # ────────────────────────────────────────────────────────────────
 
 class _FetchWorker(QThread):
-    finished = pyqtSignal(list, list)   # (rows, summary_texts)
+    finished = pyqtSignal(list, list, dict)  # (rows, summary_texts, group_cache)
     failed   = pyqtSignal(str)
-    progress = pyqtSignal(str)          # текст для строки статуса
+    progress = pyqtSignal(str)               # текст для строки статуса
 
     def run(self) -> None:
         load_dotenv(get_env_path())
@@ -177,41 +188,80 @@ class _FetchWorker(QThread):
             _log.warning("lastIncomingMessages error: %s", exc)
             # Не критично — продолжаем без данных об активности
 
-        # ── 3. Загружаем данные каждой группы (1 req/s) ─────────
+        # ── 3. Загружаем данные групп (умный кэш + 1 req/s) ─────
+        _, _, _, group_cache = _load_cache()
+        now_ts  = int(time.time())
         rows: list[dict] = []
-        total = len(entries)
-        est_min = round(total * _REQUEST_DELAY / 60, 1)
-        self.progress.emit(f"Загрузка {total} групп (~{est_min} мин)…  0 / {total}")
+        total   = len(entries)
 
-        for i, (chat_id, link, address) in enumerate(entries):
-            if i > 0:
-                time.sleep(_REQUEST_DELAY)   # GREEN-API лимит: 1 req/s для group-методов
+        # Считаем сколько групп нужно запросить (не в кэше или кэш устарел)
+        need_fetch = sum(
+            1 for cid, _, _ in entries
+            if now_ts - group_cache.get(cid, {}).get("cached_at", 0) > _GROUP_CACHE_TTL
+        )
+        from_cache = total - need_fetch
+        if from_cache > 0:
+            est_min = round(need_fetch * _REQUEST_DELAY / 60, 1)
+            self.progress.emit(
+                f"Загрузка {need_fetch} групп (~{est_min} мин), "
+                f"{from_cache} из кэша…  0 / {need_fetch}"
+            )
+        else:
+            est_min = round(total * _REQUEST_DELAY / 60, 1)
+            self.progress.emit(f"Загрузка {total} групп (~{est_min} мин)…  0 / {total}")
 
-            self.progress.emit(f"Загрузка групп… {i + 1} / {total}")
+        fetched = 0   # счётчик реальных запросов (не кэш)
+        first_request = True
 
-            try:
-                url  = f"{api_url}/waInstance{id_inst}/getGroupData/{api_token}"
-                resp = requests.post(url, json={"chatId": chat_id}, timeout=8)
+        for chat_id, link, address in entries:
+            cached = group_cache.get(chat_id, {})
+            cache_age = now_ts - cached.get("cached_at", 0)
 
-                if resp.ok:
-                    data       = resp.json()
-                    name       = data.get("subject") or address
-                    members    = str(data.get("size", 0))
-                    ts         = last_activity.get(chat_id)
-                    last_event = (
-                        datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M")
-                        if ts else "Нет данных"
-                    )
-                else:
-                    name       = address
-                    members    = "—"
-                    last_event = "Нет доступа"
+            if cache_age <= _GROUP_CACHE_TTL and cached.get("name"):
+                # ── Берём из кэша ──────────────────────────────────
+                name    = cached["name"]
+                members = cached["members"]
+            else:
+                # ── Запрашиваем у GREEN-API ────────────────────────
+                if not first_request:
+                    time.sleep(_REQUEST_DELAY)   # 1 req/s лимит GREEN-API
+                first_request = False
+                fetched += 1
+                self.progress.emit(
+                    f"Загрузка групп… {fetched} / {need_fetch}"
+                    + (f"  (кэш: {from_cache})" if from_cache > 0 else "")
+                )
 
-            except Exception as exc:
-                _log.warning("getGroupData %s: %s", chat_id, exc)
-                name       = address
-                members    = "—"
-                last_event = "Ошибка"
+                try:
+                    url  = f"{api_url}/waInstance{id_inst}/getGroupData/{api_token}"
+                    resp = requests.post(url, json={"chatId": chat_id}, timeout=8)
+
+                    if resp.ok:
+                        data    = resp.json()
+                        name    = data.get("subject") or address
+                        members = str(data.get("size", 0))
+                        # Обновляем кэш группы
+                        group_cache[chat_id] = {
+                            "name":      name,
+                            "members":   members,
+                            "cached_at": now_ts,
+                        }
+                    else:
+                        name    = address
+                        members = "—"
+
+                except Exception as exc:
+                    _log.warning("getGroupData %s: %s", chat_id, exc)
+                    name    = address
+                    members = "—"
+
+            ts         = last_activity.get(chat_id)
+            last_event = (
+                datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M")
+                if ts else "Нет данных"
+            )
+            if members == "—":
+                last_event = "Нет доступа"
 
             rows.append({
                 "name":       name,
@@ -224,7 +274,7 @@ class _FetchWorker(QThread):
             self.failed.emit("Не удалось получить данные ни по одной группе.")
             return
 
-        self.finished.emit(rows, [])
+        self.finished.emit(rows, [], group_cache)
 
 
 # ────────────────────────────────────────────────────────────────
@@ -401,7 +451,7 @@ class StatsPanel(QWidget):
         self._refresh_btn.setText(f"{self._SPINNER[0]}  Загрузка…")
 
         # Сразу показываем кэш, чтобы пользователь видел данные во время загрузки
-        cached_rows, _, cached_ts = _load_cache()
+        cached_rows, _, cached_ts, _ = _load_cache()
         if cached_rows and not self._all_rows:
             self._all_rows = cached_rows
             self._apply_filter()
@@ -438,7 +488,7 @@ class StatsPanel(QWidget):
             except (ValueError, IndexError):
                 pass
 
-    def _on_data(self, rows: list[dict], summary_texts: list[str]) -> None:
+    def _on_data(self, rows: list[dict], summary_texts: list[str], group_cache: dict) -> None:
         self._spin_timer.stop()
         self._progress_bar.setValue(100)
         self._progress_bar.hide()
@@ -446,7 +496,7 @@ class StatsPanel(QWidget):
         self._last_refresh = datetime.now()
         self._last_lbl.setText(f"Обновлено в {self._last_refresh.strftime('%H:%M:%S')}")
         self._cache_banner.hide()
-        _save_cache(rows, summary_texts)
+        _save_cache(rows, summary_texts, group_cache)
         self._refresh_btn.setEnabled(True)
         self._refresh_btn.setText("⟳  Обновить")
         self._export_btn.setEnabled(True)
@@ -494,7 +544,7 @@ class StatsPanel(QWidget):
         self._progress_bar.hide()
         self._refresh_btn.setEnabled(True)
         self._refresh_btn.setText("⟳  Обновить")
-        cached_rows, cached_summary, cached_ts = _load_cache()
+        cached_rows, cached_summary, cached_ts, _ = _load_cache()
         if cached_rows:
             self._all_rows = cached_rows
             ts_str = cached_ts.strftime("%d.%m.%Y %H:%M") if cached_ts else "неизвестно"
