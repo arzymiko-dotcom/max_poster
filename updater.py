@@ -284,6 +284,7 @@ def check_for_updates(parent=None, silent: bool = True) -> None:
 
     worker.result_ready.connect(_on_result)
     worker.up_to_date.connect(_on_up_to_date)
+    worker.finished.connect(worker.deleteLater)
     worker.start()
     # Сохраняем ссылку на worker, чтобы GC не удалил его до завершения потока.
     # Если parent не передан — привязываем к экземпляру приложения.

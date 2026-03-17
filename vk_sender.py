@@ -8,10 +8,11 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+from env_utils import get_env_path
+
 _log = logging.getLogger(__name__)
 
-_env_path = Path(sys.executable).parent / '.env' if getattr(sys, 'frozen', False) else Path(__file__).parent / '.env'
-load_dotenv(_env_path)
+load_dotenv(get_env_path())
 
 VK_API = "https://api.vk.com/method"
 VK_VER = "5.199"

@@ -1,6 +1,7 @@
 import json
 import shutil
 import tempfile
+import threading
 import warnings
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 class StateManager:
     def __init__(self, file_path: str | Path = "app_state.json") -> None:
         self.file_path = Path(file_path)
+        self._lock = threading.Lock()
 
     def load(self) -> dict[str, Any]:
         if not self.file_path.exists():
@@ -38,19 +40,20 @@ class StateManager:
 
     def save(self, data: dict[str, Any]) -> None:
         dir_ = self.file_path.parent
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", encoding="utf-8", dir=dir_, delete=False, suffix=".tmp"
-            ) as tmp:
-                json.dump(data, tmp, ensure_ascii=False, indent=2)
-                tmp_path = Path(tmp.name)
+        with self._lock:
             try:
-                tmp_path.replace(self.file_path)
-            except OSError:
-                tmp_path.unlink(missing_ok=True)
-                raise
-        except OSError as exc:
-            warnings.warn(
-                f"Не удалось сохранить состояние приложения в {self.file_path}: {exc}",
-                stacklevel=2,
-            )
+                with tempfile.NamedTemporaryFile(
+                    mode="w", encoding="utf-8", dir=dir_, delete=False, suffix=".tmp"
+                ) as tmp:
+                    json.dump(data, tmp, ensure_ascii=False, indent=2)
+                    tmp_path = Path(tmp.name)
+                try:
+                    tmp_path.replace(self.file_path)
+                except OSError:
+                    tmp_path.unlink(missing_ok=True)
+                    raise
+            except OSError as exc:
+                warnings.warn(
+                    f"Не удалось сохранить состояние приложения в {self.file_path}: {exc}",
+                    stacklevel=2,
+                )

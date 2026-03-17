@@ -1,5 +1,6 @@
 """Централизованная конфигурация логирования."""
 import logging
+import logging.handlers
 import os
 import sys
 from pathlib import Path
@@ -16,8 +17,14 @@ def get_log_path() -> Path:
 
 def setup_logging() -> None:
     log_path = get_log_path()
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_path,
+        maxBytes=5 * 1024 * 1024,  # 5 MB
+        backupCount=3,
+        encoding="utf-8",
+    )
     handlers: list[logging.Handler] = [
-        logging.FileHandler(log_path, encoding="utf-8"),
+        file_handler,
         logging.StreamHandler(sys.stderr),
     ]
     logging.basicConfig(

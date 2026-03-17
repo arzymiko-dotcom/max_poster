@@ -3,17 +3,21 @@ shell_window.py — VS Code-style контейнер для всех модул�
 """
 
 import ctypes
+import hashlib
 import json
+import logging
 import os
 import sys
 from pathlib import Path
 
+_log = logging.getLogger(__name__)
+
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QButtonGroup, QFrame, QHBoxLayout,
-    QLabel, QMainWindow, QMenu, QMessageBox, QPushButton, QStackedWidget,
-    QVBoxLayout, QWidget,
+    QButtonGroup, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout,
+    QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton,
+    QStackedWidget, QVBoxLayout, QWidget,
 )
 
 
@@ -29,7 +33,10 @@ def _ui_prefs_path() -> Path:
 def _load_ui_prefs() -> dict:
     try:
         return json.loads(_ui_prefs_path().read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
     except Exception:
+        _log.warning("Не удалось загрузить ui_prefs.json", exc_info=True)
         return {}
 
 
@@ -39,7 +46,7 @@ def _save_ui_prefs(prefs: dict) -> None:
             json.dumps(prefs, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except Exception:
-        pass
+        _log.warning("Не удалось сохранить ui_prefs.json", exc_info=True)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -96,6 +103,132 @@ def _assets(name: str) -> str:
     else:
         base = Path(__file__).parent
     return str(base / "assets" / name)
+
+
+# ──────────────────────────────────────────────────────────────
+#  Пароль для настроек подключений
+# ──────────────────────────────────────────────────────────────
+def _hash_pw(password: str) -> str:
+    """PBKDF2-HMAC-SHA256 с random salt. Формат: 'pbkdf2:<salt_hex>:<hash_hex>'."""
+    salt = os.urandom(16)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 260_000)
+    return f"pbkdf2:{salt.hex()}:{key.hex()}"
+
+
+def _verify_pw(password: str, stored: str) -> bool:
+    """Проверяет пароль против PBKDF2 или устаревшего SHA256 хэша."""
+    if stored.startswith("pbkdf2:"):
+        try:
+            _, salt_hex, hash_hex = stored.split(":", 2)
+            salt = bytes.fromhex(salt_hex)
+            key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 260_000)
+            return key.hex() == hash_hex
+        except Exception:
+            return False
+    # Устаревший SHA256 — принимаем, но при следующем сохранении обновится
+    return hashlib.sha256(password.encode("utf-8")).hexdigest() == stored
+
+
+class _SetPasswordDialog(QDialog):
+    """Первичная установка пароля."""
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Создать пароль для настроек")
+        self.setMinimumWidth(360)
+        self._hash: str = ""
+        self._hint: str = ""
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(10)
+
+        layout.addWidget(QLabel("Защитите настройки паролем.\nОн потребуется при каждом открытии."))
+
+        form = QFormLayout()
+        form.setSpacing(8)
+        self._pw = QLineEdit()
+        self._pw.setEchoMode(QLineEdit.EchoMode.Password)
+        self._pw.setPlaceholderText("Придумайте пароль")
+        self._pw2 = QLineEdit()
+        self._pw2.setEchoMode(QLineEdit.EchoMode.Password)
+        self._pw2.setPlaceholderText("Повторите пароль")
+        self._hint_edit = QLineEdit()
+        self._hint_edit.setPlaceholderText("Необязательно — подсказка если забудете")
+        form.addRow("Пароль:", self._pw)
+        form.addRow("Повтор:", self._pw2)
+        form.addRow("Подсказка:", self._hint_edit)
+        layout.addLayout(form)
+
+        self._error = QLabel("")
+        self._error.setStyleSheet("color: #e05555;")
+        layout.addWidget(self._error)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.button(QDialogButtonBox.StandardButton.Ok).setText("Сохранить")
+        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("Отмена")
+        btns.accepted.connect(self._check)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _check(self) -> None:
+        pw = self._pw.text()
+        if not pw:
+            self._error.setText("Пароль не может быть пустым.")
+            return
+        if pw != self._pw2.text():
+            self._error.setText("Пароли не совпадают.")
+            return
+        self._hash = _hash_pw(pw)
+        self._hint = self._hint_edit.text().strip()
+        self.accept()
+
+    def result_data(self) -> tuple[str, str]:
+        return self._hash, self._hint
+
+
+class _EnterPasswordDialog(QDialog):
+    """Ввод пароля для входа в настройки."""
+    def __init__(self, hint: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Вход в настройки")
+        self.setMinimumWidth(320)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(10)
+
+        if hint:
+            hint_label = QLabel(f"Подсказка: {hint}")
+            hint_label.setStyleSheet("color: #888aaa; font-style: italic;")
+            layout.addWidget(hint_label)
+
+        form = QFormLayout()
+        self._pw = QLineEdit()
+        self._pw.setEchoMode(QLineEdit.EchoMode.Password)
+        self._pw.setPlaceholderText("Введите пароль")
+        self._pw.returnPressed.connect(self._try_accept)
+        form.addRow("Пароль:", self._pw)
+        layout.addLayout(form)
+
+        self._error = QLabel("")
+        self._error.setStyleSheet("color: #e05555;")
+        layout.addWidget(self._error)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.button(QDialogButtonBox.StandardButton.Ok).setText("Войти")
+        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("Отмена")
+        btns.accepted.connect(self._try_accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def _try_accept(self) -> None:
+        if not self._pw.text():
+            self._error.setText("Введите пароль.")
+            return
+        self.accept()
+
+    def entered_password(self) -> str:
+        return self._pw.text()
 
 
 # ──────────────────────────────────────────────────────────────
@@ -159,6 +292,20 @@ class _SideBar(QFrame):
         layout.addWidget(self.btn_mkd)
 
         layout.addStretch()
+
+        # Кнопка авторизации (токены)
+        self.btn_auth = QPushButton()
+        self.btn_auth.setObjectName("settingsBtn")
+        self.btn_auth.setFixedSize(60, 50)
+        self.btn_auth.setToolTip("Настройки подключений")
+        _auth_icon = QIcon(_assets("authorization.ico"))
+        if not _auth_icon.isNull():
+            self.btn_auth.setIcon(_auth_icon)
+            self.btn_auth.setIconSize(QSize(24, 24))
+        else:
+            self.btn_auth.setText("🔑")
+        layout.addWidget(self.btn_auth)
+        layout.addSpacing(6)
 
         # Кнопка настроек внизу — иконка settings.ico
         self.btn_settings = QPushButton()
@@ -257,6 +404,7 @@ class ShellWindow(QMainWindow):
         # ── Сигналы ─────────────────────────────────────────────
         self._sidebar._group.idClicked.connect(self._switch_panel)
         self._sidebar.btn_settings.clicked.connect(self._show_settings_menu)
+        self._sidebar.btn_auth.clicked.connect(self._open_settings_dialog)
         self._sidebar.btn_mkd.clicked.connect(self._show_mkd_coming_soon)
         self._sidebar.btn_stats.clicked.connect(self._on_stats_clicked)
 
@@ -290,6 +438,34 @@ class ShellWindow(QMainWindow):
                     break
         except Exception:
             pass
+
+    # ──────────────────────────────────────────────────────────
+    def _open_settings_dialog(self) -> None:
+        prefs = _load_ui_prefs()
+        pw_hash = prefs.get("settings_password_hash", "")
+        hint    = prefs.get("settings_password_hint", "")
+
+        if not pw_hash:
+            # Первый вход — предложить установить пароль
+            set_dlg = _SetPasswordDialog(self)
+            if set_dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            pw_hash, hint = set_dlg.result_data()
+            prefs["settings_password_hash"] = pw_hash
+            prefs["settings_password_hint"] = hint
+            _save_ui_prefs(prefs)
+        else:
+            enter_dlg = _EnterPasswordDialog(hint, self)
+            if enter_dlg.exec() != QDialog.DialogCode.Accepted:
+                return
+            if not _verify_pw(enter_dlg.entered_password(), pw_hash):
+                QMessageBox.warning(self, "Неверный пароль", "Пароль неверный. Попробуйте ещё раз.")
+                return
+
+        from ui.settings_dialog import SettingsDialog
+        dlg = SettingsDialog(self)
+        dlg.settings_saved.connect(self._max_win.reload_senders)
+        dlg.exec()
 
     # ──────────────────────────────────────────────────────────
     def _toggle_dark_mode(self) -> None:

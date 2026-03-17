@@ -27,7 +27,8 @@ a = Analysis(
         # ui-пакет — импортируются внутри try/except, PyInstaller может пропустить
         'ui', 'ui.paths', 'ui.widgets', 'ui.emoji_picker',
         'ui.background', 'ui.animations', 'ui.preview_card',
-        'ui.dialogs', 'ui.styles',
+        'ui.dialogs', 'ui.styles', 'ui.settings_dialog',
+        'env_utils',
     ],
     hookspath=[],
     hooksconfig={},

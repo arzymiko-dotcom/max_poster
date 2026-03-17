@@ -37,11 +37,9 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Дополнительно:"
 
 [Files]
-Source: "dist\MAX POST\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\MAX POST\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: ".env"
+Source: "dist\MAX POST\.env"; DestDir: "{app}"; Flags: onlyifdoesntexist
 Source: "assets\MAX POST.ico"; DestDir: "{app}"; Flags: ignoreversion
-
-[InstallDelete]
-Type: filesandordirs; Name: "{app}"
 
 [Icons]
 Name: "{group}\MAX POST"; Filename: "{app}\MAX POST.exe"; IconFilename: "{app}\MAX POST.ico"

@@ -4,8 +4,8 @@ import os
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import QRect, QSize, QTimer, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPainterPath, QPen, QPixmap
+from PyQt6.QtCore import QSize, QTimer, Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -1182,6 +1182,11 @@ class MainWindow(QMainWindow):
                 self._update_checklist()
                 self.save_state()
                 break
+
+    def reload_senders(self) -> None:
+        """Пересоздаёт sender-объекты после обновления токенов в .env."""
+        self.max_sender = MaxSender()
+        self.vk_sender = VkSender()
 
     def save_state(self) -> None:
         """Запускает таймер — реальная запись через 400мс после последнего вызова."""

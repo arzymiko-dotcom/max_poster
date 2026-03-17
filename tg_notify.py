@@ -13,6 +13,7 @@ Telegram-уведомления для MAX POST.
 import html
 import os
 import platform
+import re
 import socket
 import sys
 import threading
@@ -23,12 +24,23 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
-_env_path = (
-    Path(sys.executable).parent / ".env"
-    if getattr(sys, "frozen", False)
-    else Path(__file__).parent / ".env"
+from env_utils import get_env_path
+
+load_dotenv(get_env_path())
+
+# Паттерны для редактирования токенов из сообщений об ошибках
+_TOKEN_RE = re.compile(
+    r'vk1\.[a-zA-Z0-9_.\-]{20,}'          # VK токены
+    r'|\b[a-f0-9]{40,}\b'                  # HEX токены (API ключи)
+    r'|\b\d{8,12}:[A-Za-z0-9_\-]{30,}\b', # Telegram bot токены
+    re.IGNORECASE,
 )
-load_dotenv(_env_path)
+
+
+def _sanitize(text: str) -> str:
+    """Заменяет паттерны, похожие на токены, на [REDACTED]."""
+    return _TOKEN_RE.sub("[REDACTED]", text)
+
 
 _BOT_TOKEN: str = os.getenv("TG_BOT_TOKEN", "")
 _CHAT_ID: str = os.getenv("TG_CHAT_ID", "")
@@ -148,7 +160,7 @@ def send_error(title: str, details: str) -> None:
     ver = _APP_VERSION
     text = (
         f"❌ <b>{html.escape(title)}</b>\n\n"
-        f"<pre>{html.escape(details[:3000])}</pre>\n\n"
+        f"<pre>{html.escape(_sanitize(details[:3000]))}</pre>\n\n"
         f"👤 {html.escape(user)}  💻 {html.escape(pc)}  📦 {html.escape(ver)}\n"
         f"🕐 {now}"
     )

@@ -359,9 +359,11 @@ class StatsPanel(QWidget):
         self._refresh_btn.setEnabled(False)
         self._refresh_btn.setText("Загрузка…")
         self._status_lbl.setText("Получение данных…")
-        self._worker = _FetchWorker()
+        self._worker = _FetchWorker(self)
         self._worker.finished.connect(self._on_data)
         self._worker.failed.connect(self._on_error)
+        self._worker.finished.connect(self._worker.deleteLater)
+        self._worker.failed.connect(self._worker.deleteLater)
         self._worker.start()
 
     def _on_data(self, rows: list[dict], summary_texts: list[str]) -> None:
@@ -638,6 +640,13 @@ class StatsPanel(QWidget):
             QMessageBox.warning(self, "Экспорт", f"Ошибка сохранения: {exc}")
 
     # ── Стили ────────────────────────────────────────────────────
+
+    def closeEvent(self, event) -> None:
+        self._auto_timer.stop()
+        if self._worker and self._worker.isRunning():
+            self._worker.quit()
+            self._worker.wait(2000)
+        super().closeEvent(event)
 
     def set_dark(self, dark: bool) -> None:
         """Переключает тёмную/светлую тему панели."""

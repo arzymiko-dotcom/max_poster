@@ -8,7 +8,11 @@ from pathlib import Path
 import requests
 from dotenv import load_dotenv
 
+from env_utils import get_env_path
+
 _log = logging.getLogger(__name__)
+
+load_dotenv(get_env_path())
 
 
 def _json_or_raise(resp: requests.Response) -> dict | list:
@@ -20,9 +24,6 @@ def _json_or_raise(resp: requests.Response) -> dict | list:
             f"Тело ответа: {resp.text[:300]!r}"
         )
     return resp.json()
-
-_env_path = Path(sys.executable).parent / '.env' if getattr(sys, 'frozen', False) else Path(__file__).parent / '.env'
-load_dotenv(_env_path)
 
 
 @dataclass
