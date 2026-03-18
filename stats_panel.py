@@ -24,9 +24,20 @@ from PyQt6.QtCore import QThread, QTimer, QUrl, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QFont
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QMenu, QProgressBar, QPushButton, QTableWidget,
+    QLineEdit, QMenu, QProgressBar, QPushButton, QStackedWidget, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
+
+try:
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    from PyQt6.QtWebEngineCore import QWebEnginePage
+    _WEB_ENGINE_AVAILABLE = True
+except Exception as _web_err:
+    import logging as _logging
+    _logging.getLogger(__name__).warning("PyQt6-WebEngine недоступен: %s", _web_err)
+    _WEB_ENGINE_AVAILABLE = False
+
+_WEB_REPORT_URL = "https://bot-dev.gkh.spb.ru/gks2vyb-report.php"
 
 from env_utils import get_env_path
 
@@ -278,7 +289,7 @@ class _FetchWorker(QThread):
                     resp = requests.post(
                         url_history,
                         json={"chatId": chat_id, "count": 1},
-                        timeout=20,
+                        timeout=12,
                     )
                     if resp.ok:
                         history = resp.json()
@@ -288,8 +299,11 @@ class _FetchWorker(QThread):
                         _log.debug("getChatHistory %s: ts=%s", chat_id, ts_val)
                     else:
                         _log.debug("getChatHistory %s: HTTP %d", chat_id, resp.status_code)
+                        group_cache.setdefault(chat_id, {})["activity_cached_at"] = now_ts
                 except Exception as exc:
                     _log.warning("getChatHistory %s: %s", chat_id, exc)
+                    # Кэшируем факт ошибки — не повторяем до истечения TTL
+                    group_cache.setdefault(chat_id, {})["activity_cached_at"] = now_ts
 
             ts         = group_cache.get(chat_id, {}).get("last_activity")
             last_event = (
@@ -359,7 +373,55 @@ class StatsPanel(QWidget):
         root.setContentsMargins(16, 14, 16, 14)
         root.setSpacing(10)
 
-        smart_layout = root
+        # ── Переключатель режимов (pill) ─────────────────────────
+        toggle_row = QHBoxLayout()
+        toggle_row.setSpacing(0)
+        self._btn_web   = QPushButton("🌐  WEB версия")
+        self._btn_smart = QPushButton("⚡  Smart версия")
+        for btn in (self._btn_web, self._btn_smart):
+            btn.setCheckable(True)
+            btn.setFixedHeight(34)
+            btn.setObjectName("statsToggleBtn")
+        self._btn_smart.setObjectName("statsToggleBtnActive")
+        self._btn_web.setChecked(False)
+        self._btn_smart.setChecked(True)
+        self._btn_web.clicked.connect(lambda: self._switch_mode(0))
+        self._btn_smart.clicked.connect(lambda: self._switch_mode(1))
+        toggle_row.addStretch()
+        toggle_row.addWidget(self._btn_web)
+        toggle_row.addWidget(self._btn_smart)
+        toggle_row.addStretch()
+        root.addLayout(toggle_row)
+
+        # ── Стек страниц ─────────────────────────────────────────
+        self._mode_stack = QStackedWidget()
+        root.addWidget(self._mode_stack)
+
+        # ── Страница 0: WEB версия ────────────────────────────────
+        if _WEB_ENGINE_AVAILABLE:
+            self._web_view = QWebEngineView()
+            _page = QWebEnginePage(self._web_view)
+            _page.certificateError.connect(lambda err: err.acceptCertificate())
+            self._web_view.setPage(_page)
+            self._web_view.loadFinished.connect(self._on_web_load_finished)
+            self._web_view.setUrl(QUrl(_WEB_REPORT_URL))
+            self._mode_stack.addWidget(self._web_view)
+        else:
+            no_web = QLabel(
+                "⚠️  Для WEB версии требуется пакет PyQt6-WebEngine.\n"
+                "Установите его командой: pip install PyQt6-WebEngine"
+            )
+            no_web.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            no_web.setObjectName("statsStatus")
+            self._mode_stack.addWidget(no_web)
+
+        # ── Страница 1: Smart версия ──────────────────────────────
+        smart_page = QWidget()
+        smart_layout = QVBoxLayout(smart_page)
+        smart_layout.setContentsMargins(0, 0, 0, 0)
+        smart_layout.setSpacing(10)
+        self._mode_stack.addWidget(smart_page)
+        self._mode_stack.setCurrentIndex(1)  # по умолчанию Smart версия
 
         # ── Заголовок ────────────────────────────────────────────
         hdr = QHBoxLayout()
@@ -466,6 +528,31 @@ class StatsPanel(QWidget):
         self._status_lbl.setObjectName("statsStatus")
         smart_layout.addWidget(self._status_lbl)
 
+
+    def _switch_mode(self, index: int) -> None:
+        self._mode_stack.setCurrentIndex(index)
+        self._btn_web.setChecked(index == 0)
+        self._btn_smart.setChecked(index == 1)
+        self._btn_web.setObjectName("statsToggleBtnActive" if index == 0 else "statsToggleBtn")
+        self._btn_smart.setObjectName("statsToggleBtnActive" if index == 1 else "statsToggleBtn")
+        for btn in (self._btn_web, self._btn_smart):
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+
+    def _on_web_load_finished(self, ok: bool) -> None:
+        if not ok and _WEB_ENGINE_AVAILABLE and hasattr(self, "_web_view"):
+            self._web_view.setHtml("""
+                <html><body style="font-family:Arial,sans-serif;text-align:center;
+                       padding:80px 40px;color:#6b7280;background:#f9fafb;">
+                  <div style="font-size:48px;margin-bottom:16px">⚠️</div>
+                  <h2 style="color:#374151;margin:0 0 8px">Сервер недоступен</h2>
+                  <p style="margin:0 0 24px">Не удалось загрузить WEB версию отчёта.</p>
+                  <p style="font-size:13px;background:#e5e7eb;padding:10px 20px;
+                     border-radius:8px;display:inline-block">
+                    Используйте <b>⚡ Smart версию</b> — она работает напрямую через GREEN-API
+                  </p>
+                </body></html>
+            """)
 
     @staticmethod
     def _make_stat_lbl(value: str, label: str) -> QWidget:
@@ -885,7 +972,7 @@ class StatsPanel(QWidget):
         if self._worker and self._worker.isRunning():
             self._worker._stop = True
             self._worker.quit()
-            self._worker.wait(10000)
+            self._worker.wait(15000)
 
     def closeEvent(self, event) -> None:
         self._shutdown()
@@ -900,6 +987,18 @@ class StatsPanel(QWidget):
                 StatsPanel { background: #1e1e2e; }
                 QLabel#statsPanelTitle { font-size: 18px; font-weight: 700; color: #d0d0f0; }
                 QLabel#statsLastRefresh { font-size: 11px; color: #6868aa; padding-right: 8px; }
+                QPushButton#statsToggleBtn {
+                    min-height:0; font-size:13px; font-weight:600; padding:4px 20px;
+                    border:1px solid #3a3a55; background:#2d2d45; color:#8888aa;
+                }
+                QPushButton#statsToggleBtn:first-child { border-radius: 8px 0 0 8px; }
+                QPushButton#statsToggleBtn:last-child  { border-radius: 0 8px 8px 0; }
+                QPushButton#statsToggleBtnActive {
+                    min-height:0; font-size:13px; font-weight:600; padding:4px 20px;
+                    border:1px solid #4a6cf7; background:#4a6cf7; color:#ffffff;
+                }
+                QPushButton#statsToggleBtnActive:first-child { border-radius: 8px 0 0 8px; }
+                QPushButton#statsToggleBtnActive:last-child  { border-radius: 0 8px 8px 0; }
                 QPushButton#statsRefreshBtn {
                     min-height: 0; font-size: 13px; font-weight: 600; padding: 4px 16px;
                     border-radius: 7px; border: 1px solid #3a3a55; background: #2d2d45; color: #c8c8e0;
@@ -956,6 +1055,18 @@ class StatsPanel(QWidget):
             StatsPanel { background: #f3f4f6; }
             QLabel#statsPanelTitle { font-size: 18px; font-weight: 700; color: #1a1a2e; }
             QLabel#statsLastRefresh { font-size: 11px; color: #9ca3af; padding-right: 8px; }
+            QPushButton#statsToggleBtn {
+                min-height:0; font-size:13px; font-weight:600; padding:4px 20px;
+                border:1px solid #c7d0db; background:#eef2f7; color:#6b7280;
+            }
+            QPushButton#statsToggleBtn:first-child { border-radius: 8px 0 0 8px; }
+            QPushButton#statsToggleBtn:last-child  { border-radius: 0 8px 8px 0; }
+            QPushButton#statsToggleBtnActive {
+                min-height:0; font-size:13px; font-weight:600; padding:4px 20px;
+                border:1px solid #4a6cf7; background:#4a6cf7; color:#ffffff;
+            }
+            QPushButton#statsToggleBtnActive:first-child { border-radius: 8px 0 0 8px; }
+            QPushButton#statsToggleBtnActive:last-child  { border-radius: 0 8px 8px 0; }
             QPushButton#statsRefreshBtn {
                 min-height: 0; font-size: 13px; font-weight: 600; padding: 4px 16px;
                 border-radius: 7px; border: 1px solid #c7d0db; background: #eef2f7; color: #334155;

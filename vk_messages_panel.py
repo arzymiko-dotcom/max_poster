@@ -1239,7 +1239,8 @@ class VkMessagesPanel(QWidget):
         self._chat_view.load_messages(items, profiles, group_id)
         # Отметить прочитанными
         if self._current_peer_id:
-            w = _MarkReadWorker(self._token, self._group_id, self._current_peer_id)
+            w = _MarkReadWorker(self._token, self._group_id, self._current_peer_id, parent=self)
+            w.finished.connect(w.deleteLater)
             w.start()
 
     def _on_history_error(self, msg: str):
@@ -1317,7 +1318,8 @@ class VkMessagesPanel(QWidget):
             self._current_profiles = profiles
             self._chat_view.add_message(msg, profiles, self._group_id)
             # Отметить прочитанным
-            w = _MarkReadWorker(self._token, self._group_id, peer_id)
+            w = _MarkReadWorker(self._token, self._group_id, peer_id, parent=self)
+            w.finished.connect(w.deleteLater)
             w.start()
         else:
             # Обновить список диалогов
