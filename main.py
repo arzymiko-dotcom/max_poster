@@ -466,8 +466,9 @@ class MainWindow(QMainWindow):
         addr_header_frame.setObjectName("checklistFrame")
         ah_layout = QHBoxLayout(addr_header_frame)
         ah_layout.setContentsMargins(14, 10, 14, 10)
-        addr_lbl = QLabel("Адреса для рассылки MAX")
-        addr_lbl.setObjectName("checklistTitle")
+        self._addr_count_lbl = QLabel("Адреса для рассылки MAX")
+        self._addr_count_lbl.setObjectName("checklistTitle")
+        addr_lbl = self._addr_count_lbl
         self._add_addr_btn = QPushButton("+")
         self._add_addr_btn.setObjectName("addAddrBtn")
         self._add_addr_btn.setFixedSize(24, 24)
@@ -781,8 +782,16 @@ class MainWindow(QMainWindow):
 
         has_text    = bool(self.text_input.toPlainText().strip())
         has_photo   = self.image_path is not None
-        has_address = len(self._get_checked_matches()) > 0
+        checked     = self._get_checked_matches()
+        has_address = len(checked) > 0
         has_platform = self.chk_max.isChecked() or self.chk_vk.isChecked()
+
+        # Счётчик выбранных адресов в заголовке
+        n = len(checked)
+        if n > 0:
+            self._addr_count_lbl.setText(f"Адреса для рассылки MAX  ({n})")
+        else:
+            self._addr_count_lbl.setText("Адреса для рассылки MAX")
 
         self._cl_text.setText(row(has_text, "Текст введён"))
         if has_photo:
@@ -1016,6 +1025,23 @@ class MainWindow(QMainWindow):
 
         if send_max and not chat_ids:
             QMessageBox.warning(self, "Отправка", "Нет отмеченных адресов. Нажми «Проверить адрес».")
+            return
+
+        # Проверяем наличие токенов
+        import os as _os
+        if send_max and not (_os.getenv("MAX_ID_INSTANCE") and _os.getenv("MAX_API_TOKEN")):
+            QMessageBox.warning(
+                self, "Отправка",
+                "Не заданы токены MAX (ID инстанса / API токен).\n"
+                "Откройте Настройки подключений (🔑) и заполните данные."
+            )
+            return
+        if send_vk and not _os.getenv("VK_GROUP_TOKEN"):
+            QMessageBox.warning(
+                self, "Отправка",
+                "Не задан токен ВКонтакте (VK_GROUP_TOKEN).\n"
+                "Откройте Настройки подключений (🔑) и заполните данные."
+            )
             return
 
         # Подтверждение при массовой рассылке (> 5 групп)

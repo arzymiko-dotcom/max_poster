@@ -34,7 +34,7 @@ _log = logging.getLogger(__name__)
 
 _AUTO_REFRESH_MS        = 5 * 60 * 1000   # авто-обновление каждые 5 минут
 _REQUEST_DELAY          = 1.1             # секунд между запросами (лимит GREEN-API: 1 req/s)
-_ACTIVITY_WINDOW_MIN    = 1440            # 24 часа в минутах для lastIncomingMessages
+_ACTIVITY_WINDOW_MIN    = 10080           # 7 дней в минутах для lastIncomingMessages
 _GROUP_CACHE_TTL        = 3600            # секунд — как долго кэшируем данные группы (1 час)
 
 # Индексы колонок таблицы
@@ -184,15 +184,21 @@ class _FetchWorker(QThread):
             if resp.ok:
                 msgs = resp.json()
                 if isinstance(msgs, list):
+                    # Логируем первые chatId для диагностики формата
+                    sample = [m.get("chatId", "") for m in msgs[:3]]
+                    _log.debug("lastIncomingMessages sample chatIds: %s", sample)
                     for msg in msgs:
                         cid = str(msg.get("chatId", "")).strip()
-                        # GREEN-API возвращает chatId в формате "-69098...@g.us" —
-                        # обрезаем суффикс чтобы совпасть с нашими chat_id из Excel
+                        # Обрезаем суффикс @g.us / @MAX / и т.п.
                         if "@" in cid:
                             cid = cid.split("@")[0]
                         ts  = msg.get("timestamp", 0)
                         if cid and ts and ts > last_activity.get(cid, 0):
                             last_activity[cid] = ts
+                    _log.debug(
+                        "lastIncomingMessages: %d сообщений, %d уникальных групп",
+                        len(msgs), len(last_activity)
+                    )
         except Exception as exc:
             _log.warning("lastIncomingMessages error: %s", exc)
             # Не критично — продолжаем без данных об активности
@@ -249,36 +255,46 @@ class _FetchWorker(QThread):
                     + (f"  (кэш: {from_cache})" if from_cache > 0 else "")
                 )
 
-                try:
-                    url  = f"{api_url}/waInstance{id_inst}/getGroupData/{api_token}"
-                    resp = requests.post(url, json={"chatId": chat_id}, timeout=8)
-
-                    if resp.ok:
-                        data    = resp.json()
-                        name    = data.get("subject") or address
-                        members = str(data.get("size", 0))
-                        # Обновляем кэш группы
-                        group_cache[chat_id] = {
-                            "name":      name,
-                            "members":   members,
-                            "cached_at": now_ts,
-                        }
-                    else:
-                        name    = address
-                        members = "—"
-
-                except Exception as exc:
-                    _log.warning("getGroupData %s: %s", chat_id, exc)
-                    name    = address
-                    members = "—"
+                url = f"{api_url}/waInstance{id_inst}/getGroupData/{api_token}"
+                name    = address
+                members = "—"   # нет доступа по умолчанию
+                for attempt in range(2):
+                    try:
+                        resp = requests.post(
+                            url, json={"chatId": chat_id}, timeout=20
+                        )
+                        if resp.ok:
+                            data    = resp.json()
+                            name    = data.get("subject") or address
+                            members = str(data.get("size", 0))
+                            group_cache[chat_id] = {
+                                "name":      name,
+                                "members":   members,
+                                "cached_at": now_ts,
+                            }
+                        else:
+                            members = "—"   # API вернул ошибку — реально нет доступа
+                        break  # выходим из retry-цикла (успех или нет доступа)
+                    except requests.exceptions.Timeout:
+                        _log.warning("getGroupData %s: timeout (попытка %d)", chat_id, attempt + 1)
+                        if attempt == 0:
+                            time.sleep(3)   # ждём 3с перед повтором
+                            continue
+                        members = "~"   # таймаут — неизвестно, доступ может быть
+                    except Exception as exc:
+                        _log.warning("getGroupData %s: %s", chat_id, exc)
+                        members = "~"   # сетевая ошибка
+                        break
 
             ts         = last_activity.get(chat_id)
             last_event = (
                 datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M")
-                if ts else "Нет данных"
+                if ts else "Нет активности"
             )
             if members == "—":
                 last_event = "Нет доступа"
+            elif members == "~":
+                last_event = "Ошибка сети"
 
             row = {
                 "name":       name,
@@ -372,12 +388,14 @@ class StatsPanel(QWidget):
         sf_layout.setContentsMargins(14, 8, 14, 8)
         sf_layout.setSpacing(28)
 
-        self._lbl_groups  = self._make_stat_lbl("—", "Групп")
-        self._lbl_members = self._make_stat_lbl("—", "Участников")
-        self._lbl_active  = self._make_stat_lbl("—", "Активны сегодня")
-        self._lbl_missing = self._make_stat_lbl("—", "Нет доступа")
+        self._lbl_groups    = self._make_stat_lbl("—", "Групп")
+        self._lbl_members   = self._make_stat_lbl("—", "Участников")
+        self._lbl_active    = self._make_stat_lbl("—", "Активны сегодня")
+        self._lbl_yesterday = self._make_stat_lbl("—", "Активны вчера")
+        self._lbl_missing   = self._make_stat_lbl("—", "Нет доступа")
 
-        for w in (self._lbl_groups, self._lbl_members, self._lbl_active, self._lbl_missing):
+        for w in (self._lbl_groups, self._lbl_members, self._lbl_active,
+                  self._lbl_yesterday, self._lbl_missing):
             sf_layout.addWidget(w)
         sf_layout.addStretch()
         smart_layout.addWidget(self._summary_frame)
@@ -527,7 +545,7 @@ class StatsPanel(QWidget):
             self._cache_banner.hide()
 
         self._all_rows.append(row)
-        if row["members"] == "—":
+        if row["members"] in ("—", "~"):
             self._missing_rows.append(row)
 
         # Пропускаем если активен фильтр поиска и строка не подходит
@@ -565,11 +583,13 @@ class StatsPanel(QWidget):
             pass
 
         if members == "—":
-            row_bg = QColor("#fff0f0")
+            row_bg = QColor("#fff0f0")   # красный — нет доступа
+        elif members == "~":
+            row_bg = QColor("#fffbee")   # жёлтый — ошибка сети/таймаут
         elif fresh_today:
-            row_bg = QColor("#f0faf2")
+            row_bg = QColor("#f0faf2")   # зелёный — активна сегодня
         elif fresh_week:
-            row_bg = QColor("#fffbee")
+            row_bg = QColor("#f0f7ff")   # голубой — активна на этой неделе
         else:
             row_bg = None
 
@@ -601,25 +621,30 @@ class StatsPanel(QWidget):
         rows = self._all_rows
         total = len(rows)
         total_members = 0
-        active_today = 0
-        today = datetime.now().date()
+        active_today     = 0
+        active_yesterday = 0
+        today     = datetime.now().date()
+        yesterday = today - timedelta(days=1)
         for r in rows:
             try:
                 total_members += int(r["members"])
             except (ValueError, TypeError):
                 pass
             try:
-                ev_dt = datetime.strptime(r["last_event"][:10], "%d.%m.%Y")
-                if ev_dt.date() == today:
+                ev_dt = datetime.strptime(r["last_event"][:10], "%d.%m.%Y").date()
+                if ev_dt == today:
                     active_today += 1
+                elif ev_dt == yesterday:
+                    active_yesterday += 1
             except ValueError:
                 pass
         missing_count = len(self._missing_rows)
 
-        self._lbl_groups._val_lbl.setText(str(total))   # type: ignore[attr-defined]
-        self._lbl_members._val_lbl.setText(f"{total_members:,}".replace(",", " "))  # type: ignore[attr-defined]
-        self._lbl_active._val_lbl.setText(str(active_today))  # type: ignore[attr-defined]
-        missing_val_lbl = self._lbl_missing._val_lbl  # type: ignore[attr-defined]
+        self._lbl_groups._val_lbl.setText(str(total))                                    # type: ignore[attr-defined]
+        self._lbl_members._val_lbl.setText(f"{total_members:,}".replace(",", " "))       # type: ignore[attr-defined]
+        self._lbl_active._val_lbl.setText(str(active_today))                             # type: ignore[attr-defined]
+        self._lbl_yesterday._val_lbl.setText(str(active_yesterday))                      # type: ignore[attr-defined]
+        missing_val_lbl = self._lbl_missing._val_lbl                                     # type: ignore[attr-defined]
         missing_val_lbl.setText(str(missing_count))
         missing_val_lbl.setStyleSheet(
             "color: #dc2626; font-size: 24px; font-weight: 700;"
@@ -633,7 +658,7 @@ class StatsPanel(QWidget):
         # rows уже добавлены в _all_rows через row_ready — синхронизируем на всякий случай
         if rows and not self._all_rows:
             self._all_rows = rows
-            self._missing_rows = [r for r in rows if r["members"] == "—"]
+            self._missing_rows = [r for r in rows if r["members"] in ("—", "~")]
         self._last_refresh = datetime.now()
         self._last_lbl.setText(f"Обновлено в {self._last_refresh.strftime('%H:%M:%S')}")
         self._cache_banner.hide()
@@ -660,7 +685,7 @@ class StatsPanel(QWidget):
         cached_rows, cached_summary, cached_ts, _ = _load_cache()
         if cached_rows:
             self._all_rows = cached_rows
-            self._missing_rows = [r for r in cached_rows if r["members"] == "—"]
+            self._missing_rows = [r for r in cached_rows if r["members"] in ("—", "~")]
             ts_str = cached_ts.strftime("%d.%m.%Y %H:%M") if cached_ts else "неизвестно"
             self._cache_banner.setText(
                 f"⚠️  Ошибка загрузки: {msg}  ·  Показаны данные от {ts_str}"
@@ -714,6 +739,8 @@ class StatsPanel(QWidget):
 
             if dead_mode:
                 row_bg = dead_bg
+            elif members == "~":
+                row_bg = QColor("#fffbee")   # жёлтый — ошибка сети
             else:
                 fresh_today = False
                 fresh_week  = False
@@ -726,7 +753,7 @@ class StatsPanel(QWidget):
                 if fresh_today:
                     row_bg = QColor("#f0faf2")
                 elif fresh_week:
-                    row_bg = QColor("#fffbee")
+                    row_bg = QColor("#f0f7ff")
                 else:
                     row_bg = None
 
