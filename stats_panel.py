@@ -382,14 +382,14 @@ class _WebFetchWorker(QThread):
 # ────────────────────────────────────────────────────────────────
 
 class _BotReportWorker(QThread):
-    """Отправляет команду боту и скачивает HTML-файл ответа."""
-    progress = pyqtSignal(str)
-    done     = pyqtSignal(str)   # HTML-содержимое файла
-    failed   = pyqtSignal(str)
+    """Отправляет команду боту (два шага) и просит пользователя загрузить файл вручную."""
+    progress    = pyqtSignal(str)
+    done        = pyqtSignal(str)   # HTML-содержимое файла
+    failed      = pyqtSignal(str)
+    sent        = pyqtSignal(str)   # команда успешно отправлена → показать инструкцию
 
-    _BOT_CHAT_ID  = "69347387@c.us"
-    _POLL_SEC     = 4
-    _TIMEOUT_SEC  = 120
+    _BOT_CHAT_ID  = "86587229"
+    _PERIOD_TEXT  = {7: "Неделя", 30: "30 дней", 90: "90 дней"}
 
     def __init__(self, instance_id: str, token: str, days: int, parent=None):
         super().__init__(parent)
@@ -401,71 +401,45 @@ class _BotReportWorker(QThread):
     def stop(self) -> None:
         self._stop = True
 
-    def run(self) -> None:
-        base    = f"https://api.green-api.com/waInstance{self._instance_id}"
-        command = f"/мах_отчет_история {self._days}"
-
-        # ── 1. Отправляем команду ────────────────────────────────
-        self.progress.emit("Отправка команды боту…")
-        sent_at = int(time.time())
+    def _send(self, base: str, message: str) -> bool:
+        """Отправляет сообщение боту. Возвращает True при успехе."""
         try:
             r = requests.post(
                 f"{base}/sendMessage/{self._token}",
-                json={"chatId": self._BOT_CHAT_ID, "message": command},
+                json={"chatId": self._BOT_CHAT_ID, "message": message},
                 timeout=15,
             )
-            r.raise_for_status()
+            if not r.ok:
+                try:
+                    detail = r.json()
+                except Exception:
+                    detail = r.text
+                self.failed.emit(f"Ошибка отправки боту: {r.status_code}\n{detail}")
+                return False
         except Exception as e:
-            self.failed.emit(f"Ошибка отправки команды боту: {e}")
+            self.failed.emit(f"Ошибка отправки боту: {e}")
+            return False
+        return True
+
+    def run(self) -> None:
+        base = f"https://api.green-api.com/waInstance{self._instance_id}"
+
+        # ── Шаг 1: отправляем команду ────────────────────────────
+        self.progress.emit("Отправка команды боту…")
+        if not self._send(base, "/мах_отчет_история"):
             return
 
-        # ── 2. Ждём HTML-файл в ответе бота ─────────────────────
-        deadline = time.time() + self._TIMEOUT_SEC
-        tick     = 0
-        while not self._stop and time.time() < deadline:
-            time.sleep(self._POLL_SEC)
-            tick += self._POLL_SEC
-            self.progress.emit(
-                f"Ожидание ответа бота… {tick} / {self._TIMEOUT_SEC} сек"
-            )
-            try:
-                r = requests.post(
-                    f"{base}/getChatHistory/{self._token}",
-                    json={"chatId": self._BOT_CHAT_ID, "count": 10},
-                    timeout=20,
-                )
-                r.raise_for_status()
-                messages = r.json()
-            except Exception:
-                continue
+        # ── Шаг 2: ждём меню и отправляем выбор периода ─────────
+        if self._stop:
+            return
+        time.sleep(6)
+        period_text = self._PERIOD_TEXT.get(self._days, str(self._days))
+        self.progress.emit(f"Выбор периода: {period_text}…")
+        if not self._send(base, period_text):
+            return
 
-            for msg in messages:
-                if msg.get("timestamp", 0) <= sent_at:
-                    continue
-                if msg.get("typeMessage") != "documentMessage":
-                    continue
-                fd    = msg.get("fileMessageData", {})
-                fname = fd.get("fileName", "")
-                mime  = fd.get("mimeType", "")
-                dl    = fd.get("downloadUrl", "")
-                if not dl:
-                    continue
-                if not (fname.lower().endswith(".html") or "html" in mime):
-                    continue
-                self.progress.emit("Скачивание файла отчёта…")
-                try:
-                    r2 = requests.get(dl, timeout=30)
-                    r2.raise_for_status()
-                    self.done.emit(r2.text)
-                except Exception as e:
-                    self.failed.emit(f"Ошибка скачивания файла: {e}")
-                return
-
-        if not self._stop:
-            self.failed.emit(
-                f"Бот не ответил за {self._TIMEOUT_SEC} сек.\n"
-                "Попробуйте ещё раз или загрузите файл вручную."
-            )
+        # ── Шаг 3: сигнал — пора скачать файл вручную ───────────
+        self.sent.emit(period_text)
 
 
 # ────────────────────────────────────────────────────────────────
@@ -1222,8 +1196,12 @@ class StatsPanel(QWidget):
         date_str    = datetime.now().strftime("%Y%m%d_%H%M")
         default_name = f"статистика_групп_{period_file}_{date_str}.xlsx"
 
+        # Открываем диалог в папке Документов, чтобы не перезаписать файлы проекта
+        import os as _os
+        save_dir = _os.path.join(_os.path.expanduser("~"), "Documents", default_name)
+
         path, _ = QFileDialog.getSaveFileName(
-            self, "Сохранить статистику", default_name, "Excel (*.xlsx)"
+            self, "Сохранить статистику", save_dir, "Excel (*.xlsx)"
         )
         if not path:
             return
@@ -1388,6 +1366,7 @@ class StatsPanel(QWidget):
         self._bot_worker.progress.connect(self._status_lbl.setText)
         self._bot_worker.done.connect(self._on_bot_report_done)
         self._bot_worker.failed.connect(self._on_bot_report_failed)
+        self._bot_worker.sent.connect(self._on_bot_command_sent)
         self._bot_worker.finished.connect(
             lambda: self._history_btn.setEnabled(True)
         )
@@ -1396,6 +1375,32 @@ class StatsPanel(QWidget):
     def _on_bot_report_done(self, html: str) -> None:
         self._history_btn.setEnabled(True)
         self._parse_and_apply_history(html)
+
+    def _on_bot_command_sent(self, period_text: str) -> None:
+        """Команда и выбор периода отправлены — просим пользователя скачать файл из MAX."""
+        self._history_btn.setEnabled(True)
+        self._history_btn.setText("📊 История")
+        self._status_lbl.setText(f"Команда отправлена боту ({period_text})")
+        from PyQt6.QtWidgets import QMessageBox
+        from PyQt6.QtGui import QDesktopServices
+        from PyQt6.QtCore import QUrl
+        mb = QMessageBox(self)
+        mb.setWindowTitle("Команда отправлена")
+        mb.setText(
+            f"Команда отправлена боту, период: <b>{period_text}</b>.<br><br>"
+            "Откройте бота в MAX, скачайте HTML-файл,<br>"
+            "затем нажмите <b>«Загрузить файл»</b>."
+        )
+        mb.setIcon(QMessageBox.Icon.Information)
+        open_btn = mb.addButton("🔗 Открыть бота в MAX", QMessageBox.ButtonRole.HelpRole)
+        load_btn = mb.addButton("📂 Загрузить файл",     QMessageBox.ButtonRole.AcceptRole)
+        mb.addButton("Позже",                            QMessageBox.ButtonRole.RejectRole)
+        mb.exec()
+        clicked = mb.clickedButton()
+        if clicked == open_btn:
+            QDesktopServices.openUrl(QUrl("https://max.ru/gks2vyb_spb_bot"))
+        elif clicked == load_btn:
+            self._load_history_from_file()
 
     def _on_bot_report_failed(self, msg: str) -> None:
         self._history_btn.setEnabled(True)

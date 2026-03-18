@@ -1458,6 +1458,23 @@ class MainWindow(QMainWindow):
         )
 
 
+def _backup_address_file() -> None:
+    """При запуске сохраняет резервную копию max_address.xlsx (до 3 штук, ротация)."""
+    import shutil as _shutil
+    src = Path(__file__).parent / "max_address.xlsx"
+    if not src.exists():
+        return
+    backup_dir = src.parent / "_backups"
+    backup_dir.mkdir(exist_ok=True)
+    dst = backup_dir / f"max_address_{time.strftime('%Y%m%d')}.xlsx"
+    if not dst.exists():
+        _shutil.copy2(src, dst)
+        # Оставляем только последние 3 резервных копии
+        backups = sorted(backup_dir.glob("max_address_*.xlsx"))
+        for old in backups[:-3]:
+            old.unlink(missing_ok=True)
+
+
 def main() -> None:
     tg_notify.install_excepthook()
     tg_notify.send_startup()
@@ -1473,6 +1490,7 @@ def main() -> None:
         pass
 
     app = QApplication(sys.argv)
+    _backup_address_file()  # резервная копия перед стартом
     window = MainWindow()
     window.showMaximized()
     # Проверка обновлений через 2 сек после запуска (чтобы окно успело отрисоваться)
