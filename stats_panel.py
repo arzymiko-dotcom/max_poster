@@ -120,9 +120,10 @@ def _load_cache() -> tuple[list[dict], list[str], datetime | None, dict]:
 # ────────────────────────────────────────────────────────────────
 
 class _FetchWorker(QThread):
-    finished = pyqtSignal(list, list, dict)  # (rows, summary_texts, group_cache)
-    failed   = pyqtSignal(str)
-    progress = pyqtSignal(str)               # текст для строки статуса
+    data_ready = pyqtSignal(list, list, dict)  # (rows, summary_texts, group_cache) — финал
+    row_ready  = pyqtSignal(dict)              # одна строка — сразу в таблицу
+    failed     = pyqtSignal(str)
+    progress   = pyqtSignal(str)               # текст для строки статуса
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -284,18 +285,20 @@ class _FetchWorker(QThread):
             if members == "—":
                 last_event = "Нет доступа"
 
-            rows.append({
+            row = {
                 "name":       name,
                 "members":    members,
                 "last_event": last_event,
                 "link":       link,
-            })
+            }
+            rows.append(row)
+            self.row_ready.emit(row)
 
         if not rows:
             self.failed.emit("Не удалось получить данные ни по одной группе.")
             return
 
-        self.finished.emit(rows, [], group_cache)
+        self.data_ready.emit(rows, [], group_cache)
 
 
 # ────────────────────────────────────────────────────────────────
@@ -371,6 +374,7 @@ class StatsPanel(QWidget):
             _page = QWebEnginePage(self._web_view)
             _page.certificateError.connect(lambda err: err.acceptCertificate())
             self._web_view.setPage(_page)
+            self._web_view.loadFinished.connect(self._on_web_load_finished)
             self._web_view.setUrl(QUrl(_WEB_REPORT_URL))
             self._stack.addWidget(self._web_view)
         else:
@@ -552,13 +556,15 @@ class StatsPanel(QWidget):
         self._progress_bar.show()
         self._status_lbl.setText("Подключение к GREEN-API…")
 
+        self._streaming_started = False  # флаг: первая строка пришла → очищаем кэш-отображение
         self._worker = _FetchWorker(self)
-        self._worker.finished.connect(self._on_data)
+        self._worker.data_ready.connect(self._on_data)
+        self._worker.row_ready.connect(self._on_row_ready)
         self._worker.failed.connect(self._on_error)
         self._worker.progress.connect(self._on_progress)
-        self._worker.finished.connect(self._worker.deleteLater)
+        self._worker.data_ready.connect(self._worker.deleteLater)
         self._worker.failed.connect(self._worker.deleteLater)
-        self._worker.finished.connect(lambda *_: setattr(self, "_worker", None))
+        self._worker.data_ready.connect(lambda *_: setattr(self, "_worker", None))
         self._worker.failed.connect(lambda *_: setattr(self, "_worker", None))
         self._worker.start()
 
@@ -575,20 +581,97 @@ class StatsPanel(QWidget):
             except (ValueError, IndexError):
                 pass
 
-    def _on_data(self, rows: list[dict], summary_texts: list[str], group_cache: dict) -> None:
-        self._spin_timer.stop()
-        self._progress_bar.setValue(100)
-        self._progress_bar.hide()
-        self._all_rows = rows
-        self._last_refresh = datetime.now()
-        self._last_lbl.setText(f"Обновлено в {self._last_refresh.strftime('%H:%M:%S')}")
-        self._cache_banner.hide()
-        _save_cache(rows, summary_texts, group_cache)
-        self._refresh_btn.setEnabled(True)
-        self._refresh_btn.setText("⟳  Обновить")
-        self._export_btn.setEnabled(True)
+    def _on_web_load_finished(self, ok: bool) -> None:
+        """Показывает ошибку если WEB страница не загрузилась."""
+        if not ok and _WEB_ENGINE_AVAILABLE and hasattr(self, "_web_view"):
+            self._web_view.setHtml("""
+                <html><body style="font-family:Arial,sans-serif;text-align:center;
+                       padding:80px 40px;color:#6b7280;background:#f9fafb;">
+                  <div style="font-size:48px;margin-bottom:16px">⚠️</div>
+                  <h2 style="color:#374151;margin:0 0 8px">Сервер недоступен</h2>
+                  <p style="margin:0 0 24px">Не удалось загрузить WEB версию отчёта.</p>
+                  <p style="font-size:13px;background:#e5e7eb;padding:10px 20px;
+                     border-radius:8px;display:inline-block">
+                    Используйте <b>⚡ Smart версию</b> — она работает напрямую через GREEN-API
+                  </p>
+                </html>
+            """)
 
-        # Сводка
+    def _on_row_ready(self, row: dict) -> None:
+        """Добавляет одну строку в таблицу сразу по мере загрузки."""
+        if not self._streaming_started:
+            # Первая живая строка — очищаем кэш-отображение и начинаем свежий список
+            self._streaming_started = True
+            self._all_rows = []
+            self._missing_rows = []
+            self._table.setSortingEnabled(False)
+            self._table.setRowCount(0)
+            self._cache_banner.hide()
+
+        self._all_rows.append(row)
+        if row["members"] == "—":
+            self._missing_rows.append(row)
+
+        # Пропускаем если активен фильтр поиска и строка не подходит
+        query = self._search.text().strip().lower()
+        if self._dead_only:
+            if row["members"] != "—":
+                return
+            if query and query not in row["name"].lower():
+                return
+        elif query and query not in row["name"].lower():
+            return
+
+        self._append_table_row(row)
+        self._update_summary_labels()
+
+        total = len(self._all_rows)
+        shown = self._table.rowCount()
+        self._status_lbl.setText(f"Загружено {total} групп…")
+        if query or self._dead_only:
+            self._status_lbl.setText(f"Показано {shown} из {total} групп…")
+
+    def _append_table_row(self, row: dict) -> None:
+        """Добавляет одну строку в конец таблицы (сортировка отключена)."""
+        today = datetime.now().date()
+        t_event = row["last_event"]
+        members = row["members"]
+
+        fresh_today = False
+        fresh_week  = False
+        try:
+            ev_dt = datetime.strptime(t_event[:10], "%d.%m.%Y").date()
+            fresh_today = (ev_dt == today)
+            fresh_week  = (ev_dt >= today - timedelta(days=7))
+        except ValueError:
+            pass
+
+        if members == "—":
+            row_bg = QColor("#fff0f0")
+        elif fresh_today:
+            row_bg = QColor("#f0faf2")
+        elif fresh_week:
+            row_bg = QColor("#fffbee")
+        else:
+            row_bg = None
+
+        row_idx = self._table.rowCount()
+        self._table.insertRow(row_idx)
+        items = [
+            QTableWidgetItem(row["name"]),
+            _NumItem(members),
+            QTableWidgetItem(t_event),
+            QTableWidgetItem(row["link"]),
+        ]
+        for col, item in enumerate(items):
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            if row_bg:
+                item.setBackground(row_bg)
+            self._table.setItem(row_idx, col, item)
+
+    def _update_summary_labels(self) -> None:
+        """Обновляет цифры сводки по текущему _all_rows."""
+        rows = self._all_rows
         total = len(rows)
         total_members = 0
         active_today = 0
@@ -604,14 +687,11 @@ class StatsPanel(QWidget):
                     active_today += 1
             except ValueError:
                 pass
+        missing_count = len(self._missing_rows)
 
         self._lbl_groups._val_lbl.setText(str(total))   # type: ignore[attr-defined]
         self._lbl_members._val_lbl.setText(f"{total_members:,}".replace(",", " "))  # type: ignore[attr-defined]
         self._lbl_active._val_lbl.setText(str(active_today))  # type: ignore[attr-defined]
-
-        # "Нет доступа" — группы, у которых members == "—"
-        self._missing_rows = [r for r in rows if r["members"] == "—"]
-        missing_count = len(self._missing_rows)
         missing_val_lbl = self._lbl_missing._val_lbl  # type: ignore[attr-defined]
         missing_val_lbl.setText(str(missing_count))
         missing_val_lbl.setStyleSheet(
@@ -619,8 +699,26 @@ class StatsPanel(QWidget):
             if missing_count > 0 else ""
         )
 
+    def _on_data(self, rows: list[dict], summary_texts: list[str], group_cache: dict) -> None:
+        self._spin_timer.stop()
+        self._progress_bar.setValue(100)
+        self._progress_bar.hide()
+        # rows уже добавлены в _all_rows через row_ready — синхронизируем на всякий случай
+        if rows and not self._all_rows:
+            self._all_rows = rows
+            self._missing_rows = [r for r in rows if r["members"] == "—"]
+        self._last_refresh = datetime.now()
+        self._last_lbl.setText(f"Обновлено в {self._last_refresh.strftime('%H:%M:%S')}")
+        self._cache_banner.hide()
+        _save_cache(rows, summary_texts, group_cache)
+        self._refresh_btn.setEnabled(True)
+        self._refresh_btn.setText("⟳  Обновить")
+        self._export_btn.setEnabled(True)
         self._dead_btn.setEnabled(True)
-        self._apply_filter()
+        # Включаем сортировку (была отключена во время стриминга)
+        self._table.setSortingEnabled(True)
+        self._update_summary_labels()
+        total = len(self._all_rows)
         self._status_lbl.setText(
             f"Загружено {total} групп · "
             f"обновлено {self._last_refresh.strftime('%d.%m.%Y %H:%M:%S')}"
@@ -631,9 +729,11 @@ class StatsPanel(QWidget):
         self._progress_bar.hide()
         self._refresh_btn.setEnabled(True)
         self._refresh_btn.setText("⟳  Обновить")
+        self._table.setSortingEnabled(True)
         cached_rows, cached_summary, cached_ts, _ = _load_cache()
         if cached_rows:
             self._all_rows = cached_rows
+            self._missing_rows = [r for r in cached_rows if r["members"] == "—"]
             ts_str = cached_ts.strftime("%d.%m.%Y %H:%M") if cached_ts else "неизвестно"
             self._cache_banner.setText(
                 f"⚠️  Ошибка загрузки: {msg}  ·  Показаны данные от {ts_str}"
