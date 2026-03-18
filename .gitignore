@@ -18,6 +18,7 @@ app_state.json
 history.json
 max_poster.log
 stats_cache.json
+ui_prefs.json
 
 # Secrets
 .env
