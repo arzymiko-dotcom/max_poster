@@ -43,7 +43,7 @@ _log = logging.getLogger(__name__)
 
 _AUTO_REFRESH_MS        = 5 * 60 * 1000   # авто-обновление каждые 5 минут
 _REQUEST_DELAY          = 1.1             # секунд между запросами (лимит GREEN-API: 1 req/s)
-_ACTIVITY_WINDOW_MIN    = 43200           # 30 дней в минутах для lastIncomingMessages
+_ACTIVITY_WINDOW_MIN    = 1440            # 24 часа в минутах для lastIncomingMessages
 _GROUP_CACHE_TTL        = 3600            # секунд — как долго кэшируем данные группы (1 час)
 
 # Индексы колонок таблицы
@@ -195,6 +195,10 @@ class _FetchWorker(QThread):
                 if isinstance(msgs, list):
                     for msg in msgs:
                         cid = str(msg.get("chatId", "")).strip()
+                        # GREEN-API возвращает chatId в формате "-69098...@g.us" —
+                        # обрезаем суффикс чтобы совпасть с нашими chat_id из Excel
+                        if "@" in cid:
+                            cid = cid.split("@")[0]
                         ts  = msg.get("timestamp", 0)
                         if cid and ts and ts > last_activity.get(cid, 0):
                             last_activity[cid] = ts
