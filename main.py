@@ -480,12 +480,27 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(addr_header_frame)
 
         self._addr_search = QLineEdit()
-        self._addr_search.setPlaceholderText("🔍 Поиск адреса…")
+        self._addr_search.setPlaceholderText("🔍 Поиск в max_address.xlsx…")
         self._addr_search.setObjectName("addrSearch")
         self._addr_search.setFixedHeight(26)
-        self._addr_search.textChanged.connect(self._filter_addr_list)
-        self._addr_search.hide()
+        self._addr_search.textChanged.connect(self._on_addr_search_changed)
+        if self._matcher is not None:
+            self._addr_search.show()
+        else:
+            self._addr_search.hide()
         left_layout.addWidget(self._addr_search)
+
+        self._addr_search_results = QListWidget()
+        self._addr_search_results.setObjectName("addrSearchResults")
+        self._addr_search_results.setMaximumHeight(180)
+        self._addr_search_results.hide()
+        self._addr_search_results.itemClicked.connect(self._on_addr_search_item_clicked)
+        left_layout.addWidget(self._addr_search_results)
+
+        # Таймер debounce для поиска (300 мс)
+        self._addr_search_timer = QTimer()
+        self._addr_search_timer.setSingleShot(True)
+        self._addr_search_timer.timeout.connect(self._do_addr_search)
 
         addr_hint = QLabel("⚠️ Рекомендуется не более 10 групп за раз в 5 минут во избежание бана МАХ")
         addr_hint.setObjectName("addrHintLbl")
@@ -801,13 +816,11 @@ class MainWindow(QMainWindow):
         else:
             self._addr_count_lbl.setText("Адреса для рассылки MAX")
 
-        # Поиск по списку — показываем только если есть адреса
-        total = self._addr_list.count()
-        if total > 0:
+        # Поиск по Excel — показываем если файл адресов доступен
+        if self._matcher is None and self.excel_path.exists():
+            self._matcher = ExcelMatcher(self.excel_path)
+        if self._matcher is not None:
             self._addr_search.show()
-        else:
-            self._addr_search.hide()
-            self._addr_search.clear()
 
         self._cl_text.setText(row(has_text, "Текст введён"))
         if has_photo:
@@ -865,13 +878,64 @@ class MainWindow(QMainWindow):
         self.photo_button.setObjectName("photoButtonDone")
         self.photo_button.setStyle(self.photo_button.style())
 
-    def _filter_addr_list(self, text: str) -> None:
-        """Показывает/скрывает элементы списка адресов по поисковому запросу."""
-        q = text.strip().lower()
+    def _on_addr_search_changed(self, text: str) -> None:
+        """Запускает debounce-таймер при изменении текста в поиске."""
+        self._addr_search_timer.start(300)
+        if not text.strip():
+            self._addr_search_results.hide()
+            self._addr_search_results.clear()
+
+    def _do_addr_search(self) -> None:
+        """Ищет адреса в Excel и показывает результаты под полем поиска."""
+        q = self._addr_search.text().strip()
+        self._addr_search_results.clear()
+        if not q or len(q) < 2:
+            self._addr_search_results.hide()
+            return
+
+        if self._matcher is None:
+            if self.excel_path.exists():
+                self._matcher = ExcelMatcher(self.excel_path)
+            else:
+                return
+
+        results = self._matcher.search(q)
+        if not results:
+            self._addr_search_results.hide()
+            return
+
+        for match in results:
+            item = QListWidgetItem(match.address)
+            item.setData(Qt.ItemDataRole.UserRole, match)
+            self._addr_search_results.addItem(item)
+        self._addr_search_results.show()
+
+    def _on_addr_search_item_clicked(self, item: QListWidgetItem) -> None:
+        """Добавляет выбранный из поиска адрес в список рассылки."""
+        match: MatchResult | None = item.data(Qt.ItemDataRole.UserRole)
+        if not match:
+            return
+
+        # Проверяем, нет ли уже такого адреса в списке
         for i in range(self._addr_list.count()):
-            item = self._addr_list.item(i)
-            if item:
-                item.setHidden(bool(q) and q not in item.text().lower())
+            existing = self._addr_list.item(i)
+            if existing and existing.data(Qt.ItemDataRole.UserRole) and \
+               existing.data(Qt.ItemDataRole.UserRole).address == match.address:
+                self._addr_search.clear()
+                self._addr_search_results.hide()
+                return
+
+        new_item = QListWidgetItem(match.address)
+        new_item.setFlags(new_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        new_item.setCheckState(Qt.CheckState.Checked)
+        new_item.setData(Qt.ItemDataRole.UserRole, match)
+        new_item.setData(_MANUAL_ROLE, True)
+        self._addr_list.addItem(new_item)
+        self._update_checklist()
+        self.save_state()
+
+        self._addr_search.clear()
+        self._addr_search_results.hide()
 
     def clear_form(self) -> None:
         self.text_input.clear()

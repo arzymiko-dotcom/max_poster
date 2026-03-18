@@ -166,6 +166,17 @@ _DARK_STYLESHEET = """
                 font-size: 12px;
             }
             #addrSearch:focus { border-color: #5a6aff; }
+            #addrSearchResults {
+                border: 1px solid #4a4a6a;
+                border-radius: 6px;
+                background: #1a1a2e;
+                color: #d0d0e8;
+                font-size: 12px;
+                outline: none;
+            }
+            #addrSearchResults::item { padding: 4px 8px; }
+            #addrSearchResults::item:hover { background: #2a2a50; }
+            #addrSearchResults::item:selected { background: #1e3a8a; color: #e0e0ff; }
             #addrList {
                 border: 1px solid #3a3a55;
                 border-radius: 8px;
@@ -493,6 +504,17 @@ _LIGHT_STYLESHEET = """
                 font-size: 12px;
             }
             #addrSearch:focus { border-color: #4a7aff; }
+            #addrSearchResults {
+                border: 1px solid #c7d0db;
+                border-radius: 6px;
+                background: #ffffff;
+                color: #1a1a1a;
+                font-size: 12px;
+                outline: none;
+            }
+            #addrSearchResults::item { padding: 4px 8px; }
+            #addrSearchResults::item:hover { background: #f0f4ff; }
+            #addrSearchResults::item:selected { background: #eef4ff; color: #1a1a1a; }
             #addrList {
                 border: 1px solid #c7d0db;
                 border-radius: 8px;

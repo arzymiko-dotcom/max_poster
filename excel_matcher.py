@@ -129,3 +129,26 @@ class ExcelMatcher:
 
         matches.sort(key=lambda x: (-x.score, x.address))
         return matches
+
+    def search(self, query: str, limit: int = 25) -> list[MatchResult]:
+        """Ищет адреса по подстроке (без учёта регистра). Возвращает до limit результатов."""
+        q = query.strip().lower()
+        if not q:
+            return []
+        df = self.load_dataframe()
+        address_col, link_col, id_col = self._resolve_columns(df)
+        results: list[MatchResult] = []
+        for _, row in df.iterrows():
+            addr = str(row.get(address_col, "")).strip()
+            if not addr or addr.lower() == "nan":
+                continue
+            if q in addr.lower():
+                results.append(MatchResult(
+                    address=addr,
+                    score=0,
+                    chat_link=_get_cell(row, link_col),
+                    chat_id=_get_cell(row, id_col),
+                ))
+                if len(results) >= limit:
+                    break
+        return results
