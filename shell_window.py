@@ -244,7 +244,7 @@ class _SideButton(QPushButton):
         icon = QIcon(icon_path)
         if not icon.isNull():
             self.setIcon(icon)
-            self.setIconSize(QSize(26, 26))
+            self.setIconSize(QSize(28, 28))
         else:
             self.setText(fallback)
 
@@ -319,7 +319,7 @@ class _SideBar(QFrame):
         _auth_icon = QIcon(_assets("authorization.ico"))
         if not _auth_icon.isNull():
             self.btn_auth.setIcon(_auth_icon)
-            self.btn_auth.setIconSize(QSize(24, 24))
+            self.btn_auth.setIconSize(QSize(28, 28))
         else:
             self.btn_auth.setText("🔑")
         layout.addWidget(self.btn_auth)
@@ -333,7 +333,7 @@ class _SideBar(QFrame):
         _settings_icon = QIcon(_assets("settings.ico"))
         if not _settings_icon.isNull():
             self.btn_settings.setIcon(_settings_icon)
-            self.btn_settings.setIconSize(QSize(24, 24))
+            self.btn_settings.setIconSize(QSize(28, 28))
         else:
             self.btn_settings.setText("⚙")
         layout.addWidget(self.btn_settings)

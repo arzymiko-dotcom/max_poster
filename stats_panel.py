@@ -333,6 +333,50 @@ class _FetchWorker(QThread):
 
 
 # ────────────────────────────────────────────────────────────────
+#  Быстрый воркер: парсим web-отчёт (1 запрос вместо ~190)
+# ────────────────────────────────────────────────────────────────
+
+class _WebFetchWorker(QThread):
+    done     = pyqtSignal(list)   # список строк
+    failed   = pyqtSignal(str)
+    progress = pyqtSignal(str)
+
+    def run(self) -> None:
+        self.progress.emit("Загрузка отчёта с сервера…")
+        try:
+            from bs4 import BeautifulSoup
+            resp = requests.get(_WEB_REPORT_URL, timeout=15)
+            resp.raise_for_status()
+            soup  = BeautifulSoup(resp.text, "html.parser")
+            table = soup.find("table")
+            if not table:
+                self.failed.emit("Таблица не найдена на странице отчёта.")
+                return
+            rows = []
+            for tr in table.find_all("tr")[1:]:
+                tds = tr.find_all("td")
+                if len(tds) < 3:
+                    continue
+                name    = tds[0].get_text(strip=True)
+                members = tds[1].get_text(strip=True)
+                ts_str  = tds[2].get_text(strip=True)
+                link    = ""
+                if len(tds) >= 4:
+                    a = tds[3].find("a")
+                    link = a["href"] if a else tds[3].get_text(strip=True)
+                rows.append({
+                    "name":       name,
+                    "members":    members,
+                    "last_event": ts_str,
+                    "link":       link,
+                    "chat_id":    "",
+                })
+            self.done.emit(rows)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+# ────────────────────────────────────────────────────────────────
 #  Виджет панели
 # ────────────────────────────────────────────────────────────────
 
@@ -341,10 +385,11 @@ class StatsPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._worker: _FetchWorker | None = None
+        self._worker: _FetchWorker | _WebFetchWorker | None = None
         self._all_rows: list[dict] = []
         self._missing_rows: list[dict] = []
         self._dead_only: bool = False
+        self._period_days: int = 0
         self._last_refresh: datetime | None = None
 
         self._spin_frame: int = 0
@@ -484,6 +529,29 @@ class StatsPanel(QWidget):
         self._progress_bar.hide()
         smart_layout.addWidget(self._progress_bar)
 
+        # ── Фильтр по периоду ────────────────────────────────────
+        period_row = QHBoxLayout()
+        period_row.setSpacing(4)
+        self._period_btns: dict[int, QPushButton] = {}
+        for days, label in ((0, "Все"), (1, "День"), (7, "Неделя"), (30, "Месяц")):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setFixedHeight(28)
+            btn.setObjectName("statsPeriodBtnActive" if days == 0 else "statsPeriodBtn")
+            btn.setChecked(days == 0)
+            btn.clicked.connect(lambda _, d=days: self._switch_period(d))
+            period_row.addWidget(btn)
+            self._period_btns[days] = btn
+        period_row.addStretch()
+        smart_layout.addLayout(period_row)
+
+        # ── Сводка периода ───────────────────────────────────────
+        self._period_summary = QLabel("")
+        self._period_summary.setObjectName("statsPeriodSummary")
+        self._period_summary.setWordWrap(True)
+        self._period_summary.hide()
+        smart_layout.addWidget(self._period_summary)
+
         # ── Поиск ────────────────────────────────────────────────
         search_row = QHBoxLayout()
         self._search = QLineEdit()
@@ -598,17 +666,15 @@ class StatsPanel(QWidget):
 
         self._progress_bar.setValue(0)
         self._progress_bar.show()
-        self._status_lbl.setText("Подключение к GREEN-API…")
+        self._status_lbl.setText("Загрузка отчёта с сервера…")
 
-        self._streaming_started = False  # флаг: первая строка пришла → очищаем кэш-отображение
-        self._worker = _FetchWorker(self)
-        self._worker.data_ready.connect(self._on_data)
-        self._worker.row_ready.connect(self._on_row_ready)
+        self._worker = _WebFetchWorker(self)
+        self._worker.done.connect(self._on_web_data)
         self._worker.failed.connect(self._on_error)
         self._worker.progress.connect(self._on_progress)
-        self._worker.data_ready.connect(self._worker.deleteLater)
+        self._worker.done.connect(self._worker.deleteLater)
         self._worker.failed.connect(self._worker.deleteLater)
-        self._worker.data_ready.connect(lambda *_: setattr(self, "_worker", None))
+        self._worker.done.connect(lambda *_: setattr(self, "_worker", None))
         self._worker.failed.connect(lambda *_: setattr(self, "_worker", None))
         self._worker.start()
 
@@ -743,6 +809,59 @@ class StatsPanel(QWidget):
             if missing_count > 0 else ""
         )
 
+    def _on_web_data(self, rows: list[dict]) -> None:
+        self._spin_timer.stop()
+        self._progress_bar.setValue(100)
+        self._progress_bar.hide()
+        self._all_rows    = rows
+        self._missing_rows = []
+        self._last_refresh = datetime.now()
+        self._last_lbl.setText(f"Обновлено в {self._last_refresh.strftime('%H:%M:%S')}")
+        self._cache_banner.hide()
+        _save_cache(rows, [], {})
+        self._refresh_btn.setEnabled(True)
+        self._refresh_btn.setText("⟳  Обновить")
+        self._export_btn.setEnabled(True)
+        self._dead_btn.setEnabled(False)
+        self._table.setSortingEnabled(True)
+        self._apply_filter()
+        self._update_summary_labels()
+        total = len(rows)
+        self._status_lbl.setText(
+            f"Загружено {total} групп · "
+            f"обновлено {self._last_refresh.strftime('%d.%m.%Y %H:%M:%S')}"
+        )
+
+    def _switch_period(self, days: int) -> None:
+        self._period_days = days
+        for d, btn in self._period_btns.items():
+            active = (d == days)
+            btn.setChecked(active)
+            btn.setObjectName("statsPeriodBtnActive" if active else "statsPeriodBtn")
+            btn.style().unpolish(btn)
+            btn.style().polish(btn)
+        self._apply_filter()
+
+    _PERIOD_LABELS = {0: None, 1: "сегодня", 7: "за неделю", 30: "за месяц"}
+
+    def _update_period_summary(self, filtered_rows: list[dict]) -> None:
+        label = self._PERIOD_LABELS.get(self._period_days)
+        if not label or not self._all_rows:
+            self._period_summary.hide()
+            return
+        total_all   = len(self._all_rows)
+        active      = len(filtered_rows)
+        members     = sum(int(r["members"]) for r in filtered_rows
+                         if str(r["members"]).isdigit())
+        members_all = sum(int(r["members"]) for r in self._all_rows
+                         if str(r["members"]).isdigit())
+        self._period_summary.setText(
+            f"📊  {label.capitalize()}: активны <b>{active}</b> из {total_all} групп  ·  "
+            f"участников в активных: <b>{members:,}</b> из {members_all:,}"
+            .replace(",", "\u00a0")
+        )
+        self._period_summary.show()
+
     def _on_data(self, rows: list[dict], summary_texts: list[str], group_cache: dict) -> None:
         self._spin_timer.stop()
         self._progress_bar.setValue(100)
@@ -796,6 +915,20 @@ class StatsPanel(QWidget):
 
     def _apply_filter(self) -> None:
         query = self._search.text().strip().lower()
+
+        # Фильтр по периоду
+        if self._period_days > 0:
+            cutoff = datetime.now() - timedelta(days=self._period_days)
+            base = []
+            for r in self._all_rows:
+                try:
+                    if datetime.strptime(r["last_event"][:10], "%d.%m.%Y") >= cutoff:
+                        base.append(r)
+                except ValueError:
+                    pass
+        else:
+            base = self._all_rows
+
         if self._dead_only:
             rows = [r for r in self._missing_rows if not query or query in r["name"].lower()]
             self._fill_table(rows, dead_mode=True)
@@ -806,8 +939,9 @@ class StatsPanel(QWidget):
                 + (f" · фильтр: «{query}»" if query else "")
             )
         else:
-            rows = [r for r in self._all_rows if not query or query in r["name"].lower()]
+            rows = [r for r in base if not query or query in r["name"].lower()]
             self._fill_table(rows)
+            self._update_period_summary(base)
             if self._all_rows:
                 shown = len(rows)
                 total = len(self._all_rows)
@@ -916,6 +1050,15 @@ class StatsPanel(QWidget):
         elif chosen == act_copy_id and chat_id:
             QApplication.clipboard().setText(chat_id)
 
+    def _row_in_period(self, r: dict) -> bool:
+        if self._period_days == 0:
+            return True
+        try:
+            cutoff = datetime.now() - timedelta(days=self._period_days)
+            return datetime.strptime(r["last_event"][:10], "%d.%m.%Y") >= cutoff
+        except ValueError:
+            return False
+
     # ── Экспорт в Excel ──────────────────────────────────────────
 
     def _export_excel(self) -> None:
@@ -933,30 +1076,75 @@ class StatsPanel(QWidget):
         if not path:
             return
 
+        period_label = self._PERIOD_LABELS.get(self._period_days)
+        period_names = {1: "день", 7: "неделя", 30: "месяц"}
+
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "Статистика групп"
 
-        headers = ["Название", "Участников", "Последняя активность", "Ссылка"]
+        # ── Строка 1: заголовок отчёта ────────────────────────────
+        period_str = period_names.get(self._period_days, "все периоды")
+        generated  = datetime.now().strftime("%d.%m.%Y %H:%M")
+        row_count  = self._table.rowCount()
+        title_val  = f"Статистика групп · {period_str} · {generated} · строк: {row_count}"
+        ws.merge_cells("A1:D1")
+        title_cell = ws["A1"]
+        title_cell.value     = title_val
+        title_cell.font      = Font(bold=True, size=12)
+        title_cell.fill      = PatternFill("solid", fgColor="4A6CF7")
+        title_cell.font      = Font(bold=True, size=12, color="FFFFFF")
+        title_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 22
+
+        # ── Строка 2: сводка периода ──────────────────────────────
+        if period_label:
+            members_active = sum(
+                int(r["members"]) for r in self._all_rows
+                if str(r["members"]).isdigit() and self._row_in_period(r)
+            )
+            summary_val = (
+                f"{period_label.capitalize()}: активны {row_count} из {len(self._all_rows)} групп  |  "
+                f"участников в активных: {members_active:,}".replace(",", "\u00a0")
+            )
+            ws.merge_cells("A2:D2")
+            summ_cell = ws["A2"]
+            summ_cell.value     = summary_val
+            summ_cell.font      = Font(italic=True, size=10, color="374151")
+            summ_cell.fill      = PatternFill("solid", fgColor="EFF2FF")
+            summ_cell.alignment = Alignment(horizontal="left", vertical="center")
+            ws.row_dimensions[2].height = 18
+            data_start_row = 3
+        else:
+            data_start_row = 2
+
+        # ── Заголовки таблицы ─────────────────────────────────────
+        headers    = ["Название", "Участников", "Последняя активность", "Ссылка"]
         header_font = Font(bold=True, size=11)
         header_fill = PatternFill("solid", fgColor="F1F5F9")
-
         for col_idx, hdr in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col_idx, value=hdr)
-            cell.font = header_font
-            cell.fill = header_fill
+            cell = ws.cell(row=data_start_row, column=col_idx, value=hdr)
+            cell.font      = header_font
+            cell.fill      = header_fill
             cell.alignment = Alignment(horizontal="center")
 
-        row_count = self._table.rowCount()
+        # ── Данные из таблицы (отфильтрованные строки) ────────────
         for row_idx in range(row_count):
             for col_idx in range(4):
-                item = self._table.item(row_idx, col_idx)
+                item  = self._table.item(row_idx, col_idx)
                 value = item.text() if item else ""
-                ws.cell(row=row_idx + 2, column=col_idx + 1, value=value)
+                ws.cell(row=data_start_row + 1 + row_idx, column=col_idx + 1, value=value)
 
         for col in ws.columns:
-            max_len = max((len(str(c.value)) if c.value else 0) for c in col)
-            ws.column_dimensions[col[0].column_letter].width = min(max_len + 4, 60)
+            col_letter = None
+            for c in col:
+                if hasattr(c, "column_letter"):
+                    col_letter = c.column_letter
+                    break
+            if not col_letter:
+                continue
+            max_len = max((len(str(c.value)) if hasattr(c, "value") and c.value else 0) for c in col)
+            ws.column_dimensions[col_letter].width = min(max_len + 4, 60)
 
         try:
             wb.save(path)
@@ -999,6 +1187,14 @@ class StatsPanel(QWidget):
                 }
                 QPushButton#statsToggleBtnActive:first-child { border-radius: 8px 0 0 8px; }
                 QPushButton#statsToggleBtnActive:last-child  { border-radius: 0 8px 8px 0; }
+                QPushButton#statsPeriodBtn {
+                    min-height:0; font-size:12px; padding:2px 14px;
+                    border:1px solid #3a3a55; border-radius:6px; background:#2d2d45; color:#8888aa;
+                }
+                QPushButton#statsPeriodBtnActive {
+                    min-height:0; font-size:12px; padding:2px 14px;
+                    border:1px solid #4a6cf7; border-radius:6px; background:#2a3a6a; color:#8899ff;
+                }
                 QPushButton#statsRefreshBtn {
                     min-height: 0; font-size: 13px; font-weight: 600; padding: 4px 16px;
                     border-radius: 7px; border: 1px solid #3a3a55; background: #2d2d45; color: #c8c8e0;
@@ -1049,6 +1245,11 @@ class StatsPanel(QWidget):
                         x1:0, y1:0, x2:1, y2:0,
                         stop:0 #4a6cf7, stop:1 #7c3aed);
                 }
+                QLabel#statsPeriodSummary {
+                    font-size: 12px; color: #8899ff;
+                    background: #1e2540; border: 1px solid #2a3a6a;
+                    border-radius: 6px; padding: 5px 12px;
+                }
             """)
             return
         self.setStyleSheet("""
@@ -1067,6 +1268,14 @@ class StatsPanel(QWidget):
             }
             QPushButton#statsToggleBtnActive:first-child { border-radius: 8px 0 0 8px; }
             QPushButton#statsToggleBtnActive:last-child  { border-radius: 0 8px 8px 0; }
+            QPushButton#statsPeriodBtn {
+                min-height:0; font-size:12px; padding:2px 14px;
+                border:1px solid #c7d0db; border-radius:6px; background:#eef2f7; color:#6b7280;
+            }
+            QPushButton#statsPeriodBtnActive {
+                min-height:0; font-size:12px; padding:2px 14px;
+                border:1px solid #4a6cf7; border-radius:6px; background:#eff2ff; color:#4a6cf7;
+            }
             QPushButton#statsRefreshBtn {
                 min-height: 0; font-size: 13px; font-weight: 600; padding: 4px 16px;
                 border-radius: 7px; border: 1px solid #c7d0db; background: #eef2f7; color: #334155;
@@ -1116,6 +1325,11 @@ class StatsPanel(QWidget):
                 border-radius: 3px; background: qlineargradient(
                     x1:0, y1:0, x2:1, y2:0,
                     stop:0 #3b82f6, stop:1 #8b5cf6);
+            }
+            QLabel#statsPeriodSummary {
+                font-size: 12px; color: #374151;
+                background: #eff2ff; border: 1px solid #c7d5fb;
+                border-radius: 6px; padding: 5px 12px;
             }
         """)
 

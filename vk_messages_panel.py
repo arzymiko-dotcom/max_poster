@@ -398,8 +398,11 @@ class _AvatarLabel(QLabel):
         if self._loader:
             self._loader.stop()
             self._loader.quit()
-        self._loader = _ImageLoader(url)
+            self._loader.wait(500)
+            self._loader.deleteLater()
+        self._loader = _ImageLoader(url, parent=self)
         self._loader.loaded.connect(self._on_loaded)
+        self._loader.finished.connect(lambda: setattr(self, "_loader", None))
         self._loader.start()
 
     def _on_loaded(self, _url: str, px: QPixmap):
@@ -444,6 +447,10 @@ class _UnreadBadge(QLabel):
     def set_count(self, count: int):
         self._count = count
         self._update()
+
+    @property
+    def count(self) -> int:
+        return self._count
 
     def _update(self):
         if self._count > 0:
@@ -609,8 +616,9 @@ class _AttachmentWidget(QWidget):
             lay.addWidget(lbl)
 
     def _start_load(self, url: str):
-        self._loader = _ImageLoader(url)
+        self._loader = _ImageLoader(url, parent=self)
         self._loader.loaded.connect(self._on_photo)
+        self._loader.finished.connect(self._loader.deleteLater)
         self._loader.start()
 
     def _on_photo(self, _url: str, px: QPixmap):
@@ -837,10 +845,7 @@ class _ConvListPanel(QWidget):
             self._items[peer_id].update_unread(0)
 
     def total_unread(self) -> int:
-        total = 0
-        for w in self._items.values():
-            total += w._badge._count
-        return total
+        return sum(w._badge.count for w in self._items.values())
 
 
 # ─────────────────────────── ChatView ────────────────────────────────────────
@@ -1158,9 +1163,14 @@ class VkMessagesPanel(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        prev_token    = self._token
+        prev_group_id = self._group_id
         self._load_credentials()
         if self._creds_ok:
-            self._load_conversations()
+            creds_changed = (self._token != prev_token or self._group_id != prev_group_id)
+            first_show    = not self._conv_panel._items
+            if creds_changed or first_show:
+                self._load_conversations()
             self._start_longpoll()
 
     def hideEvent(self, event):
@@ -1297,24 +1307,13 @@ class VkMessagesPanel(QWidget):
             # Добавить пузырь в открытый чат
             from_id  = msg.get("from_id", 0)
             profiles = dict(self._current_profiles)
+            # Добавляем fallback-профиль без блокирующего API-вызова;
+            # реальные данные появятся при следующей перезагрузке истории
             if from_id and from_id not in profiles:
-                # Попробуем загрузить профиль отправителя (best-effort)
-                try:
-                    if from_id > 0:
-                        resp = _api("users.get", self._token,
-                                    user_ids=from_id,
-                                    fields="photo_50,first_name,last_name")
-                        if resp:
-                            profiles[from_id] = resp[0]
-                    else:
-                        resp = _api("groups.getById", self._token,
-                                    group_id=abs(from_id),
-                                    fields="photo_50,name")
-                        if resp:
-                            g = resp[0]
-                            profiles[-g["id"]] = g
-                except Exception:
-                    pass
+                if from_id > 0:
+                    profiles[from_id] = {"id": from_id, "first_name": f"ID {from_id}"}
+                else:
+                    profiles[from_id] = {"id": from_id, "name": f"Group {abs(from_id)}"}
             self._current_profiles = profiles
             self._chat_view.add_message(msg, profiles, self._group_id)
             # Отметить прочитанным
@@ -1342,15 +1341,3 @@ class VkMessagesPanel(QWidget):
         self._stop_worker(self._send_worker)
 
 
-# ─────────────────────────── standalone test ─────────────────────────────────
-
-if __name__ == "__main__":
-    import sys
-    logging.basicConfig(level=logging.DEBUG)
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    win = VkMessagesPanel()
-    win.setWindowTitle("VK Messages — MAX POST")
-    win.resize(900, 640)
-    win.show()
-    sys.exit(app.exec())
