@@ -70,6 +70,19 @@ from constants import (
 _log = logging.getLogger(__name__)
 
 
+class _ConnCheckWorker(QThread):
+    """Проверяет соединение с GREEN-API в фоне, чтобы не блокировать UI."""
+    done = pyqtSignal(bool, str)  # (success, message)
+
+    def __init__(self, max_sender, parent=None) -> None:
+        super().__init__(parent)
+        self._sender = max_sender
+
+    def run(self) -> None:
+        result = self._sender.open_max_for_login()
+        self.done.emit(result.success, result.message)
+
+
 class SendWorker(QThread):
     result_ready = pyqtSignal(bool, str)
     progress = pyqtSignal(str)
@@ -1354,12 +1367,20 @@ class MainWindow(QMainWindow):
         self.save_state()
 
     def _check_max_connection(self) -> None:
-        """Проверяет соединение с GREEN-API и показывает результат."""
-        result = self.max_sender.open_max_for_login()
-        if result.success:
-            QMessageBox.information(self, "Соединение MAX", result.message)
+        """Запускает проверку соединения с GREEN-API в фоновом потоке."""
+        if hasattr(self, "_conn_worker") and self._conn_worker and self._conn_worker.isRunning():
+            return
+        self._conn_worker = _ConnCheckWorker(self.max_sender, self)
+        self._conn_worker.done.connect(self._on_conn_check_done)
+        self._conn_worker.done.connect(self._conn_worker.deleteLater)
+        self._conn_worker.start()
+
+    def _on_conn_check_done(self, success: bool, message: str) -> None:
+        self._conn_worker = None
+        if success:
+            QMessageBox.information(self, "Соединение MAX", message)
         else:
-            QMessageBox.warning(self, "Соединение MAX", result.message)
+            QMessageBox.warning(self, "Соединение MAX", message)
 
     def _show_shortcuts(self) -> None:
         QMessageBox.information(
