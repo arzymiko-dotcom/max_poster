@@ -1,5 +1,6 @@
 """Диалог настроек подключений (токены MAX, ВКонтакте, Telegram)."""
 import re
+from pathlib import Path
 
 from dotenv import load_dotenv
 from PyQt6.QtCore import pyqtSignal
@@ -35,6 +36,7 @@ def _read_env() -> dict[str, str]:
 
 
 def _write_env(updates: dict[str, str]) -> None:
+    import tempfile
     path = get_env_path()
     lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     done: set[str] = set()
@@ -54,7 +56,13 @@ def _write_env(updates: dict[str, str]) -> None:
     for k, v in updates.items():
         if k not in done:
             result.append(f"{k}={v}")
-    path.write_text("\n".join(result) + "\n", encoding="utf-8")
+    content = "\n".join(result) + "\n"
+    with tempfile.NamedTemporaryFile(
+        mode="w", encoding="utf-8", dir=path.parent, delete=False, suffix=".tmp"
+    ) as tmp:
+        tmp.write(content)
+        tmp_path = Path(tmp.name)
+    tmp_path.replace(path)
 
 
 class _SecretEdit(QWidget):

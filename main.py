@@ -1066,16 +1066,22 @@ class MainWindow(QMainWindow):
         self.check_button.setEnabled(True)
         self._progress_bar.hide()
         self._cancel_button.hide()
+        if self._worker is not None:
+            self._worker.deleteLater()
+            self._worker = None
         if success:
             self._success_overlay.show_success()
             h = self._pending_history
-            history_manager.add_entry(
-                addresses=h.get("addresses", []),
-                sent_max=h.get("send_max", False),
-                sent_vk=h.get("send_vk", False),
-                text=h.get("text", ""),
-            )
-            self._refresh_history()
+            try:
+                history_manager.add_entry(
+                    addresses=h.get("addresses", []),
+                    sent_max=h.get("send_max", False),
+                    sent_vk=h.get("send_vk", False),
+                    text=h.get("text", ""),
+                )
+                self._refresh_history()
+            except Exception as exc:
+                _log.warning("Не удалось сохранить историю: %s", exc)
         else:
             tg_notify.send_error("Ошибка отправки поста", message)
             SendResultDialog(message, self).exec()
@@ -1270,11 +1276,19 @@ class MainWindow(QMainWindow):
 
     def load_state(self) -> None:
         data = self.state_manager.load()
-        self.resize(int(data.get("width", 1280)), int(data.get("height", 760)))
+        try:
+            w = int(data.get("width", 1280) or 1280)
+            h = int(data.get("height", 760) or 760)
+        except (ValueError, TypeError):
+            w, h = 1280, 760
+        self.resize(w, h)
 
         # Шрифт интерфейса — применяется в _deferred_font_load после загрузки шрифтов
         self._pending_font_family = data.get("ui_font_family", "")
-        self._pending_font_size = int(data.get("ui_font_size", 0))
+        try:
+            self._pending_font_size = int(data.get("ui_font_size", 0) or 0)
+        except (ValueError, TypeError):
+            self._pending_font_size = 0
 
         bg_index = data.get("bg_index", None)
         bg_mode = data.get("bg_mode", 0)
@@ -1365,13 +1379,14 @@ class MainWindow(QMainWindow):
 
     def _check_integrity(self) -> None:
         """Проверяет наличие ключевых файлов программы."""
+        from env_utils import get_env_path
         base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
         results: list[str] = []
 
         checks = [
             (base / "version.txt",               "version.txt"),
             (_assets_dir() / "MAX POST.ico",     "Иконка приложения"),
-            (base / ".env",                       "Файл настроек .env"),
+            (get_env_path(),                      "Файл настроек .env"),
         ]
         if self.excel_path:
             checks.append((self.excel_path, f"Excel-файл ({self.excel_path.name})"))
@@ -1394,6 +1409,16 @@ class MainWindow(QMainWindow):
 def main() -> None:
     tg_notify.install_excepthook()
     tg_notify.send_startup()
+
+    try:
+        from PyQt6.QtWebEngineQuick import QtWebEngineQuick
+        QtWebEngineQuick.initialize()
+    except Exception:
+        pass
+    try:
+        import PyQt6.QtWebEngineWidgets  # noqa: F401 — должен быть до QApplication
+    except Exception:
+        pass
 
     app = QApplication(sys.argv)
     window = MainWindow()

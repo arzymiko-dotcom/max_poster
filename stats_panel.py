@@ -568,8 +568,8 @@ class StatsPanel(QWidget):
         if "/" in text:
             try:
                 parts = text.split("…")[-1].strip().split("/")
-                current = int(parts[0].strip())
-                total   = int(parts[1].strip())
+                current = int(parts[0].strip().split()[0])
+                total   = int(parts[1].strip().split()[0])
                 if total > 0:
                     self._progress_bar.setValue(int(current / total * 100))
             except (ValueError, IndexError):
