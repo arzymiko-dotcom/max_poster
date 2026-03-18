@@ -282,7 +282,7 @@ class _SideBar(QFrame):
         self.btn_max   = _SideButton(_assets("MAX POST.ico"), "MAX POST — отправка сообщений",    "MP")
         self.btn_qr    = _SideButton(_assets("qr.ico"),       "QR Generator — генератор карточек", "QR")
         self.btn_stats = _SideButton(_assets("state.ico"),    "Статистика групп",                  "📊")
-        self.btn_mkd   = _SideButton(_assets("mkd.ico"),      "МКД — в разработке",                "МКД")
+        self.btn_mkd   = _SideButton(_assets("mkd.ico"),      "СУПЕР МКД+ — в разработке",         "МКД+")
 
         # ВКонтакте — кнопка с бейджем непрочитанных
         self._vk_container = QWidget(self)
@@ -305,9 +305,9 @@ class _SideBar(QFrame):
         layout.addSpacing(8)
         layout.addWidget(self.btn_stats)
         layout.addSpacing(8)
-        layout.addWidget(self.btn_mkd)
-        layout.addSpacing(8)
         layout.addWidget(self._vk_container)
+        layout.addSpacing(8)
+        layout.addWidget(self.btn_mkd)
 
         layout.addStretch()
 
@@ -540,7 +540,7 @@ class ShellWindow(QMainWindow):
         """Показывает сообщение о том, что модуль МКД ещё в разработке."""
         QMessageBox.information(
             self,
-            "Модуль МКД",
+            "СУПЕР МКД+",
             "Этот модуль находится в разработке и будет доступен в следующих версиях.",
         )
         # Кнопка не должна оставаться «нажатой» — возвращаем фокус на активную панель
