@@ -46,6 +46,51 @@ def load() -> list[dict]:
         return []
 
 
+def add_scheduled_entry(
+    entry_id: str,
+    addresses: list[str],
+    sent_max: bool,
+    sent_vk: bool,
+    text: str,
+    scheduled_at: str,
+) -> None:
+    """Добавляет отложенную запись в начало истории."""
+    entry: dict = {
+        "id": entry_id,
+        "ts": datetime.now().strftime("%d.%m.%Y  %H:%M"),
+        "scheduled_at": scheduled_at,
+        "status": "scheduled",
+    }
+    if text:
+        snippet = text.strip().replace("\n", " ")
+        encoded = snippet.encode("utf-32-le")
+        cp_count = len(encoded) // 4
+        if cp_count > 60:
+            entry["text"] = encoded[: 60 * 4].decode("utf-32-le") + "…"
+        else:
+            entry["text"] = snippet
+    if sent_max:
+        entry["max"] = addresses if addresses else []
+    if sent_vk:
+        entry["vk"] = True
+
+    with _lock:
+        history = load()
+        history = [entry] + history[:_MAX_ENTRIES - 1]
+        _atomic_write(_path(), json.dumps(history, ensure_ascii=False, indent=2))
+
+
+def update_entry_status(entry_id: str, new_status: str) -> None:
+    """Обновляет статус записи по id."""
+    with _lock:
+        history = load()
+        for entry in history:
+            if entry.get("id") == entry_id:
+                entry["status"] = new_status
+                break
+        _atomic_write(_path(), json.dumps(history, ensure_ascii=False, indent=2))
+
+
 def add_entry(addresses: list[str], sent_max: bool, sent_vk: bool, text: str = "") -> None:
     """Добавляет запись в начало истории."""
     entry: dict = {

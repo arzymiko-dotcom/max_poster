@@ -1,17 +1,21 @@
 import atexit
+import json
 import logging
 import os
 import random
 import sys
 import time
+import uuid
 from pathlib import Path
 
-from PyQt6.QtCore import QSize, QTimer, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QDateTime, QSize, QTimer, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QCheckBox,
+    QDateEdit,
+    QDateTimeEdit,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -264,6 +268,7 @@ class MainWindow(QMainWindow):
         self.vk_sender = VkSender()
         atexit.register(self._do_save_state)  # сохраняем состояние и при крэше
         self._pending_history: dict = {}
+        self._scheduled_posts: dict = {}  # entry_id -> {"timer": QTimer, "data": dict}
 
         self._parse_timer = QTimer(self)
         self._parse_timer.setSingleShot(True)
@@ -284,6 +289,7 @@ class MainWindow(QMainWindow):
         self.load_state()
         # Загружаем шрифты и применяем сохранённый шрифт после показа окна
         QTimer.singleShot(0, self._deferred_font_load)
+        QTimer.singleShot(500, self._load_scheduled_from_disk)
 
         # Горячие клавиши (Ctrl+Return и Ctrl+L заданы через QAction в меню)
 
@@ -579,8 +585,59 @@ class MainWindow(QMainWindow):
         # Row 0: вспомогательные кнопки
         buttons_row.addWidget(self.check_button, 0, 0)
         buttons_row.addWidget(self.photo_button, 0, 1)
-        # Row 1: кнопка отправки на всю ширину
-        buttons_row.addWidget(self.send_button, 1, 0, 1, 2)
+        # Row 1: отложенный пост
+        sched_frame = QFrame()
+        sched_frame.setObjectName("scheduleRow")
+        sched_fl = QHBoxLayout(sched_frame)
+        sched_fl.setContentsMargins(0, 0, 0, 0)
+        sched_fl.setSpacing(8)
+        self._chk_schedule = QCheckBox("Отложить")
+        self._chk_schedule.setObjectName("scheduleChk")
+        self._chk_schedule.toggled.connect(self._on_schedule_toggled)
+
+        _now30 = QDateTime.currentDateTime().addSecs(30 * 60)
+        self._sched_date = QDateEdit()
+        self._sched_date.setObjectName("scheduleDate")
+        self._sched_date.setDisplayFormat("dd.MM.yyyy")
+        self._sched_date.setCalendarPopup(True)
+        self._sched_date.setDate(_now30.date())
+        self._sched_date.setMinimumDate(QDateTime.currentDateTime().date())
+
+        self._sched_hour = QSpinBox()
+        self._sched_hour.setObjectName("scheduleHour")
+        self._sched_hour.setRange(0, 23)
+        self._sched_hour.setValue(_now30.time().hour())
+        self._sched_hour.setWrapping(True)
+        self._sched_hour.setFixedWidth(42)
+        self._sched_hour.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self._sched_min = QSpinBox()
+        self._sched_min.setObjectName("scheduleMin")
+        self._sched_min.setRange(0, 59)
+        self._sched_min.setValue(_now30.time().minute())
+        self._sched_min.setWrapping(True)
+        self._sched_min.setFixedWidth(42)
+        self._sched_min.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        _sep = QLabel(":")
+        _sep.setObjectName("scheduleTimeSep")
+
+        self._sched_widget = QFrame()
+        self._sched_widget.setObjectName("scheduleRow")
+        _sw = QHBoxLayout(self._sched_widget)
+        _sw.setContentsMargins(0, 0, 0, 0)
+        _sw.setSpacing(4)
+        _sw.addWidget(self._sched_date, 1)
+        _sw.addWidget(self._sched_hour)
+        _sw.addWidget(_sep)
+        _sw.addWidget(self._sched_min)
+        self._sched_widget.hide()
+
+        sched_fl.addWidget(self._chk_schedule)
+        sched_fl.addWidget(self._sched_widget, 1)
+        buttons_row.addWidget(sched_frame, 1, 0, 1, 2)
+        # Row 2: кнопка отправки на всю ширину
+        buttons_row.addWidget(self.send_button, 2, 0, 1, 2)
 
         left_layout.addWidget(platforms_section)
 
@@ -749,16 +806,41 @@ class MainWindow(QMainWindow):
 
     def _make_history_row(self, entry: dict, max_pix: "QPixmap | None", vk_pix: "QPixmap | None") -> QFrame:
         row = QFrame()
-        row.setObjectName("histEntry")
+        status = entry.get("status", "")
+        entry_id = entry.get("id", "")
+
+        if status == "scheduled":
+            row.setObjectName("histEntryScheduled")
+        elif status == "publishing":
+            row.setObjectName("histEntryPublishing")
+        elif status == "failed":
+            row.setObjectName("histEntryFailed")
+        else:
+            row.setObjectName("histEntry")
+
         layout = QHBoxLayout(row)
         layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(6)
 
         # Дата/время
+        sched_at = entry.get("scheduled_at", "")
         ts = entry.get("ts", "").replace("  ", " ").strip()
-        date_lbl = QLabel(ts[:16] if len(ts) > 16 else ts)
+        if status == "scheduled" and sched_at:
+            ts_display = sched_at[:16]
+        elif status == "publishing":
+            ts_display = "Публикуется…"
+        else:
+            ts_display = ts[:16] if len(ts) > 16 else ts
+
+        date_lbl = QLabel(ts_display)
         date_lbl.setObjectName("histDate")
         layout.addWidget(date_lbl)
+
+        # Бейдж "Отложен" для scheduled
+        if status == "scheduled":
+            badge = QLabel("Отложен")
+            badge.setObjectName("histBadgeScheduled")
+            layout.addWidget(badge)
 
         # Иконки платформ
         for has, pix, fallback_text in (
@@ -785,6 +867,15 @@ class MainWindow(QMainWindow):
         text_lbl.setObjectName("histText")
         text_lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         layout.addWidget(text_lbl)
+
+        # Кнопка отмены только для "scheduled"
+        if status == "scheduled" and entry_id:
+            cancel_btn = QPushButton("✕")
+            cancel_btn.setObjectName("histCancelScheduled")
+            cancel_btn.setFixedSize(18, 18)
+            cancel_btn.setToolTip("Отменить отложенный пост")
+            cancel_btn.clicked.connect(lambda _=False, eid=entry_id: self._cancel_scheduled(eid))
+            layout.addWidget(cancel_btn)
 
         return row
 
@@ -1097,6 +1188,9 @@ class MainWindow(QMainWindow):
     def send_post(self) -> None:
         if self._worker is not None and self._worker.isRunning():
             return  # отправка уже идёт — игнорируем повторное нажатие
+        if self._chk_schedule.isChecked():
+            self._schedule_post()
+            return
         text = self.text_input.toPlainText().strip()
         if not text:
             QMessageBox.warning(self, "Отправка", "Нельзя отправить пустой текст.")
@@ -1218,6 +1312,212 @@ class MainWindow(QMainWindow):
         else:
             tg_notify.send_error("Ошибка отправки поста", message)
             SendResultDialog(message, self).exec()
+
+    # ──────────────────────────────────────────────────────────────────
+    #  Отложенные посты
+    # ──────────────────────────────────────────────────────────────────
+
+    def _on_schedule_toggled(self, checked: bool) -> None:
+        if checked:
+            _now30 = QDateTime.currentDateTime().addSecs(30 * 60)
+            self._sched_date.setMinimumDate(QDateTime.currentDateTime().date())
+            # Если дата/время уже прошли — сбрасываем на +30 мин
+            sel_dt = self._get_sched_datetime()
+            if sel_dt <= QDateTime.currentDateTime():
+                self._sched_date.setDate(_now30.date())
+                self._sched_hour.setValue(_now30.time().hour())
+                self._sched_min.setValue(_now30.time().minute())
+            self._sched_widget.show()
+            self.send_button.setText("Запланировать")
+        else:
+            self._sched_widget.hide()
+            self.send_button.setText("Опубликовать")
+
+    def _get_sched_datetime(self) -> QDateTime:
+        from PyQt6.QtCore import QTime
+        d = self._sched_date.date()
+        t = QTime(self._sched_hour.value(), self._sched_min.value())
+        return QDateTime(d, t)
+
+    def _schedule_post(self) -> None:
+        text = self.text_input.toPlainText().strip()
+        if not text:
+            QMessageBox.warning(self, "Отправка", "Нельзя отправить пустой текст.")
+            return
+
+        send_max = self.chk_max.isChecked()
+        send_vk = self.chk_vk.isChecked()
+        if not send_max and not send_vk:
+            QMessageBox.warning(self, "Отправка", "Выбери хотя бы одну платформу (MAX или ВКонтакте).")
+            return
+
+        checked = self._get_checked_matches()
+        chat_ids = [m.chat_id for m in checked if m.chat_id]
+        if send_max and not chat_ids:
+            QMessageBox.warning(self, "Отправка", "Нет отмеченных адресов. Нажми «Проверить адрес».")
+            return
+
+        import os as _os
+        if send_max and not (_os.getenv("MAX_ID_INSTANCE") and _os.getenv("MAX_API_TOKEN")):
+            QMessageBox.warning(self, "Отправка",
+                "Не заданы токены MAX.\nОткройте Настройки подключений (🔑).")
+            return
+        if send_vk and not _os.getenv("VK_GROUP_TOKEN"):
+            QMessageBox.warning(self, "Отправка",
+                "Не задан токен ВКонтакте.\nОткройте Настройки подключений (🔑).")
+            return
+
+        sched_dt = self._get_sched_datetime()
+        now = QDateTime.currentDateTime()
+        ms = now.msecsTo(sched_dt)
+        if ms <= 0:
+            QMessageBox.warning(self, "Отложенный пост", "Выберите время в будущем.")
+            return
+
+        entry_id = uuid.uuid4().hex[:8]
+        sched_str = sched_dt.toString("dd.MM.yyyy  HH:mm")
+        addresses = [m.address for m in checked]
+
+        try:
+            history_manager.add_scheduled_entry(
+                entry_id=entry_id,
+                addresses=addresses,
+                sent_max=send_max,
+                sent_vk=send_vk,
+                text=text,
+                scheduled_at=sched_str,
+            )
+            self._refresh_history()
+        except Exception as exc:
+            _log.warning("Не удалось сохранить отложенную запись: %s", exc)
+
+        sched_data = {
+            "entry_id": entry_id,
+            "scheduled_at_iso": sched_dt.toString(Qt.DateFormat.ISODate),
+            "addresses": addresses,
+            "chat_ids": chat_ids,
+            "send_max": send_max,
+            "send_vk": send_vk,
+            "text": text,
+            "image_path": str(self.image_path) if self.image_path else None,
+        }
+        self._save_scheduled_to_disk(sched_data)
+
+        timer = QTimer(self)
+        timer.setSingleShot(True)
+        timer.timeout.connect(lambda eid=entry_id: self._fire_scheduled(eid))
+        timer.start(int(ms))
+        self._scheduled_posts[entry_id] = {"timer": timer, "data": sched_data}
+
+        QMessageBox.information(
+            self, "Запланировано",
+            f"Пост будет опубликован\n{sched_dt.toString('dd.MM.yyyy  в  HH:mm')}",
+        )
+        self._chk_schedule.setChecked(False)
+
+    def _fire_scheduled(self, entry_id: str) -> None:
+        scheduled = self._scheduled_posts.pop(entry_id, None)
+        if not scheduled:
+            return
+        data = scheduled["data"]
+
+        try:
+            history_manager.update_entry_status(entry_id, "publishing")
+            self._refresh_history()
+        except Exception as exc:
+            _log.warning("Ошибка обновления статуса: %s", exc)
+
+        self._remove_scheduled_from_disk(entry_id)
+
+        worker = SendWorker(
+            max_sender=self.max_sender,
+            vk_sender=self.vk_sender,
+            chat_ids=data["chat_ids"],
+            text=data["text"],
+            image_path=data.get("image_path"),
+            send_max=data["send_max"],
+            send_vk=data["send_vk"],
+        )
+        worker.result_ready.connect(
+            lambda ok, msg, eid=entry_id, d=data: self._on_scheduled_finished(eid, d, ok, msg)
+        )
+        worker.start()
+        # Сохраняем ссылку, чтобы GC не удалил поток
+        self._scheduled_posts[f"_running_{entry_id}"] = {"timer": None, "worker": worker, "data": data}
+
+    def _on_scheduled_finished(self, entry_id: str, data: dict, success: bool, message: str) -> None:
+        running_key = f"_running_{entry_id}"
+        info = self._scheduled_posts.pop(running_key, None)
+        if info and info.get("worker"):
+            info["worker"].deleteLater()
+
+        new_status = "done" if success else "failed"
+        try:
+            history_manager.update_entry_status(entry_id, new_status)
+            self._refresh_history()
+        except Exception as exc:
+            _log.warning("Ошибка обновления статуса: %s", exc)
+
+        if success:
+            self._success_overlay.show_success()
+        else:
+            tg_notify.send_error("Ошибка отложенной отправки", message)
+            SendResultDialog(message, self).exec()
+
+    def _cancel_scheduled(self, entry_id: str) -> None:
+        scheduled = self._scheduled_posts.pop(entry_id, None)
+        if scheduled and scheduled.get("timer"):
+            scheduled["timer"].stop()
+        self._remove_scheduled_from_disk(entry_id)
+        try:
+            history_manager.update_entry_status(entry_id, "cancelled")
+            self._refresh_history()
+        except Exception as exc:
+            _log.warning("Ошибка отмены: %s", exc)
+
+    def _save_scheduled_to_disk(self, data: dict) -> None:
+        path = history_manager._data_dir() / "scheduled.json"
+        try:
+            items = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+        except Exception:
+            items = []
+        items.append(data)
+        try:
+            history_manager._atomic_write(path, json.dumps(items, ensure_ascii=False, indent=2))
+        except Exception as exc:
+            _log.warning("Ошибка сохранения scheduled.json: %s", exc)
+
+    def _remove_scheduled_from_disk(self, entry_id: str) -> None:
+        path = history_manager._data_dir() / "scheduled.json"
+        try:
+            items = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+            items = [i for i in items if i.get("entry_id") != entry_id]
+            history_manager._atomic_write(path, json.dumps(items, ensure_ascii=False, indent=2))
+        except Exception as exc:
+            _log.warning("Ошибка удаления из scheduled.json: %s", exc)
+
+    def _load_scheduled_from_disk(self) -> None:
+        path = history_manager._data_dir() / "scheduled.json"
+        if not path.exists():
+            return
+        try:
+            items = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        now = QDateTime.currentDateTime()
+        for item in items:
+            try:
+                sched_dt = QDateTime.fromString(item["scheduled_at_iso"], Qt.DateFormat.ISODate)
+                ms = max(now.msecsTo(sched_dt), 1000)
+                entry_id = item["entry_id"]
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                timer.timeout.connect(lambda eid=entry_id: self._fire_scheduled(eid))
+                timer.start(int(ms))
+                self._scheduled_posts[entry_id] = {"timer": timer, "data": item}
+                _log.info("Восстановлен отложенный пост %s, запуск через %d мс", entry_id, ms)
+            except Exception as exc:
+                _log.warning("Ошибка загрузки отложенного поста: %s", exc)
 
     def _auto_check_addresses(self) -> None:
         """Тихий автопарсинг адресов при изменении текста (без диалогов)."""

@@ -147,6 +147,67 @@ _DARK_STYLESHEET = """
             #histDate { font-size: 11px; color: #5a5a88; }
             #histText { font-size: 12px; color: #b0b0cc; }
             #histPlatformFallback { font-size: 11px; color: #9090bb; font-weight: 600; }
+            #histEntryScheduled {
+                background: #2e2a18;
+                border: 1px solid #6b5a1a;
+                border-radius: 7px;
+                padding: 5px 8px;
+            }
+            #histEntryPublishing {
+                background: #1a2e38;
+                border: 1px solid #1a6b8a;
+                border-radius: 7px;
+                padding: 5px 8px;
+            }
+            #histEntryFailed {
+                background: #2e1a1a;
+                border: 1px solid #6b1a1a;
+                border-radius: 7px;
+                padding: 5px 8px;
+            }
+            #histBadgeScheduled {
+                font-size: 10px;
+                color: #d4a017;
+                font-weight: 600;
+                background: #3d3510;
+                border: 1px solid #6b5a1a;
+                border-radius: 4px;
+                padding: 0px 5px;
+            }
+            QPushButton#histCancelScheduled {
+                min-height: 0; min-width: 0;
+                font-size: 11px; font-weight: 600;
+                color: #a07820;
+                background: transparent;
+                border: 1px solid #6b5a1a;
+                border-radius: 4px;
+                padding: 0px;
+            }
+            QPushButton#histCancelScheduled:hover { background: #3d3510; color: #e05555; border-color: #e05555; }
+            QCheckBox#scheduleChk { font-size: 12px; color: #9898bb; }
+            QCheckBox#scheduleChk::indicator { width: 14px; height: 14px; }
+            QDateEdit#scheduleDate {
+                background: #1e1e2e;
+                border: 1px solid #3a3a55;
+                border-radius: 5px;
+                color: #d4a017;
+                font-size: 12px;
+                padding: 2px 6px;
+            }
+            QSpinBox#scheduleHour, QSpinBox#scheduleMin {
+                background: #1e1e2e;
+                border: 1px solid #3a3a55;
+                border-radius: 5px;
+                color: #d4a017;
+                font-size: 13px;
+                font-weight: 600;
+                padding: 2px 2px;
+            }
+            QSpinBox#scheduleHour::up-button, QSpinBox#scheduleMin::up-button,
+            QSpinBox#scheduleHour::down-button, QSpinBox#scheduleMin::down-button {
+                width: 14px;
+            }
+            #scheduleTimeSep { color: #d4a017; font-size: 14px; font-weight: 700; }
             QPushButton#histClearBtn {
                 min-height: 0;
                 font-size: 11px;
@@ -485,6 +546,67 @@ _LIGHT_STYLESHEET = """
             #histDate { font-size: 11px; color: #b0b8c4; }
             #histText { font-size: 12px; color: #4a5568; }
             #histPlatformFallback { font-size: 11px; color: #6b7280; font-weight: 600; }
+            #histEntryScheduled {
+                background: #fffbeb;
+                border: 1px solid #d4a017;
+                border-radius: 7px;
+                padding: 5px 8px;
+            }
+            #histEntryPublishing {
+                background: #ebf8ff;
+                border: 1px solid #1a8aaa;
+                border-radius: 7px;
+                padding: 5px 8px;
+            }
+            #histEntryFailed {
+                background: #fff0f0;
+                border: 1px solid #cc4444;
+                border-radius: 7px;
+                padding: 5px 8px;
+            }
+            #histBadgeScheduled {
+                font-size: 10px;
+                color: #92620a;
+                font-weight: 600;
+                background: #fef3c7;
+                border: 1px solid #d4a017;
+                border-radius: 4px;
+                padding: 0px 5px;
+            }
+            QPushButton#histCancelScheduled {
+                min-height: 0; min-width: 0;
+                font-size: 11px; font-weight: 600;
+                color: #92620a;
+                background: transparent;
+                border: 1px solid #d4a017;
+                border-radius: 4px;
+                padding: 0px;
+            }
+            QPushButton#histCancelScheduled:hover { background: #fef3c7; color: #cc2222; border-color: #cc2222; }
+            QCheckBox#scheduleChk { font-size: 12px; color: #6b7280; }
+            QCheckBox#scheduleChk::indicator { width: 14px; height: 14px; }
+            QDateEdit#scheduleDate {
+                background: #ffffff;
+                border: 1px solid #d4a017;
+                border-radius: 5px;
+                color: #92620a;
+                font-size: 12px;
+                padding: 2px 6px;
+            }
+            QSpinBox#scheduleHour, QSpinBox#scheduleMin {
+                background: #ffffff;
+                border: 1px solid #d4a017;
+                border-radius: 5px;
+                color: #92620a;
+                font-size: 13px;
+                font-weight: 600;
+                padding: 2px 2px;
+            }
+            QSpinBox#scheduleHour::up-button, QSpinBox#scheduleMin::up-button,
+            QSpinBox#scheduleHour::down-button, QSpinBox#scheduleMin::down-button {
+                width: 14px;
+            }
+            #scheduleTimeSep { color: #92620a; font-size: 14px; font-weight: 700; }
             QPushButton#histClearBtn {
                 min-height: 0;
                 font-size: 11px;
