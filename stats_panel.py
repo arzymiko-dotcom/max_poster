@@ -378,6 +378,97 @@ class _WebFetchWorker(QThread):
 
 
 # ────────────────────────────────────────────────────────────────
+#  Воркер: запрос отчёта у бота через GREEN-API
+# ────────────────────────────────────────────────────────────────
+
+class _BotReportWorker(QThread):
+    """Отправляет команду боту и скачивает HTML-файл ответа."""
+    progress = pyqtSignal(str)
+    done     = pyqtSignal(str)   # HTML-содержимое файла
+    failed   = pyqtSignal(str)
+
+    _BOT_CHAT_ID  = "69347387@c.us"
+    _POLL_SEC     = 4
+    _TIMEOUT_SEC  = 120
+
+    def __init__(self, instance_id: str, token: str, days: int, parent=None):
+        super().__init__(parent)
+        self._instance_id = instance_id
+        self._token       = token
+        self._days        = days
+        self._stop        = False
+
+    def stop(self) -> None:
+        self._stop = True
+
+    def run(self) -> None:
+        base    = f"https://api.green-api.com/waInstance{self._instance_id}"
+        command = f"/мах_отчет_история {self._days}"
+
+        # ── 1. Отправляем команду ────────────────────────────────
+        self.progress.emit("Отправка команды боту…")
+        sent_at = int(time.time())
+        try:
+            r = requests.post(
+                f"{base}/sendMessage/{self._token}",
+                json={"chatId": self._BOT_CHAT_ID, "message": command},
+                timeout=15,
+            )
+            r.raise_for_status()
+        except Exception as e:
+            self.failed.emit(f"Ошибка отправки команды боту: {e}")
+            return
+
+        # ── 2. Ждём HTML-файл в ответе бота ─────────────────────
+        deadline = time.time() + self._TIMEOUT_SEC
+        tick     = 0
+        while not self._stop and time.time() < deadline:
+            time.sleep(self._POLL_SEC)
+            tick += self._POLL_SEC
+            self.progress.emit(
+                f"Ожидание ответа бота… {tick} / {self._TIMEOUT_SEC} сек"
+            )
+            try:
+                r = requests.post(
+                    f"{base}/getChatHistory/{self._token}",
+                    json={"chatId": self._BOT_CHAT_ID, "count": 10},
+                    timeout=20,
+                )
+                r.raise_for_status()
+                messages = r.json()
+            except Exception:
+                continue
+
+            for msg in messages:
+                if msg.get("timestamp", 0) <= sent_at:
+                    continue
+                if msg.get("typeMessage") != "documentMessage":
+                    continue
+                fd    = msg.get("fileMessageData", {})
+                fname = fd.get("fileName", "")
+                mime  = fd.get("mimeType", "")
+                dl    = fd.get("downloadUrl", "")
+                if not dl:
+                    continue
+                if not (fname.lower().endswith(".html") or "html" in mime):
+                    continue
+                self.progress.emit("Скачивание файла отчёта…")
+                try:
+                    r2 = requests.get(dl, timeout=30)
+                    r2.raise_for_status()
+                    self.done.emit(r2.text)
+                except Exception as e:
+                    self.failed.emit(f"Ошибка скачивания файла: {e}")
+                return
+
+        if not self._stop:
+            self.failed.emit(
+                f"Бот не ответил за {self._TIMEOUT_SEC} сек.\n"
+                "Попробуйте ещё раз или загрузите файл вручную."
+            )
+
+
+# ────────────────────────────────────────────────────────────────
 #  Виджет панели
 # ────────────────────────────────────────────────────────────────
 
@@ -386,7 +477,8 @@ class StatsPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self._worker: _FetchWorker | _WebFetchWorker | None = None
+        self._worker:     _FetchWorker | _WebFetchWorker | None = None
+        self._bot_worker: _BotReportWorker | None = None
         self._all_rows: list[dict] = []
         self._missing_rows: list[dict] = []
         self._dead_only: bool = False
@@ -1230,20 +1322,116 @@ class StatsPanel(QWidget):
             QDesktopServices.openUrl(QUrl.fromLocalFile(path))
 
     def _load_subscriber_history(self) -> None:
-        """Загружает HTML-отчёт «История подписчиков» и добавляет колонку Δ."""
+        """Загружает историю подписчиков: авто через бота или вручную из файла."""
+        from dotenv import load_dotenv
+        load_dotenv(get_env_path(), override=True)
+        instance_id = os.getenv("MAX_ID_INSTANCE", "").strip()
+        api_token   = os.getenv("MAX_API_TOKEN",   "").strip()
+
+        if instance_id and api_token:
+            self._load_history_via_bot(instance_id, api_token)
+        else:
+            self._load_history_from_file()
+
+    def _load_history_via_bot(self, instance_id: str, token: str) -> None:
+        """Запрашивает отчёт у бота через GREEN-API с выбором периода."""
+        from PyQt6.QtWidgets import (
+            QDialog, QVBoxLayout, QLabel, QDialogButtonBox,
+            QButtonGroup, QRadioButton,
+        )
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Запрос отчёта у бота")
+        dlg.setMinimumWidth(280)
+        lay = QVBoxLayout(dlg)
+        lay.setSpacing(10)
+        lay.addWidget(QLabel("Выберите период отчёта:"))
+
+        bg     = QButtonGroup(dlg)
+        radios: dict[QRadioButton, int] = {}
+        for days, label in ((7, "7 дней"), (30, "30 дней"), (90, "90 дней")):
+            rb = QRadioButton(label)
+            if days == 30:
+                rb.setChecked(True)
+            bg.addButton(rb)
+            lay.addWidget(rb)
+            radios[rb] = days
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok |
+            QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.button(QDialogButtonBox.StandardButton.Ok).setText("Запросить у бота")
+        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("Загрузить файл вручную")
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        lay.addWidget(btns)
+
+        result = dlg.exec()
+        if result == QDialog.DialogCode.Rejected:
+            # «Загрузить файл вручную»
+            self._load_history_from_file()
+            return
+
+        days = next(d for rb, d in radios.items() if rb.isChecked())
+
+        # Останавливаем старый воркер если был
+        if self._bot_worker and self._bot_worker.isRunning():
+            self._bot_worker.stop()
+            self._bot_worker.quit()
+            self._bot_worker.wait(2000)
+
+        self._history_btn.setEnabled(False)
+        self._history_btn.setText(f"📊 Загрузка {days}д…")
+
+        self._bot_worker = _BotReportWorker(instance_id, token, days, parent=self)
+        self._bot_worker.progress.connect(self._status_lbl.setText)
+        self._bot_worker.done.connect(self._on_bot_report_done)
+        self._bot_worker.failed.connect(self._on_bot_report_failed)
+        self._bot_worker.finished.connect(
+            lambda: self._history_btn.setEnabled(True)
+        )
+        self._bot_worker.start()
+
+    def _on_bot_report_done(self, html: str) -> None:
+        self._history_btn.setEnabled(True)
+        self._parse_and_apply_history(html)
+
+    def _on_bot_report_failed(self, msg: str) -> None:
+        self._history_btn.setEnabled(True)
+        self._history_btn.setText("📊 История")
+        from PyQt6.QtWidgets import QMessageBox
+        mb = QMessageBox(self)
+        mb.setWindowTitle("Ошибка получения отчёта")
+        mb.setText(msg)
+        mb.setIcon(QMessageBox.Icon.Warning)
+        manual_btn = mb.addButton("📂 Загрузить файл вручную", QMessageBox.ButtonRole.ActionRole)
+        mb.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
+        mb.exec()
+        if mb.clickedButton() == manual_btn:
+            self._load_history_from_file()
+
+    def _load_history_from_file(self) -> None:
+        """Открывает диалог выбора HTML-файла и парсит его."""
         path, _ = QFileDialog.getOpenFileName(
             self, "Загрузить историю подписчиков", "",
             "HTML файлы (*.html *.htm);;Все файлы (*)"
         )
         if not path:
             return
+        try:
+            html = Path(path).read_text(encoding="utf-8", errors="replace")
+            self._parse_and_apply_history(html)
+        except Exception as exc:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Ошибка загрузки файла", str(exc))
 
+    def _parse_and_apply_history(self, html: str) -> None:
+        """Парсит HTML-отчёт подписчиков и обновляет таблицу с дельтой."""
         try:
             from bs4 import BeautifulSoup
-            html = Path(path).read_text(encoding="utf-8", errors="replace")
             soup = BeautifulSoup(html, "html.parser")
 
-            # Заголовок периода
             period_text = ""
             for p in soup.find_all("p"):
                 if "Период" in p.get_text():
@@ -1252,29 +1440,26 @@ class StatsPanel(QWidget):
 
             table = soup.find("table")
             if not table:
-                raise ValueError("Таблица не найдена в файле")
+                raise ValueError("Таблица не найдена в HTML-файле")
 
-            rows = table.find_all("tr")
             history: dict = {}
-            skip_classes = {"average-row", "total-row"}
+            skip_classes  = {"average-row", "total-row"}
 
-            for tr in rows[1:]:
-                tr_classes = set(tr.get("class", []))
-                if tr_classes & skip_classes:
+            for tr in table.find_all("tr")[1:]:
+                if set(tr.get("class", [])) & skip_classes:
                     continue
                 tds = tr.find_all("td")
                 if len(tds) < 4:
                     continue
-
                 name = tds[1].get_text(strip=True)
                 if not name:
                     continue
 
                 values: list[int | None] = []
                 for td in tds[3:]:
-                    text = td.get_text(strip=True)
+                    t = td.get_text(strip=True)
                     try:
-                        values.append(int(text))
+                        values.append(int(t))
                     except ValueError:
                         values.append(None)
 
@@ -1284,46 +1469,40 @@ class StatsPanel(QWidget):
 
                 latest = non_null[0]
                 oldest = non_null[-1]
-                delta  = latest - oldest
-
                 key = self._history_key(name)
                 history[key] = {
                     "name":   name,
                     "latest": latest,
                     "oldest": oldest,
-                    "delta":  delta,
+                    "delta":  latest - oldest,
                 }
 
             self._history_data   = history
             self._history_period = period_text
 
-            # Обновляем баннер
-            matched = sum(
-                1 for r in self._all_rows
-                if self._history_key(r["name"]) in history
-            )
-            grew    = sum(1 for v in history.values() if v["delta"] > 0)
-            shrank  = sum(1 for v in history.values() if v["delta"] < 0)
+            matched     = sum(1 for r in self._all_rows
+                              if self._history_key(r["name"]) in history)
+            grew        = sum(1 for v in history.values() if v["delta"] > 0)
+            shrank      = sum(1 for v in history.values() if v["delta"] < 0)
             total_delta = sum(v["delta"] for v in history.values())
-            sign = "+" if total_delta >= 0 else ""
+            sign        = "+" if total_delta >= 0 else ""
+
             self._history_banner.setText(
-                f"📊  История загружена · {period_text}  ·  "
-                f"групп в файле: {len(history)}  ·  совпало: {matched}  ·  "
-                f"растут: {grew}  ↑   падают: {shrank}  ↓   "
+                f"📊  {period_text}  ·  "
+                f"групп: {len(history)}  ·  совпало: {matched}  ·  "
+                f"растут: {grew} ↑  падают: {shrank} ↓  "
                 f"итого: {sign}{total_delta:,}".replace(",", "\u00a0")
             )
             self._history_banner.show()
             self._history_btn.setText("📊 История ✓")
-
-            # Перерисовываем таблицу с дельтой
             self._apply_filter()
             self._status_lbl.setText(
-                f"История подписчиков загружена: {len(history)} групп · {matched} совпало"
+                f"История загружена: {len(history)} групп · {matched} совпало"
             )
 
         except Exception as exc:
             from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "Ошибка загрузки истории", str(exc))
+            QMessageBox.warning(self, "Ошибка разбора отчёта", str(exc))
 
     # ── Тема / закрытие ──────────────────────────────────────────
 
@@ -1333,6 +1512,10 @@ class StatsPanel(QWidget):
             self._worker._stop = True
             self._worker.quit()
             self._worker.wait(15000)
+        if self._bot_worker and self._bot_worker.isRunning():
+            self._bot_worker.stop()
+            self._bot_worker.quit()
+            self._bot_worker.wait(3000)
 
     def closeEvent(self, event) -> None:
         self._shutdown()
