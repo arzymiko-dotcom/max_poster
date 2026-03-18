@@ -477,6 +477,11 @@ class MainWindow(QMainWindow):
         ah_layout.addStretch()
         ah_layout.addWidget(self._add_addr_btn)
         left_layout.addWidget(addr_header_frame)
+
+        addr_hint = QLabel("⚠️ Рекомендуется не более 10 групп за раз в 5 минут во избежание бана МАХ")
+        addr_hint.setObjectName("addrHintLbl")
+        left_layout.addWidget(addr_hint)
+
         left_layout.addWidget(self._addr_list, 1)
 
         # Создаём заранее — используется в строке платформ

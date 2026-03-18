@@ -116,6 +116,14 @@ _DARK_STYLESHEET = """
                 letter-spacing: 0.5px;
                 text-transform: uppercase;
             }
+            #addrHintLbl {
+                font-size: 11px;
+                color: #a07830;
+                background: #2a2010;
+                border: 1px solid #5a4010;
+                border-radius: 5px;
+                padding: 3px 10px;
+            }
             #previewTitle {
                 font-size: 13px;
                 font-weight: 600;
@@ -425,6 +433,14 @@ _LIGHT_STYLESHEET = """
                 color: #7a8799;
                 letter-spacing: 0.5px;
                 text-transform: uppercase;
+            }
+            #addrHintLbl {
+                font-size: 11px;
+                color: #92600a;
+                background: #fef9ec;
+                border: 1px solid #fcd34d;
+                border-radius: 5px;
+                padding: 3px 10px;
             }
             #previewTitle {
                 font-size: 13px;
