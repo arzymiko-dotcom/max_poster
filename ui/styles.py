@@ -157,6 +157,15 @@ _DARK_STYLESHEET = """
                 padding: 1px 8px;
             }
             QPushButton#histClearBtn:hover { background: #2d2d45; color: #e05555; }
+            #addrSearch {
+                border: 1px solid #3a3a55;
+                border-radius: 5px;
+                background: #1e1e2e;
+                color: #d0d0e8;
+                padding: 2px 8px;
+                font-size: 12px;
+            }
+            #addrSearch:focus { border-color: #5a6aff; }
             #addrList {
                 border: 1px solid #3a3a55;
                 border-radius: 8px;
@@ -475,6 +484,15 @@ _LIGHT_STYLESHEET = """
                 padding: 1px 8px;
             }
             QPushButton#histClearBtn:hover { background: #f0f4f8; color: #e05555; }
+            #addrSearch {
+                border: 1px solid #c7d0db;
+                border-radius: 5px;
+                background: #ffffff;
+                color: #1a1a1a;
+                padding: 2px 8px;
+                font-size: 12px;
+            }
+            #addrSearch:focus { border-color: #4a7aff; }
             #addrList {
                 border: 1px solid #c7d0db;
                 border-radius: 8px;

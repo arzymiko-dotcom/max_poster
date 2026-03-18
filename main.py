@@ -479,6 +479,14 @@ class MainWindow(QMainWindow):
         ah_layout.addWidget(self._add_addr_btn)
         left_layout.addWidget(addr_header_frame)
 
+        self._addr_search = QLineEdit()
+        self._addr_search.setPlaceholderText("🔍 Поиск адреса…")
+        self._addr_search.setObjectName("addrSearch")
+        self._addr_search.setFixedHeight(26)
+        self._addr_search.textChanged.connect(self._filter_addr_list)
+        self._addr_search.hide()
+        left_layout.addWidget(self._addr_search)
+
         addr_hint = QLabel("⚠️ Рекомендуется не более 10 групп за раз в 5 минут во избежание бана МАХ")
         addr_hint.setObjectName("addrHintLbl")
         left_layout.addWidget(addr_hint)
@@ -793,6 +801,14 @@ class MainWindow(QMainWindow):
         else:
             self._addr_count_lbl.setText("Адреса для рассылки MAX")
 
+        # Поиск по списку — показываем только если есть адреса
+        total = self._addr_list.count()
+        if total > 0:
+            self._addr_search.show()
+        else:
+            self._addr_search.hide()
+            self._addr_search.clear()
+
         self._cl_text.setText(row(has_text, "Текст введён"))
         if has_photo:
             self._cl_photo.setText(
@@ -849,8 +865,17 @@ class MainWindow(QMainWindow):
         self.photo_button.setObjectName("photoButtonDone")
         self.photo_button.setStyle(self.photo_button.style())
 
+    def _filter_addr_list(self, text: str) -> None:
+        """Показывает/скрывает элементы списка адресов по поисковому запросу."""
+        q = text.strip().lower()
+        for i in range(self._addr_list.count()):
+            item = self._addr_list.item(i)
+            if item:
+                item.setHidden(bool(q) and q not in item.text().lower())
+
     def clear_form(self) -> None:
         self.text_input.clear()
+        self._addr_search.clear()
         self._addr_list.clear()
         self.preview.set_preview_text("")
         self.preview.set_image(None)

@@ -1418,8 +1418,10 @@ class StatsPanel(QWidget):
 
     def _load_history_from_file(self) -> None:
         """Открывает диалог выбора HTML-файла и парсит его."""
+        reports_dir = Path(__file__).parent / "_reports"
+        start_dir = str(reports_dir) if reports_dir.exists() else ""
         path, _ = QFileDialog.getOpenFileName(
-            self, "Загрузить историю подписчиков", "",
+            self, "Загрузить историю подписчиков", start_dir,
             "HTML файлы (*.html *.htm);;Все файлы (*)"
         )
         if not path:
@@ -1431,8 +1433,24 @@ class StatsPanel(QWidget):
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Ошибка загрузки файла", str(exc))
 
+    def _save_report_to_disk(self, html: str) -> None:
+        """Сохраняет HTML-отчёт в папку _reports/, оставляя последние 30 файлов."""
+        try:
+            reports_dir = Path(__file__).parent / "_reports"
+            reports_dir.mkdir(exist_ok=True)
+            ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            fname = reports_dir / f"subscribers_{ts}.html"
+            fname.write_text(html, encoding="utf-8")
+            # Удаляем старые файлы, оставляем 30 последних
+            files = sorted(reports_dir.glob("subscribers_*.html"))
+            for old in files[:-30]:
+                old.unlink(missing_ok=True)
+        except Exception:
+            pass  # не критично — не прерываем основной поток
+
     def _parse_and_apply_history(self, html: str) -> None:
         """Парсит HTML-отчёт подписчиков и обновляет таблицу с дельтой."""
+        self._save_report_to_disk(html)
         try:
             from bs4 import BeautifulSoup
             soup = BeautifulSoup(html, "html.parser")
