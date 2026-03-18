@@ -2,8 +2,8 @@
 stats_panel.py — Панель «Статистика групп» MAX POST.
 
 Загружает данные о группах напрямую через GREEN-API (независимо от внешнего сервера):
-  - lastIncomingMessages → время последней активности (1 запрос на все группы)
-  - getGroupData          → название + кол-во участников (~190 запросов батчами)
+  - getChatHistory (count=1) → время последней активности (1 запрос на группу, кэш 6 ч)
+  - getGroupData             → название + кол-во участников (~190 запросов батчами, кэш 1 ч)
 """
 from __future__ import annotations
 
@@ -34,8 +34,8 @@ _log = logging.getLogger(__name__)
 
 _AUTO_REFRESH_MS        = 5 * 60 * 1000   # авто-обновление каждые 5 минут
 _REQUEST_DELAY          = 1.1             # секунд между запросами (лимит GREEN-API: 1 req/s)
-_ACTIVITY_WINDOW_MIN    = 10080           # 7 дней в минутах для lastIncomingMessages
-_GROUP_CACHE_TTL        = 3600            # секунд — как долго кэшируем данные группы (1 час)
+_GROUP_CACHE_TTL        = 3600            # секунд — кэш названия/участников группы (1 час)
+_ACTIVITY_CACHE_TTL     = 6 * 3600       # секунд — кэш последней активности группы (6 часов)
 
 # Индексы колонок таблицы
 _COL_NAME    = 0
@@ -172,38 +172,7 @@ class _FetchWorker(QThread):
             self.failed.emit(f"В файле {excel_path.name} не найдены ID групп (колонка «ID»).")
             return
 
-        # ── 2. Получаем активность одним запросом ────────────────
-        self.progress.emit("Получение активности групп…")
-        last_activity: dict[str, int] = {}   # chat_id → unix-timestamp
-        try:
-            url  = (
-                f"{api_url}/waInstance{id_inst}/lastIncomingMessages/{api_token}"
-                f"?minutes={_ACTIVITY_WINDOW_MIN}"
-            )
-            resp = requests.get(url, timeout=30)
-            if resp.ok:
-                msgs = resp.json()
-                if isinstance(msgs, list):
-                    # Логируем первые chatId для диагностики формата
-                    sample = [m.get("chatId", "") for m in msgs[:3]]
-                    _log.debug("lastIncomingMessages sample chatIds: %s", sample)
-                    for msg in msgs:
-                        cid = str(msg.get("chatId", "")).strip()
-                        # Обрезаем суффикс @g.us / @MAX / и т.п.
-                        if "@" in cid:
-                            cid = cid.split("@")[0]
-                        ts  = msg.get("timestamp", 0)
-                        if cid and ts and ts > last_activity.get(cid, 0):
-                            last_activity[cid] = ts
-                    _log.debug(
-                        "lastIncomingMessages: %d сообщений, %d уникальных групп",
-                        len(msgs), len(last_activity)
-                    )
-        except Exception as exc:
-            _log.warning("lastIncomingMessages error: %s", exc)
-            # Не критично — продолжаем без данных об активности
-
-        # ── 3. Загружаем данные групп (умный кэш + 1 req/s) ─────
+        # ── 2. Загружаем данные групп (умный кэш + 1 req/s) ─────
         _, _, _, group_cache = _load_cache()
         now_ts  = int(time.time())
         rows: list[dict] = []
@@ -215,24 +184,31 @@ class _FetchWorker(QThread):
         for k in stale_keys:
             del group_cache[k]
 
-        # Считаем сколько групп нужно запросить (не в кэше или кэш устарел)
+        # Считаем сколько запросов нужно (не в кэше или кэш устарел)
         need_fetch = sum(
             1 for cid, _, _ in entries
             if now_ts - group_cache.get(cid, {}).get("cached_at", 0) > _GROUP_CACHE_TTL
         )
+        need_activity = sum(
+            1 for cid, _, _ in entries
+            if now_ts - group_cache.get(cid, {}).get("activity_cached_at", 0) > _ACTIVITY_CACHE_TTL
+        )
+        total_requests = need_fetch + need_activity
         from_cache = total - need_fetch
         if from_cache > 0:
-            est_min = round(need_fetch * _REQUEST_DELAY / 60, 1)
+            est_min = round(total_requests * _REQUEST_DELAY / 60, 1)
             self.progress.emit(
                 f"Загрузка {need_fetch} групп (~{est_min} мин), "
-                f"{from_cache} из кэша…  0 / {need_fetch}"
+                f"{from_cache} из кэша…  0 / {total_requests}"
             )
         else:
-            est_min = round(total * _REQUEST_DELAY / 60, 1)
-            self.progress.emit(f"Загрузка {total} групп (~{est_min} мин)…  0 / {total}")
+            est_min = round(total_requests * _REQUEST_DELAY / 60, 1)
+            self.progress.emit(f"Загрузка {total} групп (~{est_min} мин)…  0 / {total_requests}")
 
         fetched = 0   # счётчик реальных запросов (не кэш)
         first_request = True
+        url_group    = f"{api_url}/waInstance{id_inst}/getGroupData/{api_token}"
+        url_history  = f"{api_url}/waInstance{id_inst}/getChatHistory/{api_token}"
 
         for chat_id, link, address in entries:
             if self._stop:
@@ -251,23 +227,23 @@ class _FetchWorker(QThread):
                 first_request = False
                 fetched += 1
                 self.progress.emit(
-                    f"Загрузка групп… {fetched} / {need_fetch}"
+                    f"Загрузка групп… {fetched} / {total_requests}"
                     + (f"  (кэш: {from_cache})" if from_cache > 0 else "")
                 )
 
-                url = f"{api_url}/waInstance{id_inst}/getGroupData/{api_token}"
                 name    = address
                 members = "—"   # нет доступа по умолчанию
                 for attempt in range(2):
                     try:
                         resp = requests.post(
-                            url, json={"chatId": chat_id}, timeout=20
+                            url_group, json={"chatId": chat_id}, timeout=20
                         )
                         if resp.ok:
                             data    = resp.json()
                             name    = data.get("subject") or address
                             members = str(data.get("size", 0))
                             group_cache[chat_id] = {
+                                **group_cache.get(chat_id, {}),
                                 "name":      name,
                                 "members":   members,
                                 "cached_at": now_ts,
@@ -286,10 +262,39 @@ class _FetchWorker(QThread):
                         members = "~"   # сетевая ошибка
                         break
 
-            ts         = last_activity.get(chat_id)
+            # ── getChatHistory: последнее сообщение (кэш 6 ч) ────
+            cached = group_cache.get(chat_id, {})
+            activity_age = now_ts - cached.get("activity_cached_at", 0)
+            if members not in ("—",) and activity_age > _ACTIVITY_CACHE_TTL:
+                if not first_request:
+                    time.sleep(_REQUEST_DELAY)
+                first_request = False
+                fetched += 1
+                self.progress.emit(
+                    f"Загрузка активности… {fetched} / {total_requests}"
+                    + (f"  (кэш: {from_cache})" if from_cache > 0 else "")
+                )
+                try:
+                    resp = requests.post(
+                        url_history,
+                        json={"chatId": chat_id, "count": 1},
+                        timeout=20,
+                    )
+                    if resp.ok:
+                        history = resp.json()
+                        ts_val = history[0].get("timestamp", 0) if isinstance(history, list) and history else 0
+                        group_cache.setdefault(chat_id, {})["last_activity"] = ts_val
+                        group_cache[chat_id]["activity_cached_at"] = now_ts
+                        _log.debug("getChatHistory %s: ts=%s", chat_id, ts_val)
+                    else:
+                        _log.debug("getChatHistory %s: HTTP %d", chat_id, resp.status_code)
+                except Exception as exc:
+                    _log.warning("getChatHistory %s: %s", chat_id, exc)
+
+            ts         = group_cache.get(chat_id, {}).get("last_activity")
             last_event = (
                 datetime.fromtimestamp(ts).strftime("%d.%m.%Y %H:%M")
-                if ts else "Нет активности"
+                if ts else "Нет данных"
             )
             if members == "—":
                 last_event = "Нет доступа"

@@ -1,9 +1,9 @@
-"""Диалог настроек подключений (токены MAX, ВКонтакте, Telegram)."""
+"""Диалог настроек подключений (токены MAX, ВКонтакте)."""
 import re
 from pathlib import Path
 
 from dotenv import load_dotenv
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -95,6 +95,15 @@ class _SecretEdit(QWidget):
         return self._edit.text()
 
 
+def _hint_label(text: str) -> QLabel:
+    lbl = QLabel(text)
+    lbl.setStyleSheet("color: #888; font-size: 11px;")
+    lbl.setWordWrap(True)
+    lbl.setOpenExternalLinks(True)
+    lbl.setTextFormat(Qt.TextFormat.RichText)
+    return lbl
+
+
 class SettingsDialog(QDialog):
     """Диалог настроек подключений."""
 
@@ -103,7 +112,7 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Настройки подключений")
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(520)
 
         vals = _read_env()
 
@@ -121,6 +130,13 @@ class SettingsDialog(QDialog):
         self._max_token = _SecretEdit(vals.get("MAX_API_TOKEN", ""))
         max_form.addRow("ID инстанса:", self._max_instance)
         max_form.addRow("API токен:", self._max_token)
+        max_form.addRow(
+            "", _hint_label(
+                "Получить данные: личный кабинет "
+                "<a href='https://console.green-api.com/'>console.green-api.com</a> "
+                "→ выберите инстанс → скопируйте ID и API токен."
+            )
+        )
 
         # ── ВКонтакте ────────────────────────────────────────────
         vk_group = QGroupBox("ВКонтакте")
@@ -134,20 +150,19 @@ class SettingsDialog(QDialog):
         vk_form.addRow("ID группы:", self._vk_group_id)
         vk_form.addRow("Токен группы:", self._vk_group_token)
         vk_form.addRow("Токен пользователя:", self._vk_user_token)
-
-        # ── Telegram ─────────────────────────────────────────────
-        tg_group = QGroupBox("Telegram (уведомления)")
-        tg_form = QFormLayout(tg_group)
-        tg_form.setContentsMargins(12, 8, 12, 12)
-        tg_form.setSpacing(8)
-        self._tg_bot_token = _SecretEdit(vals.get("TG_BOT_TOKEN", ""))
-        self._tg_chat_id = QLineEdit(vals.get("TG_CHAT_ID", ""))
-        tg_form.addRow("Bot Token:", self._tg_bot_token)
-        tg_form.addRow("Chat ID:", self._tg_chat_id)
+        vk_form.addRow(
+            "", _hint_label(
+                "<b>Токен группы</b> (для постов от имени группы): "
+                "vk.com → Управление → API → Создать ключ доступа.<br>"
+                "<b>Токен пользователя</b> (для личных сообщений): "
+                "vk.com → Настройки → Безопасность → Авторизованные приложения, "
+                "или получить через <a href='https://vkhost.github.io/'>vkhost.github.io</a> "
+                "(права: messages, wall, groups)."
+            )
+        )
 
         layout.addWidget(max_group)
         layout.addWidget(vk_group)
-        layout.addWidget(tg_group)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel
@@ -169,10 +184,6 @@ class SettingsDialog(QDialog):
         if vk_id and not re.fullmatch(r"\d+", vk_id):
             return "VK ID группы — только цифры (например: 236573184)"
 
-        tg_chat = self._tg_chat_id.text().strip()
-        if tg_chat and not re.fullmatch(r"-?\d+", tg_chat):
-            return "Telegram Chat ID — только цифры (например: -100123456789)"
-
         max_instance = self._max_instance.text().strip()
         if max_instance and not re.fullmatch(r"\d+", max_instance):
             return "MAX ID инстанса — только цифры (например: 3100545725)"
@@ -191,8 +202,6 @@ class SettingsDialog(QDialog):
             "VK_GROUP_ID":      self._vk_group_id.text().strip(),
             "VK_GROUP_TOKEN":   self._vk_group_token.text().strip(),
             "VK_USER_TOKEN":    self._vk_user_token.text().strip(),
-            "TG_BOT_TOKEN":     self._tg_bot_token.text().strip(),
-            "TG_CHAT_ID":       self._tg_chat_id.text().strip(),
         })
         load_dotenv(get_env_path(), override=True)
         self.settings_saved.emit()

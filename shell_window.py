@@ -283,6 +283,22 @@ class _SideBar(QFrame):
         self.btn_qr    = _SideButton(_assets("qr.ico"),       "QR Generator — генератор карточек", "QR")
         self.btn_stats = _SideButton(_assets("state.ico"),    "Статистика групп",                  "📊")
         self.btn_mkd   = _SideButton(_assets("mkd.ico"),      "МКД — в разработке",                "МКД")
+
+        # ВКонтакте — кнопка с бейджем непрочитанных
+        self._vk_container = QWidget(self)
+        self._vk_container.setFixedSize(60, 60)
+        self.btn_vk = _SideButton(_assets("vk_2.ico"), "Сообщения ВКонтакте", "VK")
+        self.btn_vk.setParent(self._vk_container)
+        self.btn_vk.setGeometry(0, 0, 60, 60)
+        self._vk_badge = QLabel("", self._vk_container)
+        self._vk_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._vk_badge.setFixedSize(18, 18)
+        self._vk_badge.setStyleSheet(
+            "background:#e74c3c; color:white; border-radius:9px; font-size:10px; font-weight:bold;"
+        )
+        self._vk_badge.move(38, 4)
+        self._vk_badge.setVisible(False)
+
         layout.addWidget(self.btn_max)
         layout.addSpacing(8)
         layout.addWidget(self.btn_qr)
@@ -290,6 +306,8 @@ class _SideBar(QFrame):
         layout.addWidget(self.btn_stats)
         layout.addSpacing(8)
         layout.addWidget(self.btn_mkd)
+        layout.addSpacing(8)
+        layout.addWidget(self._vk_container)
 
         layout.addStretch()
 
@@ -326,7 +344,15 @@ class _SideBar(QFrame):
         self._group.addButton(self.btn_max,   0)
         self._group.addButton(self.btn_qr,    1)
         self._group.addButton(self.btn_stats, 2)
+        self._group.addButton(self.btn_vk,    3)
         self.btn_max.setChecked(True)
+
+    def set_vk_badge(self, count: int) -> None:
+        if count > 0:
+            self._vk_badge.setText(str(min(count, 99)))
+            self._vk_badge.setVisible(True)
+        else:
+            self._vk_badge.setVisible(False)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -378,6 +404,17 @@ class ShellWindow(QMainWindow):
             self._stats_panel.setAlignment(Qt.AlignmentFlag.AlignCenter)  # type: ignore[union-attr]
             self._stats_panel.setStyleSheet("color:#888; font-size:14px; background:#f3f4f6;")  # type: ignore[union-attr]
 
+        # ── Инициализируем панель VK-сообщений ─────────────────
+        try:
+            from vk_messages_panel import VkMessagesPanel
+            self._vk_panel = VkMessagesPanel()
+            self._vk_available = True
+        except Exception as e:
+            self._vk_panel = QLabel(f"VK Сообщения недоступны:\n{e}")
+            self._vk_panel.setAlignment(Qt.AlignmentFlag.AlignCenter)  # type: ignore[union-attr]
+            self._vk_panel.setStyleSheet("color:#888; font-size:14px; background:#1e1e2e;")  # type: ignore[union-attr]
+            self._vk_available = False
+
         # ── FadeStack ───────────────────────────────────────────
         self._stack = _FadeStack()
 
@@ -389,6 +426,7 @@ class ShellWindow(QMainWindow):
         self._stack.addWidget(max_widget)        # index 0
         self._stack.addWidget(qr_widget)         # index 1
         self._stack.addWidget(self._stats_panel) # index 2
+        self._stack.addWidget(self._vk_panel)    # index 3
 
         # ── Компоновка ──────────────────────────────────────────
         self._sidebar = _SideBar()
@@ -407,6 +445,9 @@ class ShellWindow(QMainWindow):
         self._sidebar.btn_auth.clicked.connect(self._open_settings_dialog)
         self._sidebar.btn_mkd.clicked.connect(self._show_mkd_coming_soon)
         self._sidebar.btn_stats.clicked.connect(self._on_stats_clicked)
+        self._sidebar.btn_vk.clicked.connect(self._on_vk_clicked)
+        if self._vk_available:
+            self._vk_panel.unread_changed.connect(self._sidebar.set_vk_badge)  # type: ignore[union-attr]
 
         # ── Тёмная тема — восстанавливаем состояние ─────────────
         prefs = _load_ui_prefs()
@@ -488,6 +529,11 @@ class ShellWindow(QMainWindow):
     def _on_stats_clicked(self) -> None:
         """Переключает на панель статистики."""
         self._stack.switch_to(2)
+
+    # ──────────────────────────────────────────────────────────
+    def _on_vk_clicked(self) -> None:
+        """Переключает на панель VK-сообщений."""
+        self._stack.switch_to(3)
 
     # ──────────────────────────────────────────────────────────
     def _show_mkd_coming_soon(self) -> None:
