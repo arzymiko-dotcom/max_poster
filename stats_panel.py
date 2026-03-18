@@ -52,7 +52,8 @@ _ACTIVITY_CACHE_TTL     = 6 * 3600       # секунд — кэш послед�
 _COL_NAME    = 0
 _COL_MEMBERS = 1
 _COL_TIME    = 2
-_COL_LINK    = 3
+_COL_DELTA   = 3
+_COL_LINK    = 4
 
 
 def _extract_chat_id(raw: str) -> str:
@@ -389,6 +390,8 @@ class StatsPanel(QWidget):
         self._all_rows: list[dict] = []
         self._missing_rows: list[dict] = []
         self._dead_only: bool = False
+        self._history_data: dict   = {}   # name_key → {delta, latest, oldest}
+        self._history_period: str  = ""
         self._period_days: int = 0
         self._last_refresh: datetime | None = None
 
@@ -486,6 +489,13 @@ class StatsPanel(QWidget):
         self._export_btn.clicked.connect(self._export_excel)
         hdr.addWidget(self._export_btn)
 
+        self._history_btn = QPushButton("📊 История")
+        self._history_btn.setObjectName("statsHistoryBtn")
+        self._history_btn.setFixedHeight(32)
+        self._history_btn.setToolTip("Загрузить HTML-отчёт «История подписчиков»")
+        self._history_btn.clicked.connect(self._load_subscriber_history)
+        hdr.addWidget(self._history_btn)
+
         self._refresh_btn = QPushButton("⟳  Обновить")
         self._refresh_btn.setObjectName("statsRefreshBtn")
         self._refresh_btn.setFixedHeight(32)
@@ -518,6 +528,12 @@ class StatsPanel(QWidget):
         self._cache_banner.setWordWrap(True)
         self._cache_banner.hide()
         smart_layout.addWidget(self._cache_banner)
+
+        self._history_banner = QLabel()
+        self._history_banner.setObjectName("statsHistoryBanner")
+        self._history_banner.setWordWrap(True)
+        self._history_banner.hide()
+        smart_layout.addWidget(self._history_banner)
 
         # ── Прогресс-бар загрузки (скрыт по умолчанию) ──────────
         self._progress_bar = QProgressBar()
@@ -569,17 +585,19 @@ class StatsPanel(QWidget):
         smart_layout.addLayout(search_row)
 
         # ── Таблица ───────────────────────────────────────────────
-        self._table = QTableWidget(0, 4)
+        self._table = QTableWidget(0, 5)
         self._table.setObjectName("statsTable")
         self._table.setHorizontalHeaderLabels(
-            ["Название", "Участников", "Последняя активность", "Ссылка"]
+            ["Название", "Участников", "Последняя активность", "Δ Подписчики", "Ссылка"]
         )
         self._table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
         self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Fixed)
+        self._table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self._table.setColumnWidth(1, 110)
         self._table.setColumnWidth(2, 180)
+        self._table.setColumnWidth(3, 110)
         self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
@@ -760,10 +778,12 @@ class StatsPanel(QWidget):
         self._table.insertRow(row_idx)
         name_item = QTableWidgetItem(row["name"])
         name_item.setData(Qt.ItemDataRole.UserRole, row.get("chat_id", ""))
+        delta_item = self._make_delta_item(row["name"])
         items = [
             name_item,
             _NumItem(members),
             QTableWidgetItem(t_event),
+            delta_item,
             QTableWidgetItem(row["link"]),
         ]
         for col, item in enumerate(items):
@@ -773,6 +793,38 @@ class StatsPanel(QWidget):
             self._table.setItem(row_idx, col, item)
 
         self._table.setSortingEnabled(was_sorting)
+
+    @staticmethod
+    def _history_key(name: str) -> str:
+        """Нормализованный ключ для сопоставления с историей подписчиков."""
+        import unicodedata
+        s = unicodedata.normalize("NFC", name.strip().lower())
+        return " ".join(s.split())
+
+    def _make_delta_item(self, name: str) -> QTableWidgetItem:
+        """Создаёт ячейку Δ Подписчики для строки таблицы."""
+        key  = self._history_key(name)
+        info = self._history_data.get(key)
+        if info is None:
+            item = _NumItem("—")
+            item.setForeground(QColor("#9ca3af"))
+            return item
+        delta = info["delta"]
+        if delta > 0:
+            text = f"+{delta}"
+            color = QColor("#22c55e")
+        elif delta < 0:
+            text = str(delta)
+            color = QColor("#ef4444")
+        else:
+            text = "="
+            color = QColor("#9ca3af")
+        item = _NumItem(text)
+        item.setForeground(color)
+        font = QFont()
+        font.setBold(True)
+        item.setFont(font)
+        return item
 
     def _update_summary_labels(self) -> None:
         """Обновляет цифры сводки по текущему _all_rows."""
@@ -985,10 +1037,12 @@ class StatsPanel(QWidget):
 
             name_item = QTableWidgetItem(name)
             name_item.setData(Qt.ItemDataRole.UserRole, r.get("chat_id", ""))
+            delta_item = self._make_delta_item(name)
             items: list[QTableWidgetItem] = [
                 name_item,
                 _NumItem(members),
                 QTableWidgetItem(t_event),
+                delta_item,
                 QTableWidgetItem(link),
             ]
             for col, item in enumerate(items):
@@ -1070,8 +1124,14 @@ class StatsPanel(QWidget):
             QMessageBox.warning(self, "Экспорт", "Библиотека openpyxl не установлена.")
             return
 
+        # Имя файла включает период и дату
+        period_file_labels = {0: "все", 1: "день", 7: "неделя", 30: "месяц"}
+        period_file = period_file_labels.get(self._period_days, "все")
+        date_str    = datetime.now().strftime("%Y%m%d_%H%M")
+        default_name = f"статистика_групп_{period_file}_{date_str}.xlsx"
+
         path, _ = QFileDialog.getSaveFileName(
-            self, "Сохранить статистику", "статистика_групп.xlsx", "Excel (*.xlsx)"
+            self, "Сохранить статистику", default_name, "Excel (*.xlsx)"
         )
         if not path:
             return
@@ -1119,7 +1179,8 @@ class StatsPanel(QWidget):
             data_start_row = 2
 
         # ── Заголовки таблицы ─────────────────────────────────────
-        headers    = ["Название", "Участников", "Последняя активность", "Ссылка"]
+        headers    = ["Название", "Участников", "Последняя активность",
+                      "Δ Подписчики", "Ссылка"]
         header_font = Font(bold=True, size=11)
         header_fill = PatternFill("solid", fgColor="F1F5F9")
         for col_idx, hdr in enumerate(headers, 1):
@@ -1130,7 +1191,7 @@ class StatsPanel(QWidget):
 
         # ── Данные из таблицы (отфильтрованные строки) ────────────
         for row_idx in range(row_count):
-            for col_idx in range(4):
+            for col_idx in range(5):
                 item  = self._table.item(row_idx, col_idx)
                 value = item.text() if item else ""
                 ws.cell(row=data_start_row + 1 + row_idx, column=col_idx + 1, value=value)
@@ -1148,10 +1209,121 @@ class StatsPanel(QWidget):
 
         try:
             wb.save(path)
-            self._status_lbl.setText(f"Экспортировано {row_count} строк → {path}")
         except Exception as exc:
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Экспорт", f"Ошибка сохранения: {exc}")
+            return
+
+        self._status_lbl.setText(f"✅  Экспортировано {row_count} строк → {Path(path).name}")
+
+        # Всплывающее уведомление с кнопкой «Открыть»
+        from PyQt6.QtWidgets import QMessageBox
+        mb = QMessageBox(self)
+        mb.setWindowTitle("Экспорт завершён")
+        mb.setText(f"Файл сохранён:\n{Path(path).name}")
+        mb.setInformativeText(f"Строк: {row_count}  ·  Период: {period_str}")
+        mb.setIcon(QMessageBox.Icon.Information)
+        open_btn = mb.addButton("📂  Открыть файл", QMessageBox.ButtonRole.ActionRole)
+        mb.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+        mb.exec()
+        if mb.clickedButton() == open_btn:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    def _load_subscriber_history(self) -> None:
+        """Загружает HTML-отчёт «История подписчиков» и добавляет колонку Δ."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Загрузить историю подписчиков", "",
+            "HTML файлы (*.html *.htm);;Все файлы (*)"
+        )
+        if not path:
+            return
+
+        try:
+            from bs4 import BeautifulSoup
+            html = Path(path).read_text(encoding="utf-8", errors="replace")
+            soup = BeautifulSoup(html, "html.parser")
+
+            # Заголовок периода
+            period_text = ""
+            for p in soup.find_all("p"):
+                if "Период" in p.get_text():
+                    period_text = p.get_text(strip=True)
+                    break
+
+            table = soup.find("table")
+            if not table:
+                raise ValueError("Таблица не найдена в файле")
+
+            rows = table.find_all("tr")
+            history: dict = {}
+            skip_classes = {"average-row", "total-row"}
+
+            for tr in rows[1:]:
+                tr_classes = set(tr.get("class", []))
+                if tr_classes & skip_classes:
+                    continue
+                tds = tr.find_all("td")
+                if len(tds) < 4:
+                    continue
+
+                name = tds[1].get_text(strip=True)
+                if not name:
+                    continue
+
+                values: list[int | None] = []
+                for td in tds[3:]:
+                    text = td.get_text(strip=True)
+                    try:
+                        values.append(int(text))
+                    except ValueError:
+                        values.append(None)
+
+                non_null = [v for v in values if v is not None]
+                if not non_null:
+                    continue
+
+                latest = non_null[0]
+                oldest = non_null[-1]
+                delta  = latest - oldest
+
+                key = self._history_key(name)
+                history[key] = {
+                    "name":   name,
+                    "latest": latest,
+                    "oldest": oldest,
+                    "delta":  delta,
+                }
+
+            self._history_data   = history
+            self._history_period = period_text
+
+            # Обновляем баннер
+            matched = sum(
+                1 for r in self._all_rows
+                if self._history_key(r["name"]) in history
+            )
+            grew    = sum(1 for v in history.values() if v["delta"] > 0)
+            shrank  = sum(1 for v in history.values() if v["delta"] < 0)
+            total_delta = sum(v["delta"] for v in history.values())
+            sign = "+" if total_delta >= 0 else ""
+            self._history_banner.setText(
+                f"📊  История загружена · {period_text}  ·  "
+                f"групп в файле: {len(history)}  ·  совпало: {matched}  ·  "
+                f"растут: {grew}  ↑   падают: {shrank}  ↓   "
+                f"итого: {sign}{total_delta:,}".replace(",", "\u00a0")
+            )
+            self._history_banner.show()
+            self._history_btn.setText("📊 История ✓")
+
+            # Перерисовываем таблицу с дельтой
+            self._apply_filter()
+            self._status_lbl.setText(
+                f"История подписчиков загружена: {len(history)} групп · {matched} совпало"
+            )
+
+        except Exception as exc:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Ошибка загрузки истории", str(exc))
 
     # ── Тема / закрытие ──────────────────────────────────────────
 
@@ -1237,6 +1409,16 @@ class StatsPanel(QWidget):
                     background: #3a2a00; border: 1px solid #78580a;
                     border-radius: 7px; padding: 6px 12px;
                 }
+                QLabel#statsHistoryBanner {
+                    font-size: 12px; font-weight: 600; color: #4ade80;
+                    background: #0a2a1a; border: 1px solid #166534;
+                    border-radius: 7px; padding: 6px 12px;
+                }
+                QPushButton#statsHistoryBtn {
+                    min-height: 0; font-size: 13px; font-weight: 600; padding: 4px 14px;
+                    border-radius: 7px; border: 1px solid #1a3a5a; background: #0f2a40; color: #60a5fa;
+                }
+                QPushButton#statsHistoryBtn:hover { background: #1a3a5a; border-color: #3b82f6; }
                 QProgressBar#statsProgressBar {
                     border: none; border-radius: 3px; background: #2d2d45;
                 }
@@ -1318,6 +1500,16 @@ class StatsPanel(QWidget):
                 background: #fef3c7; border: 1px solid #fcd34d;
                 border-radius: 7px; padding: 6px 12px;
             }
+            QLabel#statsHistoryBanner {
+                font-size: 12px; font-weight: 600; color: #15803d;
+                background: #f0fdf4; border: 1px solid #86efac;
+                border-radius: 7px; padding: 6px 12px;
+            }
+            QPushButton#statsHistoryBtn {
+                min-height: 0; font-size: 13px; font-weight: 600; padding: 4px 14px;
+                border-radius: 7px; border: 1px solid #bfdbfe; background: #eff6ff; color: #1d4ed8;
+            }
+            QPushButton#statsHistoryBtn:hover { background: #dbeafe; border-color: #3b82f6; }
             QProgressBar#statsProgressBar {
                 border: none; border-radius: 3px; background: #e2e8f0;
             }
