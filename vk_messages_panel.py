@@ -1134,6 +1134,7 @@ class VkMessagesPanel(QWidget):
         self._reload_timer = QTimer(self)
         self._reload_timer.setSingleShot(True)
         self._reload_timer.timeout.connect(self._reload_history_for_current)
+        QApplication.instance().aboutToQuit.connect(self._stop_all_workers)
 
     # ── UI ──────────────────────────────────────────────────────────────────
 
@@ -1342,6 +1343,7 @@ class VkMessagesPanel(QWidget):
             worker.wait(2000)
 
     def _stop_all_workers(self):
+        self._reload_timer.stop()
         self._stop_longpoll()
         self._stop_worker(self._conv_worker)
         self._stop_worker(self._history_worker)
