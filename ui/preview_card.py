@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QSize, Qt, QTimer
 from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QFrame,
@@ -78,6 +78,10 @@ class PreviewCard(QFrame):
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._original_pixmap = QPixmap()
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(50)
+        self._resize_timer.timeout.connect(self._refresh_pixmap)
         self._apply_placeholder_style()
 
         # ── Текст поста ───────────────────────────────────────────────
@@ -170,7 +174,7 @@ class PreviewCard(QFrame):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._refresh_pixmap()
+        self._resize_timer.start()  # дебаунс 50 мс — не пересчитываем на каждый пиксель
 
     def _adjust_text_height(self) -> None:
         doc_h = int(self.preview_text.document().size().height()) + 20

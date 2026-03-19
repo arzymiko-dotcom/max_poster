@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -39,6 +40,7 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QStyledItemDelegate,
     QSlider,
+    QSystemTrayIcon,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -64,7 +66,7 @@ from ui.emoji_picker import EmojiPicker
 from ui.background import _BgWidget
 from ui.animations import SuccessOverlay
 from ui.preview_card import PreviewCard
-from ui.dialogs import ThemePickerDialog, FontPickerDialog, AddAddressDialog
+from ui.dialogs import ThemePickerDialog, FontPickerDialog, AddAddressDialog, VkEditDialog
 from ui.styles import get_stylesheet
 from constants import (
     PARSE_DEBOUNCE_MS,
@@ -113,6 +115,7 @@ class SendWorker(QThread):
         self.send_max = send_max
         self.send_vk = send_vk
         self._cancelled = False
+        self.vk_post_id: int | None = None  # заполняется в run() при успешной отправке в ВК
 
     def cancel(self) -> None:
         """Запрашивает отмену — поток остановится после текущей отправки."""
@@ -165,8 +168,68 @@ class SendWorker(QThread):
             lines.append(f"ВК: {r.message}")
             if not r.success:
                 success = False
+            elif r.post_id:
+                self.vk_post_id = r.post_id
 
         self.result_ready.emit(success, "\n".join(lines))
+
+
+class VkScheduleWorker(QThread):
+    """Регистрирует отложенный пост на стороне ВКонтакте (wall.post с publish_date).
+    После успеха ВК сам опубликует пост в нужное время — программа может быть выключена.
+    """
+    done = pyqtSignal(bool, str)  # (success, message)
+
+    def __init__(self, vk_sender: "VkSender", text: str, image_path: "str | None",
+                 publish_date: int, parent=None) -> None:
+        super().__init__(parent)
+        self._sender = vk_sender
+        self._text = text
+        self._image_path = image_path
+        self._publish_date = publish_date
+
+    def run(self) -> None:
+        r = self._sender.send_post(
+            text=self._text,
+            image_path=self._image_path,
+            publish_date=self._publish_date,
+        )
+        self.done.emit(r.success, r.message)
+
+
+class VkEditWorker(QThread):
+    """Редактирует пост ВКонтакте в фоновом потоке."""
+    done = pyqtSignal(bool, str)
+
+    def __init__(self, vk_sender: "VkSender", post_id: int,
+                 text: str, image_path: "str | None", parent=None) -> None:
+        super().__init__(parent)
+        self._sender = vk_sender
+        self._post_id = post_id
+        self._text = text
+        self._image_path = image_path
+
+    def run(self) -> None:
+        r = self._sender.edit_post(
+            post_id=self._post_id,
+            text=self._text,
+            image_path=self._image_path,
+        )
+        self.done.emit(r.success, r.message)
+
+
+class VkLoadTextWorker(QThread):
+    """Загружает оригинальный текст поста из ВКонтакте."""
+    done = pyqtSignal(str)  # текст поста (пустая строка при ошибке)
+
+    def __init__(self, vk_sender: "VkSender", post_id: int, parent=None) -> None:
+        super().__init__(parent)
+        self._sender = vk_sender
+        self._post_id = post_id
+
+    def run(self) -> None:
+        text = self._sender.get_post_text(self._post_id)
+        self.done.emit(text)
 
 
 class SendResultDialog(QDialog):
@@ -284,10 +347,12 @@ class MainWindow(QMainWindow):
         self._save_timer.timeout.connect(self._do_save_state)
 
         self.setAcceptDrops(True)
+        self._real_quit = False  # True → полное закрытие; False → сворачивание в трей
 
         self._build_menu()
         self._build_ui()
         self._apply_styles()
+        self._setup_tray()
         self.load_state()
         # Загружаем шрифты и применяем сохранённый шрифт после показа окна
         QTimer.singleShot(0, self._deferred_font_load)
@@ -355,7 +420,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
 
         exit_action = QAction("Выход", self)
-        exit_action.triggered.connect(self.close)
+        exit_action.triggered.connect(self._quit_app)
         file_menu.addAction(exit_action)
 
         check_action = QAction("Проверить адрес", self)
@@ -453,8 +518,13 @@ class MainWindow(QMainWindow):
         bb_layout.addStretch()
         bb_layout.addWidget(right_bar)
 
+        self.text_input.setPlaceholderText(
+            "Введите текст объявления…\n\nАдрес будет найден автоматически"
+        )
+
         text_container = QFrame()
         text_container.setObjectName("textContainer")
+        self._text_container = text_container
         tc_layout = QVBoxLayout(text_container)
         tc_layout.setContentsMargins(0, 0, 0, 0)
         tc_layout.setSpacing(0)
@@ -507,7 +577,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(self._addr_search_results)
 
         # Таймер debounce для поиска (300 мс)
-        self._addr_search_timer = QTimer()
+        self._addr_search_timer = QTimer(self)
         self._addr_search_timer.setSingleShot(True)
         self._addr_search_timer.timeout.connect(self._do_addr_search)
 
@@ -577,13 +647,16 @@ class MainWindow(QMainWindow):
 
         self.check_button = QPushButton("Проверить адрес")
         self.check_button.clicked.connect(self.check_post)
+        self.check_button.setToolTip("Найти адреса из текста в реестре Excel")
 
         self.photo_button = QPushButton("Загрузить фото")
         self.photo_button.clicked.connect(self.select_image)
+        self.photo_button.setToolTip("Выбрать фото (Ctrl+L)")
 
         self.send_button = QPushButton("Опубликовать")
         self.send_button.clicked.connect(self.send_post)
         self.send_button.setObjectName("primaryButton")
+        self.send_button.setToolTip("Опубликовать пост (Ctrl+Return)")
 
         # Row 0: вспомогательные кнопки
         buttons_row.addWidget(self.check_button, 0, 0)
@@ -639,8 +712,27 @@ class MainWindow(QMainWindow):
         sched_fl.addWidget(self._chk_schedule)
         sched_fl.addWidget(self._sched_widget, 1)
         buttons_row.addWidget(sched_frame, 1, 0, 1, 2)
-        # Row 2: кнопка отправки на всю ширину
-        buttons_row.addWidget(self.send_button, 2, 0, 1, 2)
+
+        # Row 2: подсказка про режим отложенной публикации (скрыта пока "Отложить" не выбрано)
+        self._sched_hint_lbl = QLabel()
+        self._sched_hint_lbl.setObjectName("schedHintLbl")
+        self._sched_hint_lbl.setWordWrap(True)
+        self._sched_hint_lbl.hide()
+        buttons_row.addWidget(self._sched_hint_lbl, 2, 0, 1, 2)
+
+        # Row 3: кнопка отправки / кнопка отмены (переключаются)
+        self._cancel_button = QPushButton("✕  Отменить отправку")
+        self._cancel_button.setObjectName("cancelSendBtn")
+        self._cancel_button.hide()
+        self._cancel_button.clicked.connect(self._cancel_send)
+
+        send_area = QFrame()
+        sa_layout = QVBoxLayout(send_area)
+        sa_layout.setContentsMargins(0, 0, 0, 0)
+        sa_layout.setSpacing(0)
+        sa_layout.addWidget(self.send_button)
+        sa_layout.addWidget(self._cancel_button)
+        buttons_row.addWidget(send_area, 3, 0, 1, 2)
 
         left_layout.addWidget(platforms_section)
 
@@ -652,20 +744,8 @@ class MainWindow(QMainWindow):
         self._progress_bar.setTextVisible(False)
         self._progress_bar.hide()
 
-        self._cancel_button = QPushButton("✕  Отмена")
-        self._cancel_button.setObjectName("cancelSendBtn")
-        self._cancel_button.setFixedHeight(22)
-        self._cancel_button.hide()
-        self._cancel_button.clicked.connect(self._cancel_send)
-
-        progress_row = QHBoxLayout()
-        progress_row.setContentsMargins(0, 0, 0, 0)
-        progress_row.setSpacing(8)
-        progress_row.addWidget(self._progress_bar, 1)
-        progress_row.addWidget(self._cancel_button)
-
         left_layout.addLayout(buttons_row)
-        left_layout.addLayout(progress_row)
+        left_layout.addWidget(self._progress_bar)
 
         version_label = QLabel(f"Version {self._app_version}")
         version_label.setObjectName("versionLabel")
@@ -720,6 +800,8 @@ class MainWindow(QMainWindow):
         self.chk_vk.stateChanged.connect(self._update_checklist)
         self.chk_max.stateChanged.connect(self._sync_preview_avatar)
         self.chk_vk.stateChanged.connect(self._sync_preview_avatar)
+        self.chk_max.stateChanged.connect(lambda _: self._update_sched_hint())
+        self.chk_vk.stateChanged.connect(lambda _: self._update_sched_hint())
 
         # ── История публикаций ───────────────────────────────────────
         right_layout.addWidget(self._build_history_panel())
@@ -772,6 +854,19 @@ class MainWindow(QMainWindow):
 
         scroll.setWidget(self._hist_container)
         outer.addWidget(scroll)
+        self._hist_scroll = scroll
+
+        # Кэшируем иконки один раз
+        _ico_size = QSize(16, 16)
+        def _load_icon(name: str) -> "QPixmap | None":
+            p = _assets_dir() / name
+            if not p.exists():
+                return None
+            pix = QPixmap(str(p))
+            return pix.scaled(_ico_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation) if not pix.isNull() else None
+
+        self._hist_max_pix = _load_icon("max.ico")
+        self._hist_vk_pix = _load_icon("vk.ico")
 
         self._refresh_history()
         return frame
@@ -790,29 +885,22 @@ class MainWindow(QMainWindow):
             self._hist_layout.insertWidget(0, lbl)
             return
 
-        assets = _assets_dir()
-        _ico_size = QSize(16, 16)
-
-        def _load_icon(name: str) -> "QPixmap | None":
-            p = assets / name
-            if not p.exists():
-                return None
-            pix = QPixmap(str(p))
-            return pix.scaled(_ico_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation) if not pix.isNull() else None
-
-        max_pix = _load_icon("max.ico")
-        vk_pix = _load_icon("vk.ico")
+        max_pix = self._hist_max_pix
+        vk_pix = self._hist_vk_pix
 
         for entry in entries:
             row = self._make_history_row(entry, max_pix, vk_pix)
             self._hist_layout.insertWidget(self._hist_layout.count() - 1, row)
+
+        # Прокручиваем к началу (новые записи — вверху)
+        QTimer.singleShot(0, lambda: self._hist_scroll.verticalScrollBar().setValue(0))
 
     def _make_history_row(self, entry: dict, max_pix: "QPixmap | None", vk_pix: "QPixmap | None") -> QFrame:
         row = QFrame()
         status = entry.get("status", "")
         entry_id = entry.get("id", "")
 
-        if status == "scheduled":
+        if status in ("scheduled", "scheduled_vk"):
             row.setObjectName("histEntryScheduled")
         elif status == "publishing":
             row.setObjectName("histEntryPublishing")
@@ -828,7 +916,7 @@ class MainWindow(QMainWindow):
         # Дата/время
         sched_at = entry.get("scheduled_at", "")
         ts = entry.get("ts", "").replace("  ", " ").strip()
-        if status == "scheduled" and sched_at:
+        if status in ("scheduled", "scheduled_vk") and sched_at:
             ts_display = sched_at[:16]
         elif status == "publishing":
             ts_display = "Публикуется…"
@@ -839,8 +927,12 @@ class MainWindow(QMainWindow):
         date_lbl.setObjectName("histDate")
         layout.addWidget(date_lbl)
 
-        # Бейдж "Отложен" для scheduled
-        if status == "scheduled":
+        # Бейдж для отложенных постов
+        if status == "scheduled_vk":
+            badge = QLabel("ВК: в очереди")
+            badge.setObjectName("histBadgeScheduled")
+            layout.addWidget(badge)
+        elif status == "scheduled":
             badge = QLabel("Отложен")
             badge.setObjectName("histBadgeScheduled")
             layout.addWidget(badge)
@@ -879,8 +971,89 @@ class MainWindow(QMainWindow):
             cancel_btn.setToolTip("Отменить отложенный пост")
             cancel_btn.clicked.connect(lambda _=False, eid=entry_id: self._cancel_scheduled(eid))
             layout.addWidget(cancel_btn)
+        elif status == "scheduled_vk" and entry_id:
+            info_lbl = QLabel("отмена — через ВК")
+            info_lbl.setObjectName("histDate")
+            layout.addWidget(info_lbl)
+
+        # Кнопка редактирования — для опубликованных ВК-постов с post_id
+        vk_post_id = entry.get("vk_post_id")
+        if vk_post_id and entry.get("vk") and status not in ("scheduled", "scheduled_vk", "publishing"):
+            edit_btn = QPushButton("✏")
+            edit_btn.setObjectName("histEditBtn")
+            edit_btn.setFixedSize(22, 22)
+            edit_btn.setToolTip("Редактировать пост в ВКонтакте")
+            edit_btn.clicked.connect(
+                lambda _=False, pid=vk_post_id, t=entry.get("text", ""): self._edit_vk_post(pid, t)
+            )
+            layout.addWidget(edit_btn)
+
+        # Информация об отсутствии редактирования для MAX
+        if entry.get("max") and not entry.get("vk") and status not in ("scheduled", "publishing", "failed"):
+            info_btn = QPushButton("ℹ")
+            info_btn.setObjectName("histInfoBtn")
+            info_btn.setFixedSize(22, 22)
+            info_btn.setToolTip("Редактирование MAX")
+            info_btn.clicked.connect(self._show_max_edit_info)
+            layout.addWidget(info_btn)
 
         return row
+
+    # ──────────────────────────────────────────────────────────────────
+    #  Редактирование постов
+    # ──────────────────────────────────────────────────────────────────
+
+    def _edit_vk_post(self, post_id: int, current_text: str) -> None:
+        """Открывает диалог редактирования поста ВКонтакте."""
+        dlg = VkEditDialog(post_id=post_id, current_text=current_text, parent=self)
+        dlg.load_requested.connect(lambda: self._load_vk_post_text(dlg, post_id))
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        new_text = dlg.new_text()
+        if not new_text:
+            QMessageBox.warning(self, "Редактирование", "Текст не может быть пустым.")
+            return
+        image_path = str(dlg.new_image_path()) if dlg.new_image_path() else None
+        worker = VkEditWorker(
+            vk_sender=self.vk_sender,
+            post_id=post_id,
+            text=new_text,
+            image_path=image_path,
+            parent=self,
+        )
+        worker.done.connect(self._on_vk_edit_done)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+        self.send_button.setEnabled(False)
+        self.send_button.setText("Обновление ВК…")
+
+    def _load_vk_post_text(self, dlg: "VkEditDialog", post_id: int) -> None:
+        """Загружает текст поста из ВК и вставляет в диалог."""
+        worker = VkLoadTextWorker(vk_sender=self.vk_sender, post_id=post_id, parent=self)
+        worker.done.connect(lambda text: dlg.set_loaded_text(text) if text else
+                            QMessageBox.warning(dlg, "Ошибка", "Не удалось загрузить текст из ВКонтакте."))
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_vk_edit_done(self, success: bool, message: str) -> None:
+        self.send_button.setEnabled(True)
+        self.send_button.setText("Опубликовать")
+        if success:
+            self._tray_notify("ВКонтакте: пост обновлён ✓", message)
+            QMessageBox.information(self, "Готово", message)
+        else:
+            tg_notify.send_error("Ошибка редактирования ВК", message)
+            QMessageBox.critical(self, "Ошибка", f"Не удалось обновить пост:\n\n{message}")
+
+    def _show_max_edit_info(self) -> None:
+        QMessageBox.information(
+            self, "Редактирование MAX",
+            "Редактирование сообщений в MAX через API не поддерживается.\n\n"
+            "Чтобы исправить пост:\n"
+            "1. Зайдите в группу MAX вручную\n"
+            "2. Удалите старое сообщение\n"
+            "3. Отправьте исправленную версию через программу",
+        )
 
     def _clear_history(self) -> None:
         history_manager.clear()
@@ -934,7 +1107,12 @@ class MainWindow(QMainWindow):
         self.preview.set_preview_text(text)
         count = len(text)
         self._char_counter.setText(f"{count}/{TEXT_CHAR_LIMIT}")
-        self._char_counter.setStyleSheet("color: #cc0000; font-weight: 600;" if count > TEXT_CHAR_LIMIT else "color: #888;")
+        if count > TEXT_CHAR_LIMIT:
+            self._char_counter.setStyleSheet("color: #cc0000; font-weight: 700;")
+        elif count > 3500:
+            self._char_counter.setStyleSheet("color: #e07800; font-weight: 600;")
+        else:
+            self._char_counter.setStyleSheet("color: #888;")
         self._update_checklist()
         self.save_state()
         self._parse_timer.start()
@@ -1280,13 +1458,12 @@ class MainWindow(QMainWindow):
             if dlg.clickedButton() != btn_yes:
                 return
 
-        self.send_button.setEnabled(False)
-        self.send_button.setText("Публикуется…")
+        self.send_button.hide()
         self.check_button.setEnabled(False)
-        self._progress_bar.show()
         self._cancel_button.setEnabled(True)
-        self._cancel_button.setText("✕  Отмена")
+        self._cancel_button.setText("✕  Отменить отправку")
         self._cancel_button.show()
+        self._progress_bar.show()
 
         self._pending_history = {
             "addresses": [m.address for m in checked],
@@ -1313,6 +1490,7 @@ class MainWindow(QMainWindow):
 
     def _on_send_progress(self, step: str) -> None:
         self.send_button.setText(step)
+        self.setWindowTitle(f"MAX POST — {step}")
 
     def _on_send_step(self, current: int, total: int) -> None:
         self._progress_bar.setRange(0, total)
@@ -1323,14 +1501,18 @@ class MainWindow(QMainWindow):
         if self._worker and self._worker.isRunning():
             self._worker.cancel()
             self._cancel_button.setEnabled(False)
-            self._cancel_button.setText("Отменяется…")
+            self._cancel_button.setText("✕  Отменяется…")
+            self.setWindowTitle("MAX POST — Отменяется…")
 
     def _on_send_finished(self, success: bool, message: str) -> None:
+        self._cancel_button.hide()
+        self.send_button.show()
         self.send_button.setEnabled(True)
         self.send_button.setText("Опубликовать")
         self.check_button.setEnabled(True)
         self._progress_bar.hide()
-        self._cancel_button.hide()
+        self.setWindowTitle("MAX POST")
+        vk_post_id = getattr(self._worker, "vk_post_id", None) if self._worker else None
         if self._worker is not None:
             self._worker.deleteLater()
             self._worker = None
@@ -1343,6 +1525,7 @@ class MainWindow(QMainWindow):
                     sent_max=h.get("send_max", False),
                     sent_vk=h.get("send_vk", False),
                     text=h.get("text", ""),
+                    vk_post_id=vk_post_id,
                 )
                 self._refresh_history()
             except Exception as exc:
@@ -1359,7 +1542,6 @@ class MainWindow(QMainWindow):
         if checked:
             _now30 = QDateTime.currentDateTime().addSecs(30 * 60)
             self._sched_date.setMinimumDate(QDateTime.currentDateTime().date())
-            # Если дата/время уже прошли — сбрасываем на +30 мин
             sel_dt = self._get_sched_datetime()
             if sel_dt <= QDateTime.currentDateTime():
                 self._sched_date.setDate(_now30.date())
@@ -1367,9 +1549,34 @@ class MainWindow(QMainWindow):
                 self._sched_min.setValue(_now30.time().minute())
             self._sched_widget.show()
             self.send_button.setText("Запланировать")
+            self._update_sched_hint()
+            self._sched_hint_lbl.show()
         else:
             self._sched_widget.hide()
+            self._sched_hint_lbl.hide()
             self.send_button.setText("Опубликовать")
+
+    def _update_sched_hint(self) -> None:
+        """Обновляет подсказку под строкой расписания в зависимости от выбранных платформ."""
+        if not self._chk_schedule.isChecked():
+            return
+        vk = self.chk_vk.isChecked()
+        mx = self.chk_max.isChecked()
+        if vk and mx:
+            self._sched_hint_lbl.setText(
+                "ВК: пост зарегистрирован в очереди ВКонтакте — компьютер можно выключить.\n"
+                "MAX: таймер работает только пока программа запущена (держите в трее)."
+            )
+        elif vk:
+            self._sched_hint_lbl.setText(
+                "Пост будет зарегистрирован в очереди ВКонтакте.\n"
+                "Компьютер можно выключить — ВК опубликует сам."
+            )
+        elif mx:
+            self._sched_hint_lbl.setText(
+                "MAX: таймер работает только пока программа запущена.\n"
+                "Сверните в трей — не выключайте компьютер до времени отправки."
+            )
 
     def _get_sched_datetime(self) -> QDateTime:
         d = self._sched_date.date()
@@ -1413,6 +1620,7 @@ class MainWindow(QMainWindow):
         entry_id = uuid.uuid4().hex[:8]
         sched_str = sched_dt.toString("dd.MM.yyyy  HH:mm")
         addresses = [m.address for m in checked]
+        unix_ts = sched_dt.toSecsSinceEpoch()
 
         try:
             history_manager.add_scheduled_entry(
@@ -1427,29 +1635,81 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             _log.warning("Не удалось сохранить отложенную запись: %s", exc)
 
-        sched_data = {
-            "entry_id": entry_id,
-            "scheduled_at_iso": sched_dt.toString(Qt.DateFormat.ISODate),
-            "addresses": addresses,
-            "chat_ids": chat_ids,
-            "send_max": send_max,
-            "send_vk": send_vk,
-            "text": text,
-            "image_path": str(self.image_path) if self.image_path else None,
-        }
-        self._save_scheduled_to_disk(sched_data)
+        # ── ВК: отправляем API-запрос сразу, ВК сам опубликует в нужное время ──────
+        if send_vk:
+            image_path_str = str(self.image_path) if self.image_path else None
+            vk_worker = VkScheduleWorker(
+                vk_sender=self.vk_sender,
+                text=text,
+                image_path=image_path_str,
+                publish_date=unix_ts,
+                parent=self,
+            )
+            vk_worker.done.connect(
+                lambda ok, msg, eid=entry_id, s=sched_str: self._on_vk_schedule_done(ok, msg, eid, s)
+            )
+            vk_worker.finished.connect(vk_worker.deleteLater)
+            vk_worker.start()
+            self.send_button.setEnabled(False)
+            self.send_button.setText("Регистрация в ВК…")
 
-        timer = QTimer(self)
-        timer.setSingleShot(True)
-        timer.timeout.connect(lambda eid=entry_id: self._fire_scheduled(eid))
-        timer.start(int(ms))
-        self._scheduled_posts[entry_id] = {"timer": timer, "data": sched_data}
+        # ── MAX: локальный таймер, работает только пока программа запущена ──────────
+        if send_max:
+            sched_data = {
+                "entry_id": entry_id,
+                "scheduled_at_iso": sched_dt.toString(Qt.DateFormat.ISODate),
+                "addresses": addresses,
+                "chat_ids": chat_ids,
+                "send_max": True,
+                "send_vk": False,   # VK уже обработан выше
+                "text": text,
+                "image_path": str(self.image_path) if self.image_path else None,
+            }
+            self._save_scheduled_to_disk(sched_data)
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda eid=entry_id: self._fire_scheduled(eid))
+            timer.start(int(ms))
+            self._scheduled_posts[entry_id] = {"timer": timer, "data": sched_data}
 
-        QMessageBox.information(
-            self, "Запланировано",
-            f"Пост будет опубликован\n{sched_dt.toString('dd.MM.yyyy  в  HH:mm')}",
-        )
-        self._chk_schedule.setChecked(False)
+        if not send_vk:
+            # VK не выбран — сразу показываем подтверждение для MAX
+            QMessageBox.information(
+                self, "Запланировано",
+                f"MAX-пост будет опубликован\n{sched_dt.toString('dd.MM.yyyy  в  HH:mm')}\n\n"
+                "Держите программу запущенной (трей).",
+            )
+            self._chk_schedule.setChecked(False)
+        # Если VK выбран — подтверждение покажет _on_vk_schedule_done
+
+    def _on_vk_schedule_done(self, success: bool, message: str, entry_id: str, sched_str: str) -> None:
+        """Вызывается когда VkScheduleWorker завершил регистрацию поста в ВКонтакте."""
+        self.send_button.setEnabled(True)
+        self.send_button.setText("Запланировать" if self._chk_schedule.isChecked() else "Опубликовать")
+
+        if success:
+            try:
+                history_manager.update_entry_status(entry_id, "scheduled_vk")
+                self._refresh_history()
+            except Exception as exc:
+                _log.warning("Ошибка обновления статуса VK scheduled: %s", exc)
+            self._tray_notify(
+                "ВКонтакте: пост запланирован",
+                f"Пост зарегистрирован в очереди ВК на {sched_str}.\n"
+                "Компьютер можно выключить.",
+            )
+            QMessageBox.information(
+                self, "Запланировано в ВКонтакте",
+                f"Пост зарегистрирован в очереди ВКонтакте\nна {sched_str}.\n\n"
+                "ВКонтакте опубликует его сам — компьютер можно выключить.",
+            )
+            self._chk_schedule.setChecked(False)
+        else:
+            tg_notify.send_error("Ошибка планирования ВК", message)
+            QMessageBox.critical(
+                self, "Ошибка планирования",
+                f"Не удалось зарегистрировать пост в ВКонтакте:\n\n{message}",
+            )
 
     def _fire_scheduled(self, entry_id: str) -> None:
         scheduled = self._scheduled_posts.pop(entry_id, None)
@@ -1496,10 +1756,23 @@ class MainWindow(QMainWindow):
             _log.warning("Ошибка обновления статуса: %s", exc)
 
         if success:
-            self._success_overlay.show_success()
+            if self.isVisible():
+                self._success_overlay.show_success()
+            else:
+                self._tray_notify(
+                    "Отложенный пост отправлен ✓",
+                    data.get("text", "")[:80] or "Публикация успешно отправлена.",
+                )
         else:
             tg_notify.send_error("Ошибка отложенной отправки", message)
-            SendResultDialog(message, self).exec()
+            if self.isVisible():
+                SendResultDialog(message, self).exec()
+            else:
+                self._tray_notify(
+                    "Ошибка отправки",
+                    message[:120],
+                    QSystemTrayIcon.MessageIcon.Critical,
+                )
 
     def _cancel_scheduled(self, entry_id: str) -> None:
         reply = QMessageBox.question(
@@ -1569,33 +1842,25 @@ class MainWindow(QMainWindow):
                 _log.warning("Ошибка загрузки отложенного поста: %s", exc)
 
         if overdue:
+            # Просроченные посты отправляем автоматически — диалог не нужен,
+            # т.к. программа обычно работает в трее и посты должны уходить без участия пользователя.
             n = len(overdue)
             label = "пост" if n == 1 else ("поста" if n < 5 else "постов")
-            reply = QMessageBox.question(
-                self, "Просроченные посты",
-                f"Есть {n} просроченных отложенных {label}.\n"
-                "Отправить сейчас?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.Yes,
-            )
-            for item in overdue:
+            _log.info("Найдено %d просроченных отложенных постов — отправляем автоматически", n)
+            for delay_idx, item in enumerate(overdue):
                 entry_id = item["entry_id"]
-                if reply == QMessageBox.StandardButton.Yes:
-                    # Ставим таймер на 1 сек — дать UI время отрисоваться
-                    timer = QTimer(self)
-                    timer.setSingleShot(True)
-                    timer.timeout.connect(lambda eid=entry_id: self._fire_scheduled(eid))
-                    timer.start(1000)
-                    self._scheduled_posts[entry_id] = {"timer": timer, "data": item}
-                    _log.info("Просроченный пост %s: отправляем по запросу пользователя", entry_id)
-                else:
-                    self._remove_scheduled_from_disk(entry_id)
-                    try:
-                        history_manager.update_entry_status(entry_id, "cancelled")
-                    except Exception as exc:
-                        _log.warning("Ошибка отмены просроченного поста: %s", exc)
-            if reply == QMessageBox.StandardButton.No:
-                self._refresh_history()
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                # Разносим запуски по 2 сек, чтобы не запустить все одновременно
+                timer.timeout.connect(lambda eid=entry_id: self._fire_scheduled(eid))
+                timer.start(1000 + delay_idx * 2000)
+                self._scheduled_posts[entry_id] = {"timer": timer, "data": item}
+                _log.info("Просроченный пост %s: будет отправлен через %d сек", entry_id, 1 + delay_idx * 2)
+            self._tray_notify(
+                "Отправка просроченных постов",
+                f"Найдено {n} отложенных {label}, пропущенных во время паузы.\n"
+                "Отправляем автоматически.",
+            )
 
     def _auto_check_addresses(self) -> None:
         """Тихий автопарсинг адресов при изменении текста (без диалогов)."""
@@ -1724,10 +1989,18 @@ class MainWindow(QMainWindow):
                 for u in event.mimeData().urls()
             ):
                 event.acceptProposedAction()
+                self._text_container.setStyleSheet(
+                    "QFrame#textContainer { border: 2px solid #2d6cdf; border-radius: 8px; background: #eef3ff; }"
+                )
                 return
         event.ignore()
 
+    def dragLeaveEvent(self, event) -> None:
+        self._text_container.setStyleSheet("")
+        super().dragLeaveEvent(event)
+
     def dropEvent(self, event) -> None:
+        self._text_container.setStyleSheet("")
         for url in event.mimeData().urls():
             path = url.toLocalFile()
             if path.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
@@ -1869,17 +2142,83 @@ class MainWindow(QMainWindow):
         self._insert_pinned_group(pinned_checked)
 
         self.sync_preview()
+        self.text_input.setFocus()
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if hasattr(self, "_success_overlay") and self._bg_widget:
             self._success_overlay.setGeometry(self._bg_widget.rect())
 
-    def closeEvent(self, event) -> None:
-        self._save_timer.stop()
-        self._do_save_state()  # сохраняем сразу, не через таймер
+    # ──────────────────────────────────────────────────────────────────
+    #  Системный трей
+    # ──────────────────────────────────────────────────────────────────
 
-        # Останавливаем все активные воркеры
+    def _setup_tray(self) -> None:
+        """Создаёт иконку в системном трее."""
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+
+        icon = QIcon(str(_assets_dir() / "MAX POST.ico"))
+        self._tray = QSystemTrayIcon(icon, self)
+        self._tray.setToolTip("MAX POST")
+
+        menu = QMenu()
+        show_action = menu.addAction("Показать окно")
+        show_action.triggered.connect(self._show_from_tray)
+        menu.addSeparator()
+        quit_action = menu.addAction("Выход")
+        quit_action.triggered.connect(self._quit_app)
+
+        self._tray.setContextMenu(menu)
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.show()
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._show_from_tray()
+
+    def _show_from_tray(self) -> None:
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
+
+    def _quit_app(self) -> None:
+        """Полное закрытие приложения (из меню трея или Файл → Выход)."""
+        self._real_quit = True
+        self.close()
+
+    def _tray_notify(self, title: str, message: str,
+                     icon: QSystemTrayIcon.MessageIcon = QSystemTrayIcon.MessageIcon.Information,
+                     duration_ms: int = 5000) -> None:
+        """Показывает balloon-уведомление из трея (только если есть трей)."""
+        tray = getattr(self, "_tray", None)
+        if tray and tray.isVisible():
+            tray.showMessage(title, message, icon, duration_ms)
+
+    def closeEvent(self, event) -> None:
+        # Если нажали X (не «Выход») — сворачиваем в трей
+        _tray = getattr(self, "_tray", None)
+        if not self._real_quit and _tray is not None and _tray.isVisible():
+            event.ignore()
+            self.hide()
+            n_sched = sum(
+                1 for v in self._scheduled_posts.values()
+                if v.get("timer") and v["timer"].isActive()
+            )
+            if n_sched:
+                self._tray_notify(
+                    "MAX POST свёрнут",
+                    f"Программа работает в фоне.\n"
+                    f"Отложенных постов: {n_sched}.",
+                )
+            else:
+                self._tray_notify("MAX POST свёрнут", "Программа работает в фоне.")
+            return
+
+        # Полное закрытие
+        self._save_timer.stop()
+        self._do_save_state()
+
         for entry in self._scheduled_posts.values():
             t = entry.get("timer")
             if t:
@@ -1898,6 +2237,10 @@ class MainWindow(QMainWindow):
         if conn and conn.isRunning():
             conn.quit()
             conn.wait(1000)
+
+        tray = getattr(self, "_tray", None)
+        if tray:
+            tray.hide()
 
         self.max_sender.close()
         super().closeEvent(event)
@@ -2005,6 +2348,7 @@ def main() -> None:
         pass
 
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)  # не выходить при hide() в трей
     _backup_address_file()  # резервная копия перед стартом
     window = MainWindow()
     window.showMaximized()

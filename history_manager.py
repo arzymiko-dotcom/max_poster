@@ -91,7 +91,13 @@ def update_entry_status(entry_id: str, new_status: str) -> None:
         _atomic_write(_path(), json.dumps(history, ensure_ascii=False, indent=2))
 
 
-def add_entry(addresses: list[str], sent_max: bool, sent_vk: bool, text: str = "") -> None:
+def add_entry(
+    addresses: list[str],
+    sent_max: bool,
+    sent_vk: bool,
+    text: str = "",
+    vk_post_id: int | None = None,
+) -> None:
     """Добавляет запись в начало истории."""
     entry: dict = {
         "ts": datetime.now().strftime("%d.%m.%Y  %H:%M"),
@@ -110,6 +116,8 @@ def add_entry(addresses: list[str], sent_max: bool, sent_vk: bool, text: str = "
         entry["max"] = addresses if addresses else []
     if sent_vk:
         entry["vk"] = True
+    if vk_post_id:
+        entry["vk_post_id"] = vk_post_id
 
     with _lock:
         history = load()

@@ -22,6 +22,7 @@ VK_VER = "5.199"
 class SendResult:
     success: bool
     message: str
+    post_id: int | None = None   # ID опубликованного поста (для последующего редактирования)
 
 
 class VkSender:
@@ -105,7 +106,18 @@ class VkSender:
         photo = saved[0]
         return f"photo{photo['owner_id']}_{photo['id']}"
 
-    def send_post(self, text: str, image_path: str | None = None, progress: Callable[[str], None] | None = None) -> SendResult:
+    def send_post(
+        self,
+        text: str,
+        image_path: str | None = None,
+        progress: Callable[[str], None] | None = None,
+        publish_date: int | None = None,
+    ) -> SendResult:
+        """Публикует пост в группе ВКонтакте.
+
+        publish_date — Unix-timestamp для отложенной публикации (ВК сам опубликует в нужное время,
+        программа может быть выключена). Если None — публикуется немедленно.
+        """
         has_photo = bool(image_path and Path(image_path).exists())
         err = self._check_credentials(need_user_token=has_photo)
         if err:
@@ -117,7 +129,7 @@ class VkSender:
                 attachment = self._upload_photo(image_path, progress=progress)
 
             if progress:
-                progress("Публикация поста…")
+                progress("Публикация поста…" if not publish_date else "Регистрация отложенного поста в ВК…")
 
             params: dict = {
                 "owner_id": f"-{self.group_id}",
@@ -126,11 +138,68 @@ class VkSender:
             }
             if attachment:
                 params["attachments"] = attachment
+            if publish_date:
+                params["publish_date"] = publish_date
 
-            # Публикуем от имени группы — group token
-            self._call("wall.post", token=self.group_token, **params)
-            return SendResult(True, "Опубликовано в ВКонтакте")
+            resp = self._call("wall.post", token=self.group_token, **params)
+            post_id: int | None = resp.get("post_id") if isinstance(resp, dict) else None
+
+            if publish_date:
+                from datetime import datetime
+                dt_local = datetime.fromtimestamp(publish_date)
+                return SendResult(True, f"Запланировано в ВКонтакте на {dt_local.strftime('%d.%m.%Y  %H:%M')}", post_id=post_id)
+            return SendResult(True, "Опубликовано в ВКонтакте", post_id=post_id)
 
         except Exception as exc:
             _log.exception("Ошибка при публикации в ВК: %s", exc)
+            return SendResult(False, f"Ошибка ВК: {exc}")
+
+    def get_post_text(self, post_id: int) -> str:
+        """Загружает текст поста из ВКонтакте по post_id. Возвращает пустую строку при ошибке."""
+        err = self._check_credentials()
+        if err:
+            return ""
+        try:
+            posts_key = f"-{self.group_id}_{post_id}"
+            resp = self._call("wall.getById", token=self.group_token, posts=posts_key)
+            items = resp.get("items", resp) if isinstance(resp, dict) else resp
+            if isinstance(items, list) and items:
+                return items[0].get("text", "")
+        except Exception as exc:
+            _log.warning("get_post_text failed: %s", exc)
+        return ""
+
+    def edit_post(
+        self,
+        post_id: int,
+        text: str,
+        image_path: str | None = None,
+        progress: Callable[[str], None] | None = None,
+    ) -> SendResult:
+        """Редактирует существующий пост группы.
+        Если image_path задан — загружает новое фото и заменяет вложения.
+        Если image_path не задан — вложения не трогаются (остаются прежними).
+        """
+        has_photo = bool(image_path and Path(image_path).exists())
+        err = self._check_credentials(need_user_token=has_photo)
+        if err:
+            return SendResult(False, err)
+
+        try:
+            params: dict = {
+                "owner_id": f"-{self.group_id}",
+                "post_id": post_id,
+                "message": text,
+            }
+            if has_photo:
+                attachment = self._upload_photo(image_path, progress=progress)
+                params["attachments"] = attachment
+            elif progress:
+                progress("Сохранение изменений…")
+
+            self._call("wall.edit", token=self.group_token, **params)
+            return SendResult(True, "Пост обновлён в ВКонтакте")
+
+        except Exception as exc:
+            _log.exception("Ошибка редактирования поста ВК: %s", exc)
             return SendResult(False, f"Ошибка ВК: {exc}")

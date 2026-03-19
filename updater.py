@@ -234,7 +234,9 @@ class DownloadDialog(QDialog):
         QApplication.instance().quit()
 
     def _on_failed(self, error: str) -> None:
-        self._label.setText(f"Ошибка загрузки: {error}")
+        self._label.setWordWrap(True)
+        self._label.setText(f"Ошибка загрузки:\n{error}")
+        self.setFixedSize(420, 180)
         self._cancel_btn.setText("Закрыть")
 
 

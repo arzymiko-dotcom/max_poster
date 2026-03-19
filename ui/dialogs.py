@@ -1,4 +1,4 @@
-"""Диалоговые окна: ThemePickerDialog, FontPickerDialog, AddAddressDialog."""
+"""Диалоговые окна: ThemePickerDialog, FontPickerDialog, AddAddressDialog, VkEditDialog."""
 
 from pathlib import Path
 
@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QGridLayout,
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QRadioButton,
     QSlider,
@@ -310,3 +312,89 @@ class AddAddressDialog(QDialog):
             if extracted:
                 chat_id = extracted
         return MatchResult(address=address, score=0, chat_link=url, chat_id=chat_id)
+
+
+class VkEditDialog(QDialog):
+    """Диалог редактирования опубликованного поста ВКонтакте."""
+
+    def __init__(self, post_id: int, current_text: str, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Редактировать пост ВКонтакте  (ID {post_id})")
+        self.setMinimumWidth(520)
+        self.setMinimumHeight(380)
+        self._post_id = post_id
+        self._new_image_path: "Path | None" = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(10)
+
+        # Подсказка
+        hint = QLabel(
+            "Текст загружен из истории (может быть сокращён).\n"
+            "Нажмите «Загрузить из ВК» чтобы получить оригинал."
+        )
+        hint.setStyleSheet("color: #7a8a9a; font-size: 11px;")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        # Поле текста
+        self._text_edit = QPlainTextEdit()
+        self._text_edit.setPlainText(current_text)
+        self._text_edit.setPlaceholderText("Введите новый текст поста…")
+        layout.addWidget(self._text_edit, 1)
+
+        # Строка фото
+        photo_row = QHBoxLayout()
+        self._photo_lbl = QLabel("Фото: не выбрано (существующее останется)")
+        self._photo_lbl.setStyleSheet("color: #7a8a9a; font-size: 11px;")
+        photo_btn = QPushButton("Заменить фото…")
+        photo_btn.setFixedHeight(28)
+        photo_btn.clicked.connect(self._select_photo)
+        photo_row.addWidget(self._photo_lbl, 1)
+        photo_row.addWidget(photo_btn)
+        layout.addLayout(photo_row)
+
+        # Кнопки диалога
+        btn_box = QDialogButtonBox()
+        self._load_btn = btn_box.addButton("Загрузить из ВК", QDialogButtonBox.ButtonRole.ResetRole)
+        self._load_btn.setToolTip("Загрузить текущий текст поста из ВКонтакте")
+        btn_box.addButton("Сохранить изменения", QDialogButtonBox.ButtonRole.AcceptRole)
+        btn_box.addButton("Отмена", QDialogButtonBox.ButtonRole.RejectRole)
+        btn_box.accepted.connect(self.accept)
+        btn_box.rejected.connect(self.reject)
+        # «Загрузить из ВК» — обрабатываем снаружи через сигнал
+        self._load_btn.clicked.connect(self._request_load)
+        layout.addWidget(btn_box)
+
+    def _select_photo(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Выберите фото", "", "Images (*.png *.jpg *.jpeg *.webp)"
+        )
+        if path:
+            self._new_image_path = Path(path)
+            self._photo_lbl.setText(f"Фото: {Path(path).name}")
+            self._photo_lbl.setStyleSheet("color: #22a35a; font-size: 11px;")
+
+    def _request_load(self) -> None:
+        """Сигнализирует главному окну загрузить оригинальный текст из ВК."""
+        self._load_btn.setEnabled(False)
+        self._load_btn.setText("Загружается…")
+        self.load_requested.emit()
+
+    load_requested = pyqtSignal()
+
+    def set_loaded_text(self, text: str) -> None:
+        """Вызывается после успешной загрузки текста из ВК."""
+        self._text_edit.setPlainText(text)
+        self._load_btn.setEnabled(True)
+        self._load_btn.setText("Загружено ✓")
+
+    def post_id(self) -> int:
+        return self._post_id
+
+    def new_text(self) -> str:
+        return self._text_edit.toPlainText().strip()
+
+    def new_image_path(self) -> "Path | None":
+        return self._new_image_path
