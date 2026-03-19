@@ -104,6 +104,8 @@ class DownloadWorker(QThread):
         self.expected_sha256 = expected_sha256.strip().lower()
 
     def run(self) -> None:
+        dest: Path | None = None
+        zip_path: Path | None = None
         try:
             # Получаем прямую ссылку, если передана публичная ссылка Яндекс.Диска
             if "disk.yandex.ru" in self.url:
@@ -138,6 +140,7 @@ class DownloadWorker(QThread):
 
             # Проверяем, не является ли скачанный файл ZIP-архивом (Яндекс.Диск иногда отдаёт zip)
             if zipfile.is_zipfile(dest):
+                zip_path = dest  # запомним для очистки в finally
                 with zipfile.ZipFile(dest, 'r') as z:
                     # Ищем внутри архива .exe файл
                     exe_names = [n for n in z.namelist() if n.lower().endswith('.exe')]
@@ -149,7 +152,8 @@ class DownloadWorker(QThread):
                         out.write(z.read(exe_names[0]))
                 # Убеждаемся, что EXE успешно извлечён, и только потом удаляем zip
                 if exe_path.exists() and exe_path.stat().st_size > 0:
-                    dest.unlink(missing_ok=True)
+                    zip_path.unlink(missing_ok=True)
+                    zip_path = None
                     dest = exe_path
                 else:
                     raise RuntimeError(f"Извлечённый EXE пустой или отсутствует: {exe_path}")
@@ -158,14 +162,12 @@ class DownloadWorker(QThread):
             with open(dest, "rb") as _f:
                 magic = _f.read(2)
             if magic != b"MZ":
-                dest.unlink(missing_ok=True)
                 raise RuntimeError("Скачанный файл не является Windows EXE (неверный заголовок)")
 
             # Проверяем SHA256, если хэш был передан из version.txt
             if self.expected_sha256:
                 actual = hashlib.sha256(dest.read_bytes()).hexdigest().lower()
                 if actual != self.expected_sha256:
-                    dest.unlink(missing_ok=True)
                     raise RuntimeError(
                         f"SHA256 не совпадает — файл повреждён или подменён.\n"
                         f"Ожидается: {self.expected_sha256}\n"
@@ -175,6 +177,11 @@ class DownloadWorker(QThread):
             self.download_finished.emit(str(dest))
 
         except Exception as exc:
+            # Удаляем временные файлы при любой ошибке
+            if zip_path is not None:
+                zip_path.unlink(missing_ok=True)
+            if dest is not None and dest.exists():
+                dest.unlink(missing_ok=True)
             self.failed.emit(str(exc))
 
 
@@ -221,10 +228,10 @@ class DownloadDialog(QDialog):
     def _on_finished(self, path: str) -> None:
         self._label.setText("Загрузка завершена. Запускаем установщик...")
         self._cancel_btn.setEnabled(False)
-        # Запускаем установщик и закрываем приложение
+        # Запускаем установщик и закрываем приложение корректно
         subprocess.Popen([path])
         self.accept()
-        sys.exit(0)
+        QApplication.instance().quit()
 
     def _on_failed(self, error: str) -> None:
         self._label.setText(f"Ошибка загрузки: {error}")
