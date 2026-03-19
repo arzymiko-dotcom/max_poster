@@ -752,15 +752,16 @@ class StatsPanel(QWidget):
         self._progress_bar.show()
         self._status_lbl.setText("Загрузка отчёта с сервера…")
 
-        self._worker = _WebFetchWorker(self)
-        self._worker.done.connect(self._on_web_data)
-        self._worker.failed.connect(self._on_error)
-        self._worker.progress.connect(self._on_progress)
-        self._worker.done.connect(self._worker.deleteLater)
-        self._worker.failed.connect(self._worker.deleteLater)
-        self._worker.done.connect(lambda *_: setattr(self, "_worker", None))
-        self._worker.failed.connect(lambda *_: setattr(self, "_worker", None))
-        self._worker.start()
+        _w = _WebFetchWorker(self)
+        self._worker = _w
+        _w.done.connect(self._on_web_data)
+        _w.failed.connect(self._on_error)
+        _w.progress.connect(self._on_progress)
+        _w.done.connect(_w.deleteLater)
+        _w.failed.connect(_w.deleteLater)
+        _w.done.connect(lambda *_, w=_w: self._worker is w and setattr(self, "_worker", None))
+        _w.failed.connect(lambda *_, w=_w: self._worker is w and setattr(self, "_worker", None))
+        _w.start()
 
     def _on_progress(self, text: str) -> None:
         self._status_lbl.setText(text)
@@ -1370,6 +1371,8 @@ class StatsPanel(QWidget):
         self._bot_worker.finished.connect(
             lambda: self._history_btn.setEnabled(True)
         )
+        self._bot_worker.finished.connect(self._bot_worker.deleteLater)
+        self._bot_worker.finished.connect(lambda *_: setattr(self, "_bot_worker", None))
         self._bot_worker.start()
 
     def _on_bot_report_done(self, html: str) -> None:

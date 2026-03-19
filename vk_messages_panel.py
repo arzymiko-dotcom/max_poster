@@ -1213,10 +1213,13 @@ class VkMessagesPanel(QWidget):
             return
         self._stop_worker(self._conv_worker)
         self._conv_panel.set_status("Загрузка…")
-        self._conv_worker = _ConvWorker(self._token, self._group_id)
-        self._conv_worker.done.connect(self._on_conv_loaded)
-        self._conv_worker.error.connect(self._on_conv_error)
-        self._conv_worker.start()
+        _w = _ConvWorker(self._token, self._group_id)
+        self._conv_worker = _w
+        _w.done.connect(self._on_conv_loaded)
+        _w.error.connect(self._on_conv_error)
+        _w.finished.connect(_w.deleteLater)
+        _w.finished.connect(lambda *_, w=_w: self._conv_worker is w and setattr(self, "_conv_worker", None))
+        _w.start()
 
     def _on_conv_loaded(self, items: list, profiles: dict):
         self._conv_panel.load_conversations(items, profiles)
@@ -1237,12 +1240,13 @@ class VkMessagesPanel(QWidget):
 
     def _load_history(self, peer_id: int):
         self._stop_worker(self._history_worker)
-        self._history_worker = _HistoryWorker(
-            self._token, self._group_id, peer_id
-        )
-        self._history_worker.done.connect(self._on_history_loaded)
-        self._history_worker.error.connect(self._on_history_error)
-        self._history_worker.start()
+        _w = _HistoryWorker(self._token, self._group_id, peer_id)
+        self._history_worker = _w
+        _w.done.connect(self._on_history_loaded)
+        _w.error.connect(self._on_history_error)
+        _w.finished.connect(_w.deleteLater)
+        _w.finished.connect(lambda *_, w=_w: self._history_worker is w and setattr(self, "_history_worker", None))
+        _w.start()
 
     def _on_history_loaded(self, items: list, profiles: dict, group_id: int):
         self._current_profiles = profiles
@@ -1267,13 +1271,16 @@ class VkMessagesPanel(QWidget):
             return
         self._chat_view._send_btn.setEnabled(False)
         self._stop_worker(self._send_worker)
-        self._send_worker = _SendWorker(
+        _w = _SendWorker(
             self._token, self._group_id,
             self._current_peer_id, text, files
         )
-        self._send_worker.done.connect(self._on_sent)
-        self._send_worker.error.connect(self._on_send_error)
-        self._send_worker.start()
+        self._send_worker = _w
+        _w.done.connect(self._on_sent)
+        _w.error.connect(self._on_send_error)
+        _w.finished.connect(_w.deleteLater)
+        _w.finished.connect(lambda *_, w=_w: self._send_worker is w and setattr(self, "_send_worker", None))
+        _w.start()
 
     def _on_sent(self, _result: dict):
         self._chat_view._send_btn.setEnabled(True)

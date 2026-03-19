@@ -137,18 +137,23 @@ class ExcelMatcher:
             return []
         df = self.load_dataframe()
         address_col, link_col, id_col = self._resolve_columns(df)
+        mask = (
+            df[address_col]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .str.contains(q, na=False, regex=False)
+        )
+        filtered = df[mask].head(limit)
         results: list[MatchResult] = []
-        for _, row in df.iterrows():
+        for _, row in filtered.iterrows():
             addr = str(row.get(address_col, "")).strip()
             if not addr or addr.lower() == "nan":
                 continue
-            if q in addr.lower():
-                results.append(MatchResult(
-                    address=addr,
-                    score=0,
-                    chat_link=_get_cell(row, link_col),
-                    chat_id=_get_cell(row, id_col),
-                ))
-                if len(results) >= limit:
-                    break
+            results.append(MatchResult(
+                address=addr,
+                score=0,
+                chat_link=_get_cell(row, link_col),
+                chat_id=_get_cell(row, id_col),
+            ))
         return results

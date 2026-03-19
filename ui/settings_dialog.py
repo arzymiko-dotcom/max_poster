@@ -154,14 +154,31 @@ class SettingsDialog(QDialog):
             "", _hint_label(
                 "<b>Токен группы</b> (для постов от имени группы): "
                 "vk.com → Управление → API → Создать ключ доступа.<br>"
-                "<b>Токен пользователя</b> (для личных сообщений): "
-                "vk.com → Настройки → Безопасность → Авторизованные приложения, "
-                "или получить через <a href='https://vkhost.github.io/'>vkhost.github.io</a> "
-                "(права: messages, wall, groups)."
+                "<b>Токен пользователя</b> (для загрузки фото к постам): "
+                "oauth.vk.com → client_id=2685278 (Kate Mobile), scope=wall,photos,offline."
             )
         )
 
+        # ── Основная группа МАХ ──────────────────────────────────
+        pin_group = QGroupBox("Основная группа МАХ (📌 закреплена в списке адресов)")
+        pin_form = QFormLayout(pin_group)
+        pin_form.setContentsMargins(12, 8, 12, 12)
+        pin_form.setSpacing(8)
+        self._pin_group_id   = QLineEdit(vals.get("MAX_MAIN_GROUP_ID", ""))
+        self._pin_group_id.setPlaceholderText("например: -68787567064560")
+        self._pin_group_name = QLineEdit(vals.get("MAX_MAIN_GROUP_NAME", ""))
+        self._pin_group_name.setPlaceholderText("Название для отображения")
+        self._pin_group_link = QLineEdit(vals.get("MAX_MAIN_GROUP_LINK", ""))
+        self._pin_group_link.setPlaceholderText("https://max.ru/gks2vyb")
+        pin_form.addRow("ID группы:", self._pin_group_id)
+        pin_form.addRow("Название:", self._pin_group_name)
+        pin_form.addRow("Ссылка:", self._pin_group_link)
+        pin_form.addRow("", _hint_label(
+            "Оставьте ID пустым, чтобы убрать закреплённую группу."
+        ))
+
         layout.addWidget(max_group)
+        layout.addWidget(pin_group)
         layout.addWidget(vk_group)
 
         buttons = QDialogButtonBox(
@@ -197,11 +214,14 @@ class SettingsDialog(QDialog):
             return
         self._error.setText("")
         _write_env({
-            "MAX_ID_INSTANCE":  self._max_instance.text().strip(),
-            "MAX_API_TOKEN":    self._max_token.text().strip(),
-            "VK_GROUP_ID":      self._vk_group_id.text().strip(),
-            "VK_GROUP_TOKEN":   self._vk_group_token.text().strip(),
-            "VK_USER_TOKEN":    self._vk_user_token.text().strip(),
+            "MAX_ID_INSTANCE":    self._max_instance.text().strip(),
+            "MAX_API_TOKEN":      self._max_token.text().strip(),
+            "MAX_MAIN_GROUP_ID":  self._pin_group_id.text().strip(),
+            "MAX_MAIN_GROUP_NAME": self._pin_group_name.text().strip(),
+            "MAX_MAIN_GROUP_LINK": self._pin_group_link.text().strip(),
+            "VK_GROUP_ID":        self._vk_group_id.text().strip(),
+            "VK_GROUP_TOKEN":     self._vk_group_token.text().strip(),
+            "VK_USER_TOKEN":      self._vk_user_token.text().strip(),
         })
         load_dotenv(get_env_path(), override=True)
         self.settings_saved.emit()

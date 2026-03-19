@@ -8,7 +8,7 @@ import time
 import uuid
 from pathlib import Path
 
-from PyQt6.QtCore import QDateTime, QSize, QTimer, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QDateTime, QSize, QTime, QTimer, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
@@ -46,6 +46,8 @@ from PyQt6.QtWidgets import (
 
 # Роль для пометки вручную добавленных адресов
 _MANUAL_ROLE: int = Qt.ItemDataRole.UserRole + 1
+# Роль для закреплённой основной группы МАХ
+_PINNED_ROLE: int = Qt.ItemDataRole.UserRole + 2
 
 import tg_notify
 from address_parser import extract_all_addresses
@@ -466,6 +468,7 @@ class MainWindow(QMainWindow):
         self._addr_list.setItemDelegate(_NumberedItemDelegate(self._addr_list))
         self._addr_list.itemChanged.connect(self._update_checklist)
         self._addr_list.itemChanged.connect(self.save_state)
+        self._insert_pinned_group()
 
         left_layout.addWidget(text_container, 1)
         addr_header_frame = QFrame()
@@ -1007,11 +1010,14 @@ class MainWindow(QMainWindow):
         if not match:
             return
 
-        # Проверяем, нет ли уже такого адреса в списке
+        # Проверяем, нет ли уже такого адреса/chat_id в списке
         for i in range(self._addr_list.count()):
             existing = self._addr_list.item(i)
-            if existing and existing.data(Qt.ItemDataRole.UserRole) and \
-               existing.data(Qt.ItemDataRole.UserRole).address == match.address:
+            if not existing:
+                continue
+            ex_m = existing.data(Qt.ItemDataRole.UserRole)
+            if ex_m and (ex_m.address == match.address or
+                         (match.chat_id and ex_m.chat_id == match.chat_id)):
                 self._addr_search.clear()
                 self._addr_search_results.hide()
                 return
@@ -1032,6 +1038,7 @@ class MainWindow(QMainWindow):
         self.text_input.clear()
         self._addr_search.clear()
         self._addr_list.clear()
+        self._insert_pinned_group(checked=True)
         self.preview.set_preview_text("")
         self.preview.set_image(None)
         self.image_path = None
@@ -1060,6 +1067,7 @@ class MainWindow(QMainWindow):
             self._matcher = ExcelMatcher(self.excel_path)
         matcher = self._matcher
 
+        pinned_checked = self._get_pinned_state()
         self._addr_list.blockSignals(True)
         seen_ids: set[str] = set()
         found = 0
@@ -1086,6 +1094,7 @@ class MainWindow(QMainWindow):
                 found += 1
         finally:
             self._addr_list.blockSignals(False)
+        self._insert_pinned_group(pinned_checked)
         self._update_checklist()
         self.save_state()
 
@@ -1171,6 +1180,36 @@ class MainWindow(QMainWindow):
         else:
             self.preview.set_platform_avatar("max", _assets_dir())
 
+    # ── Закреплённая основная группа МАХ ──────────────────────────────────
+
+    def _insert_pinned_group(self, checked: bool = True) -> None:
+        """Вставляет закреплённую основную группу МАХ в начало списка адресов."""
+        chat_id = os.getenv("MAX_MAIN_GROUP_ID", "-68787567064560")
+        if not chat_id:
+            return
+        name     = os.getenv("MAX_MAIN_GROUP_NAME", "ЖКС №2 Выборгского")
+        link     = os.getenv("MAX_MAIN_GROUP_LINK", "https://max.ru/gks2vyb")
+        match    = MatchResult(address=name, score=0, chat_link=link, chat_id=chat_id)
+        item     = QListWidgetItem(f"📌  {name}")
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+        item.setData(Qt.ItemDataRole.UserRole, match)
+        item.setData(_PINNED_ROLE, True)
+        item.setForeground(QColor("#4a6cf7"))
+        self._addr_list.blockSignals(True)
+        try:
+            self._addr_list.insertItem(0, item)
+        finally:
+            self._addr_list.blockSignals(False)
+
+    def _get_pinned_state(self) -> bool:
+        """Возвращает текущее состояние галочки закреплённой группы (по умолчанию True)."""
+        for i in range(self._addr_list.count()):
+            item = self._addr_list.item(i)
+            if item and item.data(_PINNED_ROLE):
+                return item.checkState() == Qt.CheckState.Checked
+        return True
+
     def _add_address_manually(self) -> None:
         dlg = AddAddressDialog(parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -1204,22 +1243,21 @@ class MainWindow(QMainWindow):
             return
 
         checked = self._get_checked_matches()
-        chat_ids = [m.chat_id for m in checked if m.chat_id]
+        chat_ids = list(dict.fromkeys(m.chat_id for m in checked if m.chat_id))
 
         if send_max and not chat_ids:
             QMessageBox.warning(self, "Отправка", "Нет отмеченных адресов. Нажми «Проверить адрес».")
             return
 
         # Проверяем наличие токенов
-        import os as _os
-        if send_max and not (_os.getenv("MAX_ID_INSTANCE") and _os.getenv("MAX_API_TOKEN")):
+        if send_max and not (os.getenv("MAX_ID_INSTANCE") and os.getenv("MAX_API_TOKEN")):
             QMessageBox.warning(
                 self, "Отправка",
                 "Не заданы токены MAX (ID инстанса / API токен).\n"
                 "Откройте Настройки подключений (🔑) и заполните данные."
             )
             return
-        if send_vk and not _os.getenv("VK_GROUP_TOKEN"):
+        if send_vk and not os.getenv("VK_GROUP_TOKEN"):
             QMessageBox.warning(
                 self, "Отправка",
                 "Не задан токен ВКонтакте (VK_GROUP_TOKEN).\n"
@@ -1334,7 +1372,6 @@ class MainWindow(QMainWindow):
             self.send_button.setText("Опубликовать")
 
     def _get_sched_datetime(self) -> QDateTime:
-        from PyQt6.QtCore import QTime
         d = self._sched_date.date()
         t = QTime(self._sched_hour.value(), self._sched_min.value())
         return QDateTime(d, t)
@@ -1352,17 +1389,16 @@ class MainWindow(QMainWindow):
             return
 
         checked = self._get_checked_matches()
-        chat_ids = [m.chat_id for m in checked if m.chat_id]
+        chat_ids = list(dict.fromkeys(m.chat_id for m in checked if m.chat_id))
         if send_max and not chat_ids:
             QMessageBox.warning(self, "Отправка", "Нет отмеченных адресов. Нажми «Проверить адрес».")
             return
 
-        import os as _os
-        if send_max and not (_os.getenv("MAX_ID_INSTANCE") and _os.getenv("MAX_API_TOKEN")):
+        if send_max and not (os.getenv("MAX_ID_INSTANCE") and os.getenv("MAX_API_TOKEN")):
             QMessageBox.warning(self, "Отправка",
                 "Не заданы токены MAX.\nОткройте Настройки подключений (🔑).")
             return
-        if send_vk and not _os.getenv("VK_GROUP_TOKEN"):
+        if send_vk and not os.getenv("VK_GROUP_TOKEN"):
             QMessageBox.warning(self, "Отправка",
                 "Не задан токен ВКонтакте.\nОткройте Настройки подключений (🔑).")
             return
@@ -1441,6 +1477,7 @@ class MainWindow(QMainWindow):
         worker.result_ready.connect(
             lambda ok, msg, eid=entry_id, d=data: self._on_scheduled_finished(eid, d, ok, msg)
         )
+        worker.finished.connect(worker.deleteLater)
         worker.start()
         # Сохраняем ссылку, чтобы GC не удалил поток
         self._scheduled_posts[f"_running_{entry_id}"] = {"timer": None, "worker": worker, "data": data}
@@ -1465,6 +1502,14 @@ class MainWindow(QMainWindow):
             SendResultDialog(message, self).exec()
 
     def _cancel_scheduled(self, entry_id: str) -> None:
+        reply = QMessageBox.question(
+            self, "Отмена поста",
+            "Отменить этот отложенный пост?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
         scheduled = self._scheduled_posts.pop(entry_id, None)
         if scheduled and scheduled.get("timer"):
             scheduled["timer"].stop()
@@ -1505,11 +1550,15 @@ class MainWindow(QMainWindow):
         except Exception:
             return
         now = QDateTime.currentDateTime()
+        overdue: list[dict] = []
         for item in items:
             try:
                 sched_dt = QDateTime.fromString(item["scheduled_at_iso"], Qt.DateFormat.ISODate)
-                ms = max(now.msecsTo(sched_dt), 1000)
+                ms = now.msecsTo(sched_dt)
                 entry_id = item["entry_id"]
+                if ms <= 0:
+                    overdue.append(item)
+                    continue
                 timer = QTimer(self)
                 timer.setSingleShot(True)
                 timer.timeout.connect(lambda eid=entry_id: self._fire_scheduled(eid))
@@ -1519,16 +1568,50 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 _log.warning("Ошибка загрузки отложенного поста: %s", exc)
 
+        if overdue:
+            n = len(overdue)
+            label = "пост" if n == 1 else ("поста" if n < 5 else "постов")
+            reply = QMessageBox.question(
+                self, "Просроченные посты",
+                f"Есть {n} просроченных отложенных {label}.\n"
+                "Отправить сейчас?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            for item in overdue:
+                entry_id = item["entry_id"]
+                if reply == QMessageBox.StandardButton.Yes:
+                    # Ставим таймер на 1 сек — дать UI время отрисоваться
+                    timer = QTimer(self)
+                    timer.setSingleShot(True)
+                    timer.timeout.connect(lambda eid=entry_id: self._fire_scheduled(eid))
+                    timer.start(1000)
+                    self._scheduled_posts[entry_id] = {"timer": timer, "data": item}
+                    _log.info("Просроченный пост %s: отправляем по запросу пользователя", entry_id)
+                else:
+                    self._remove_scheduled_from_disk(entry_id)
+                    try:
+                        history_manager.update_entry_status(entry_id, "cancelled")
+                    except Exception as exc:
+                        _log.warning("Ошибка отмены просроченного поста: %s", exc)
+            if reply == QMessageBox.StandardButton.No:
+                self._refresh_history()
+
     def _auto_check_addresses(self) -> None:
         """Тихий автопарсинг адресов при изменении текста (без диалогов)."""
         text = self.text_input.toPlainText().strip()
 
         def _clear_auto_items() -> None:
             """Удаляет из списка все автоматически найденные адреса."""
+            pinned_checked = self._get_pinned_state()
             manual_entries = []
             for i in range(self._addr_list.count()):
                 itm = self._addr_list.item(i)
-                if itm and itm.data(_MANUAL_ROLE):
+                if not itm:
+                    continue
+                if itm.data(_PINNED_ROLE):
+                    continue  # обрабатываем отдельно
+                if itm.data(_MANUAL_ROLE):
                     m = itm.data(Qt.ItemDataRole.UserRole)
                     manual_entries.append((m, itm.checkState()))
             if manual_entries or self._addr_list.count() > 0:
@@ -1544,6 +1627,7 @@ class MainWindow(QMainWindow):
                         self._addr_list.addItem(item)
                 finally:
                     self._addr_list.blockSignals(False)
+                self._insert_pinned_group(pinned_checked)
                 self._update_checklist()
                 self.save_state()
 
@@ -1580,6 +1664,7 @@ class MainWindow(QMainWindow):
             return
 
         # Собираем вручную добавленные адреса — они НЕ перезаписываются автопарсингом
+        pinned_checked = self._get_pinned_state()
         manual_entries: list[tuple[MatchResult, Qt.CheckState]] = []
         checked_ids: set[str] = set()
         existing_auto_ids: set[str] = set()
@@ -1590,6 +1675,8 @@ class MainWindow(QMainWindow):
             m = itm.data(Qt.ItemDataRole.UserRole)
             if not m:
                 continue
+            if itm.data(_PINNED_ROLE):
+                continue  # pinned обрабатываем отдельно
             if itm.data(_MANUAL_ROLE):
                 manual_entries.append((m, itm.checkState()))
             else:
@@ -1626,6 +1713,7 @@ class MainWindow(QMainWindow):
                 self._addr_list.addItem(item)
         finally:
             self._addr_list.blockSignals(False)
+        self._insert_pinned_group(pinned_checked)
         self._update_checklist()
         self.save_state()
 
@@ -1654,6 +1742,18 @@ class MainWindow(QMainWindow):
         """Пересоздаёт sender-объекты после обновления токенов в .env."""
         self.max_sender = MaxSender()
         self.vk_sender = VkSender()
+        # Обновляем закреплённую группу, если её настройки изменились
+        pinned_checked = self._get_pinned_state()
+        self._addr_list.blockSignals(True)
+        try:
+            for i in range(self._addr_list.count()):
+                item = self._addr_list.item(i)
+                if item and item.data(_PINNED_ROLE):
+                    self._addr_list.takeItem(i)
+                    break
+        finally:
+            self._addr_list.blockSignals(False)
+        self._insert_pinned_group(pinned_checked)
 
     def _reload_excel(self) -> None:
         """Перезагружает Excel-реестр адресов с диска."""
@@ -1680,11 +1780,14 @@ class MainWindow(QMainWindow):
         except RuntimeError:
             return  # Qt уже уничтожил объекты (вызов через atexit при завершении)
         checked_ids = {m.chat_id for m in self._get_checked_matches()}
+        pinned_checked = self._get_pinned_state()
         addresses = []
         for i in range(self._addr_list.count()):
             item = self._addr_list.item(i)
             if not item:
                 continue
+            if item.data(_PINNED_ROLE):
+                continue  # pinned сохраняется отдельно в pinned_checked
             m = item.data(Qt.ItemDataRole.UserRole)
             if m:
                 addresses.append({
@@ -1703,6 +1806,7 @@ class MainWindow(QMainWindow):
             "bg_opacity": self._bg_opacity,
             "addresses": addresses,
             "checked_ids": list(checked_ids),
+            "pinned_checked": pinned_checked,
             "ui_font_family": self._ui_font_family,
             "ui_font_size": self._ui_font_size,
         })
@@ -1739,29 +1843,30 @@ class MainWindow(QMainWindow):
             self.preview.set_image(str(self.image_path))
             self._set_photo_button_name(self.image_path.name)
 
+        pinned_checked = bool(data.get("pinned_checked", True))
         addresses = data.get("addresses", [])
         checked_ids = set(data.get("checked_ids", []))
-        if addresses:
-            self._addr_list.blockSignals(True)
-            try:
-                self._addr_list.clear()
-                for a in addresses:
-                    match = MatchResult(
-                        address=a.get("address", ""),
-                        score=0,
-                        chat_link=a.get("chat_link", ""),
-                        chat_id=a.get("chat_id", ""),
-                    )
-                    item = QListWidgetItem(match.address)
-                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                    state = Qt.CheckState.Checked if (not checked_ids or match.chat_id in checked_ids) else Qt.CheckState.Unchecked
-                    item.setCheckState(state)
-                    item.setData(Qt.ItemDataRole.UserRole, match)
-                    if a.get("manual"):
-                        item.setData(_MANUAL_ROLE, True)
-                    self._addr_list.addItem(item)
-            finally:
-                self._addr_list.blockSignals(False)
+        self._addr_list.blockSignals(True)
+        try:
+            self._addr_list.clear()
+            for a in addresses:
+                match = MatchResult(
+                    address=a.get("address", ""),
+                    score=0,
+                    chat_link=a.get("chat_link", ""),
+                    chat_id=a.get("chat_id", ""),
+                )
+                item = QListWidgetItem(match.address)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                state = Qt.CheckState.Checked if (not checked_ids or match.chat_id in checked_ids) else Qt.CheckState.Unchecked
+                item.setCheckState(state)
+                item.setData(Qt.ItemDataRole.UserRole, match)
+                if a.get("manual"):
+                    item.setData(_MANUAL_ROLE, True)
+                self._addr_list.addItem(item)
+        finally:
+            self._addr_list.blockSignals(False)
+        self._insert_pinned_group(pinned_checked)
 
         self.sync_preview()
 
@@ -1773,6 +1878,27 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:
         self._save_timer.stop()
         self._do_save_state()  # сохраняем сразу, не через таймер
+
+        # Останавливаем все активные воркеры
+        for entry in self._scheduled_posts.values():
+            t = entry.get("timer")
+            if t:
+                t.stop()
+            w = entry.get("worker")
+            if w and w.isRunning():
+                w.quit()
+                w.wait(2000)
+
+        if self._worker and self._worker.isRunning():
+            self._worker.cancel()
+            self._worker.quit()
+            self._worker.wait(3000)
+
+        conn = getattr(self, "_conn_worker", None)
+        if conn and conn.isRunning():
+            conn.quit()
+            conn.wait(1000)
+
         self.max_sender.close()
         super().closeEvent(event)
 
