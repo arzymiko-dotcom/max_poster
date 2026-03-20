@@ -167,6 +167,41 @@ def send_error(title: str, details: str) -> None:
     _send_async(text)
 
 
+def send_post_done(addresses: list, send_max: bool, send_vk: bool, text: str) -> None:
+    """Уведомление об успешной рассылке."""
+    if not _enabled():
+        return
+
+    def _task():
+        now = datetime.now().strftime("%H:%M · %d.%m.%Y")
+        try:
+            user = os.getlogin()
+        except Exception:
+            user = os.environ.get("USERNAME", "?")
+        pc = socket.gethostname()
+        ver = _APP_VERSION
+        platforms = []
+        if send_max:
+            platforms.append("MAX")
+        if send_vk:
+            platforms.append("ВКонтакте")
+        plat_str = " + ".join(platforms) if platforms else "—"
+        n = len(addresses)
+        preview = text[:150] + ("…" if len(text) > 150 else "")
+        msg = (
+            f"📤 <b>Рассылка выполнена</b>\n\n"
+            f"👤 {html.escape(user)}  💻 {html.escape(pc)}\n"
+            f"📦 Версия: {html.escape(ver)}\n"
+            f"📡 Платформы: {plat_str}\n"
+            f"👥 Групп: {n}\n"
+            f"📝 Текст: <i>{html.escape(preview)}</i>\n"
+            f"🕐 {now}"
+        )
+        _send(msg)
+
+    threading.Thread(target=_task, daemon=True).start()
+
+
 def install_excepthook() -> None:
     """
     Устанавливает глобальный обработчик необработанных исключений.

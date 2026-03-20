@@ -396,6 +396,9 @@ class ShellWindow(QMainWindow):
         self._dark_mode: bool = prefs.get("dark_mode", False)
         if self._dark_mode:
             self._apply_dark_mode(self._dark_mode)
+        elif hasattr(self._vk_panel, "set_dark"):
+            # VK-панель по умолчанию тёмная — синхронизируем со светлой темой
+            self._vk_panel.set_dark(False)
 
     # ──────────────────────────────────────────────────────────
     def showEvent(self, event) -> None:
@@ -459,6 +462,8 @@ class ShellWindow(QMainWindow):
             max_widget.setStyleSheet(ss)
         if hasattr(self._stats_panel, "set_dark"):
             self._stats_panel.set_dark(dark)
+        if self._vk_panel is not None and hasattr(self._vk_panel, "set_dark"):
+            self._vk_panel.set_dark(dark)
 
     # ──────────────────────────────────────────────────────────
     def _on_stats_clicked(self) -> None:

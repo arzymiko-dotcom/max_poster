@@ -14,7 +14,7 @@ a = Analysis(
         ('app/my_qr_app/assets',   'app/my_qr_app/assets'),
         ('app/my_qr_app/version.txt', 'app/my_qr_app'),
         # pyspellchecker — русский словарь
-        ('.venv/Lib/site-packages/spellchecker/ru.json.gz', 'spellchecker'),
+        ('.venv/Lib/site-packages/spellchecker/resources/ru.json.gz', 'spellchecker/resources'),
     ],
     hiddenimports=[
         'dotenv', 'dotenv.main',

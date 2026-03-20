@@ -46,6 +46,36 @@ _VK_VER   = "5.199"
 _LP_WAIT  = 25      # секунд ожидания Long Poll
 _LP_RETRY = 10      # секунд до переподключения при ошибке
 
+# Держит ссылки на активные _ImageLoader чтобы GC и Qt не уничтожали их раньше времени
+_running_loaders: set = set()
+
+# ── Цветовые схемы ────────────────────────────────────────────
+_VK_DARK = dict(
+    bg_main="#1e1e2e", bg_conv="#16162a", bg_header="#1e1e2e",
+    bg_selected="#252540", bg_hover="#1e1e38",
+    bg_input="#2d2d3f", bg_btn="#2d2d4f", bg_btn_hover="#3a3a5f",
+    bg_att="#252540", border="#2d2d4f", border2="#3a3a5f",
+    scrollbar="#3d3d5f",
+    text_primary="#e0e0f0", text_secondary="#6e6e9e",
+    text_time="#8888b0", text_preview="#7070a0", text_time_conv="#6e6e8e",
+    text_link="#7ab4ff", text_sender="#4a9cf7", text_btn="#8888c0",
+    bubble_out="#3a4cf7", bubble_out_hover="#4a5cff", bubble_in="#2d2d3f",
+    att_btn_bg="#3a2a2a", att_btn_fg="#c07070", att_btn_hover="#4a3030",
+)
+_VK_LIGHT = dict(
+    bg_main="#f5f5fc", bg_conv="#ededf8", bg_header="#f0f0f9",
+    bg_selected="#d8d8f0", bg_hover="#e0e0f2",
+    bg_input="#ffffff", bg_btn="#e0e0f0", bg_btn_hover="#d0d0e8",
+    bg_att="#e8e8f5", border="#d0d0e8", border2="#c0c0d8",
+    scrollbar="#c0c0d8",
+    text_primary="#1a1a3a", text_secondary="#6060a0",
+    text_time="#8080b0", text_preview="#7070a0", text_time_conv="#7070a0",
+    text_link="#3a6fd8", text_sender="#2a5cc0", text_btn="#6060a0",
+    bubble_out="#4a6cf7", bubble_out_hover="#5a7cff", bubble_in="#e8e8f8",
+    att_btn_bg="#fde8e8", att_btn_fg="#c05050", att_btn_hover="#fdd0d0",
+)
+_vk_colors: dict = dict(_VK_DARK)  # текущая тема (мутабельный dict)
+
 # ─────────────────────────── helpers ────────────────────────────────────────
 
 def _api(method: str, token: str, post: bool = False, **params) -> dict:
@@ -398,13 +428,14 @@ class _AvatarLabel(QLabel):
     def _start_load(self, url: str):
         if self._loader:
             self._loader.stop()
-            self._loader.quit()
-            self._loader.wait(500)
-            self._loader.deleteLater()
-        self._loader = _ImageLoader(url, parent=self)
-        self._loader.loaded.connect(self._on_loaded)
-        self._loader.finished.connect(lambda: setattr(self, "_loader", None))
-        self._loader.start()
+            self._loader = None
+        loader = _ImageLoader(url)  # без parent — не будет уничтожен вместе с виджетом
+        self._loader = loader
+        _running_loaders.add(loader)
+        loader.loaded.connect(self._on_loaded)
+        loader.finished.connect(loader.deleteLater)
+        loader.finished.connect(lambda: _running_loaders.discard(loader))
+        loader.start()
 
     def _on_loaded(self, _url: str, px: QPixmap):
         self._pixmap_raw = px
@@ -504,12 +535,12 @@ class _ConvItem(QWidget):
         name_row.setContentsMargins(0, 0, 0, 0)
 
         self._name_lbl = QLabel(_profile_name(profile))
-        self._name_lbl.setStyleSheet("color:#e0e0f0; font-weight:600; font-size:13px;")
+        self._name_lbl.setStyleSheet(f"color:{_vk_colors['text_primary']}; font-weight:600; font-size:13px;")
         name_row.addWidget(self._name_lbl)
         name_row.addStretch()
 
         self._time_lbl = QLabel(_fmt_time(ts))
-        self._time_lbl.setStyleSheet("color:#6e6e8e; font-size:11px;")
+        self._time_lbl.setStyleSheet(f"color:{_vk_colors['text_time_conv']}; font-size:11px;")
         name_row.addWidget(self._time_lbl, 0, Qt.AlignmentFlag.AlignRight)
         center.addLayout(name_row)
 
@@ -518,7 +549,7 @@ class _ConvItem(QWidget):
         preview_row.setContentsMargins(0, 0, 0, 0)
 
         self._preview = QLabel(last_msg)
-        self._preview.setStyleSheet("color:#7070a0; font-size:12px;")
+        self._preview.setStyleSheet(f"color:{_vk_colors['text_preview']}; font-size:12px;")
         self._preview.setMaximumWidth(220)
         fm = QFontMetrics(self._preview.font())
         elided = fm.elidedText(last_msg, Qt.TextElideMode.ElideRight, 210)
@@ -533,23 +564,30 @@ class _ConvItem(QWidget):
         lay.addLayout(center, 1)
 
     def _apply_style(self, selected: bool):
+        c = _vk_colors
         if selected:
-            self.setStyleSheet("""
-                _ConvItem, QWidget { background: #252540; border-radius: 8px; }
-            """)
+            self.setStyleSheet(
+                f"_ConvItem, QWidget {{ background: {c['bg_selected']}; border-radius: 8px; }}"
+            )
         else:
-            self.setStyleSheet("""
-                _ConvItem, QWidget { background: transparent; border-radius: 8px; }
-                _ConvItem:hover, QWidget:hover { background: #1e1e38; }
-            """)
+            self.setStyleSheet(
+                f"_ConvItem, QWidget {{ background: transparent; border-radius: 8px; }}"
+                f" _ConvItem:hover, QWidget:hover {{ background: {c['bg_hover']}; }}"
+            )
 
     def set_selected(self, selected: bool):
         self._selected = selected
-        bg = "#252540" if selected else "transparent"
+        bg = _vk_colors["bg_selected"] if selected else "transparent"
         self.setStyleSheet(f"background: {bg}; border-radius: 8px;")
 
     def update_unread(self, count: int):
         self._badge.set_count(count)
+
+    def apply_theme(self, c: dict):
+        self._name_lbl.setStyleSheet(f"color:{c['text_primary']}; font-weight:600; font-size:13px;")
+        self._time_lbl.setStyleSheet(f"color:{c['text_time_conv']}; font-size:11px;")
+        self._preview.setStyleSheet(f"color:{c['text_preview']}; font-size:12px;")
+        self._apply_style(self._selected)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -567,9 +605,14 @@ class _AttachmentWidget(QWidget):
 
         t = att.get("type", "")
 
+        c = _vk_colors
+        # Исходящие = синий пузырь → всегда светлый текст
+        att_color  = "#d0d8ff" if outgoing else c['text_secondary']
+        link_color = "#c0d0ff" if outgoing else c['text_link']
+
         if t == "photo":
             self._photo_lbl = QLabel("[Фото]")
-            self._photo_lbl.setStyleSheet("color:#9090c0; font-size:12px;")
+            self._photo_lbl.setStyleSheet(f"color:{att_color}; font-size:12px;")
             lay.addWidget(self._photo_lbl)
             sizes = att["photo"].get("sizes", [])
             if sizes:
@@ -581,7 +624,7 @@ class _AttachmentWidget(QWidget):
             doc  = att["doc"]
             url  = doc.get("url", "")
             name = doc.get("title", "Документ")
-            lbl  = QLabel(f'<a href="{url}" style="color:#7ab4ff;">📎 {name}</a>')
+            lbl  = QLabel(f'<a href="{url}" style="color:{link_color};">📎 {name}</a>')
             lbl.setOpenExternalLinks(False)
             lbl.linkActivated.connect(lambda href: QDesktopServices.openUrl(QUrl(href)))
             lbl.setWordWrap(True)
@@ -589,38 +632,41 @@ class _AttachmentWidget(QWidget):
 
         elif t == "video":
             lbl = QLabel("🎬 Видео")
-            lbl.setStyleSheet("color:#9090c0; font-size:12px;")
+            lbl.setStyleSheet(f"color:{att_color}; font-size:12px;")
             lay.addWidget(lbl)
 
         elif t == "audio":
             lbl = QLabel("🎵 Аудио")
-            lbl.setStyleSheet("color:#9090c0; font-size:12px;")
+            lbl.setStyleSheet(f"color:{att_color}; font-size:12px;")
             lay.addWidget(lbl)
 
         elif t == "sticker":
             lbl = QLabel("🖼 Стикер")
-            lbl.setStyleSheet("color:#9090c0; font-size:12px;")
+            lbl.setStyleSheet(f"color:{att_color}; font-size:12px;")
             lay.addWidget(lbl)
 
         elif t == "link":
             link = att.get("link", {})
             href = link.get("url", "")
             title = link.get("title", href)
-            lbl = QLabel(f'<a href="{href}" style="color:#7ab4ff;">🔗 {title}</a>')
+            lbl = QLabel(f'<a href="{href}" style="color:{link_color};">🔗 {title}</a>')
             lbl.setOpenExternalLinks(True)
             lbl.setWordWrap(True)
             lay.addWidget(lbl)
 
         else:
             lbl = QLabel(f"[{t}]")
-            lbl.setStyleSheet("color:#9090c0; font-size:12px;")
+            lbl.setStyleSheet(f"color:{att_color}; font-size:12px;")
             lay.addWidget(lbl)
 
     def _start_load(self, url: str):
-        self._loader = _ImageLoader(url, parent=self)
-        self._loader.loaded.connect(self._on_photo)
-        self._loader.finished.connect(self._loader.deleteLater)
-        self._loader.start()
+        loader = _ImageLoader(url)  # без parent
+        self._loader = loader
+        _running_loaders.add(loader)
+        loader.loaded.connect(self._on_photo)
+        loader.finished.connect(loader.deleteLater)
+        loader.finished.connect(lambda: _running_loaders.discard(loader))
+        loader.start()
 
     def _on_photo(self, _url: str, px: QPixmap):
         scaled = px.scaled(240, 160,
@@ -659,7 +705,8 @@ class _MsgBubble(QWidget):
         bubble_lay.setContentsMargins(10, 7, 10, 7)
         bubble_lay.setSpacing(3)
 
-        bg_color = "#3a4cf7" if outgoing else "#2d2d3f"
+        c = _vk_colors
+        bg_color = c["bubble_out"] if outgoing else c["bubble_in"]
         bubble_w.setStyleSheet(f"""
             QWidget {{
                 background: {bg_color};
@@ -668,12 +715,17 @@ class _MsgBubble(QWidget):
         """)
         bubble_w.setMaximumWidth(480)
 
+        # Исходящие = синий пузырь → белый текст; входящие → цвета темы
+        msg_text  = "#ffffff" if outgoing else c['text_primary']
+        msg_time  = "#c0c8ff" if outgoing else c['text_time']
+        msg_fwd   = "#c0c8e0" if outgoing else c['text_secondary']
+
         # Имя отправителя (для входящих)
         if not outgoing:
             profile = profiles.get(from_id, {})
             name = _profile_name(profile)
             name_lbl = QLabel(name)
-            name_lbl.setStyleSheet("color:#4a9cf7; font-size:11px; font-weight:600;")
+            name_lbl.setStyleSheet(f"color:{c['text_sender']}; font-size:11px; font-weight:600;")
             bubble_lay.addWidget(name_lbl)
 
         # Текст
@@ -684,7 +736,7 @@ class _MsgBubble(QWidget):
             txt_lbl.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse
             )
-            txt_lbl.setStyleSheet("color:#e0e0f0; font-size:13px;")
+            txt_lbl.setStyleSheet(f"color:{msg_text}; font-size:13px;")
             txt_lbl.setMaximumWidth(460)
             bubble_lay.addWidget(txt_lbl)
 
@@ -697,13 +749,13 @@ class _MsgBubble(QWidget):
         fwd = msg.get("fwd_messages", [])
         if fwd:
             fwd_lbl = QLabel(f"↩ {len(fwd)} пересл. сообщ.")
-            fwd_lbl.setStyleSheet("color:#7080a0; font-size:11px; font-style:italic;")
+            fwd_lbl.setStyleSheet(f"color:{msg_fwd}; font-size:11px; font-style:italic;")
             bubble_lay.addWidget(fwd_lbl)
 
         # Время
         ts   = msg.get("date", 0)
         time_lbl = QLabel(_fmt_time(ts))
-        time_lbl.setStyleSheet("color:#8888b0; font-size:10px;")
+        time_lbl.setStyleSheet(f"color:{msg_time}; font-size:10px;")
         time_lbl.setAlignment(
             Qt.AlignmentFlag.AlignRight if outgoing else Qt.AlignmentFlag.AlignLeft
         )
@@ -723,68 +775,94 @@ class _ConvListPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedWidth(310)
-        self.setStyleSheet("background: #16162a;")
+        c = _vk_colors
+        self.setStyleSheet(f"background: {c['bg_conv']};")
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
         # ── Заголовок ──
-        header = QWidget()
-        header.setFixedHeight(54)
-        header.setStyleSheet("background: #1e1e2e; border-bottom: 1px solid #2d2d4f;")
-        h_lay = QHBoxLayout(header)
+        self._header = QWidget()
+        self._header.setFixedHeight(54)
+        self._header.setStyleSheet(f"background: {c['bg_header']}; border-bottom: 1px solid {c['border']};")
+        h_lay = QHBoxLayout(self._header)
         h_lay.setContentsMargins(14, 0, 10, 0)
 
-        title = QLabel("Сообщения")
-        title.setStyleSheet("color:#e0e0f0; font-size:15px; font-weight:700;")
-        h_lay.addWidget(title)
+        self._title = QLabel("Сообщения")
+        self._title.setStyleSheet(f"color:{c['text_primary']}; font-size:15px; font-weight:700;")
+        h_lay.addWidget(self._title)
         h_lay.addStretch()
 
         self._refresh_btn = QPushButton("↻")
         self._refresh_btn.setFixedSize(32, 32)
-        self._refresh_btn.setStyleSheet("""
-            QPushButton {
-                background: #2d2d4f; color: #8888c0;
+        self._refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {c['bg_btn']}; color: {c['text_btn']};
                 border-radius: 6px; font-size: 16px;
-            }
-            QPushButton:hover { background: #3a3a5f; color: #e0e0f0; }
+            }}
+            QPushButton:hover {{ background: {c['bg_btn_hover']}; color: {c['text_primary']}; }}
         """)
         h_lay.addWidget(self._refresh_btn)
-        root.addWidget(header)
+        root.addWidget(self._header)
 
         # ── Строка состояния ──
         self._status_lbl = QLabel("Загрузка…")
         self._status_lbl.setFixedHeight(26)
         self._status_lbl.setStyleSheet(
-            "color:#6e6e9e; font-size:11px; padding-left:14px;"
+            f"color:{c['text_secondary']}; font-size:11px; padding-left:14px;"
         )
         root.addWidget(self._status_lbl)
 
         # ── Прокручиваемый список ──
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("""
-            QScrollArea { border: none; background: transparent; }
-            QScrollBar:vertical {
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll.setStyleSheet(f"""
+            QScrollArea {{ border: none; background: transparent; }}
+            QScrollBar:vertical {{
                 width: 4px; background: transparent;
-            }
-            QScrollBar::handle:vertical { background: #3d3d5f; border-radius: 2px; }
+            }}
+            QScrollBar::handle:vertical {{ background: {c['scrollbar']}; border-radius: 2px; }}
         """)
 
         self._list_widget = QWidget()
-        self._list_widget.setStyleSheet("background: transparent;")
+        self._list_widget.setStyleSheet(f"background: {c['bg_conv']};")
         self._list_lay = QVBoxLayout(self._list_widget)
         self._list_lay.setContentsMargins(6, 6, 6, 6)
         self._list_lay.setSpacing(2)
         self._list_lay.addStretch()
 
-        scroll.setWidget(self._list_widget)
-        root.addWidget(scroll, 1)
+        self._scroll.setWidget(self._list_widget)
+        root.addWidget(self._scroll, 1)
 
         self._items: dict[int, _ConvItem] = {}   # peer_id → widget
         self._current_peer: Optional[int] = None
+
+    def apply_theme(self, c: dict):
+        self.setStyleSheet(f"background: {c['bg_conv']};")
+        self._header.setStyleSheet(f"background: {c['bg_header']}; border-bottom: 1px solid {c['border']};")
+        self._title.setStyleSheet(f"color:{c['text_primary']}; font-size:15px; font-weight:700;")
+        self._refresh_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {c['bg_btn']}; color: {c['text_btn']};
+                border-radius: 6px; font-size: 16px;
+            }}
+            QPushButton:hover {{ background: {c['bg_btn_hover']}; color: {c['text_primary']}; }}
+        """)
+        self._status_lbl.setStyleSheet(
+            f"color:{c['text_secondary']}; font-size:11px; padding-left:14px;"
+        )
+        self._scroll.setStyleSheet(f"""
+            QScrollArea {{ border: none; background: transparent; }}
+            QScrollBar:vertical {{
+                width: 4px; background: transparent;
+            }}
+            QScrollBar::handle:vertical {{ background: {c['scrollbar']}; border-radius: 2px; }}
+        """)
+        self._list_widget.setStyleSheet(f"background: {c['bg_conv']};")
+        for w in self._items.values():
+            w.apply_theme(c)
 
     def set_status(self, text: str):
         self._status_lbl.setText(text)
@@ -875,7 +953,8 @@ class _ChatView(QWidget):
         self._peer_name = ""
         self._pending_files: list[str] = []
 
-        self.setStyleSheet("background: #1e1e2e;")
+        c = _vk_colors
+        self.setStyleSheet(f"background: {c['bg_main']};")
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -884,14 +963,14 @@ class _ChatView(QWidget):
         self._header = QWidget()
         self._header.setFixedHeight(54)
         self._header.setStyleSheet(
-            "background: #1e1e2e; border-bottom: 1px solid #2d2d4f;"
+            f"background: {c['bg_header']}; border-bottom: 1px solid {c['border']};"
         )
         h_lay = QHBoxLayout(self._header)
         h_lay.setContentsMargins(16, 0, 16, 0)
 
         self._chat_name_lbl = QLabel("Выберите диалог")
         self._chat_name_lbl.setStyleSheet(
-            "color:#e0e0f0; font-size:15px; font-weight:700;"
+            f"color:{c['text_primary']}; font-size:15px; font-weight:700;"
         )
         h_lay.addWidget(self._chat_name_lbl)
         h_lay.addStretch()
@@ -901,7 +980,7 @@ class _ChatView(QWidget):
         self._load_status = QLabel("")
         self._load_status.setFixedHeight(22)
         self._load_status.setStyleSheet(
-            "color:#6e6e9e; font-size:11px; padding-left:16px;"
+            f"color:{c['text_secondary']}; font-size:11px; padding-left:16px;"
         )
         root.addWidget(self._load_status)
 
@@ -909,16 +988,16 @@ class _ChatView(QWidget):
         self._scroll = QScrollArea()
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._scroll.setStyleSheet("""
-            QScrollArea { border: none; background: #1e1e2e; }
-            QScrollBar:vertical {
+        self._scroll.setStyleSheet(f"""
+            QScrollArea {{ border: none; background: {c['bg_main']}; }}
+            QScrollBar:vertical {{
                 width: 5px; background: transparent;
-            }
-            QScrollBar::handle:vertical { background: #3d3d5f; border-radius: 2px; }
+            }}
+            QScrollBar::handle:vertical {{ background: {c['scrollbar']}; border-radius: 2px; }}
         """)
 
         self._msg_widget = QWidget()
-        self._msg_widget.setStyleSheet("background: #1e1e2e;")
+        self._msg_widget.setStyleSheet(f"background: {c['bg_main']};")
         self._msg_lay = QVBoxLayout(self._msg_widget)
         self._msg_lay.setContentsMargins(0, 10, 0, 10)
         self._msg_lay.setSpacing(4)
@@ -931,49 +1010,49 @@ class _ChatView(QWidget):
         self._att_panel = QWidget()
         self._att_panel.setVisible(False)
         self._att_panel.setFixedHeight(32)
-        self._att_panel.setStyleSheet("background: #252540; border-top: 1px solid #3a3a5f;")
+        self._att_panel.setStyleSheet(f"background: {c['bg_att']}; border-top: 1px solid {c['border2']};")
         att_lay = QHBoxLayout(self._att_panel)
         att_lay.setContentsMargins(12, 0, 8, 0)
         att_lay.setSpacing(6)
 
         self._att_lbl = QLabel()
-        self._att_lbl.setStyleSheet("color:#8888c0; font-size:12px;")
+        self._att_lbl.setStyleSheet(f"color:{c['text_btn']}; font-size:12px;")
         att_lay.addWidget(self._att_lbl)
         att_lay.addStretch()
 
         self._att_clear_btn = QPushButton("✕ Очистить")
         self._att_clear_btn.setFixedHeight(22)
-        self._att_clear_btn.setStyleSheet("""
-            QPushButton { background:#3a2a2a; color:#c07070;
-                          border-radius:4px; font-size:11px; padding:0 8px; }
-            QPushButton:hover { background:#4a3030; }
+        self._att_clear_btn.setStyleSheet(f"""
+            QPushButton {{ background:{c['att_btn_bg']}; color:{c['att_btn_fg']};
+                          border-radius:4px; font-size:11px; padding:0 8px; }}
+            QPushButton:hover {{ background:{c['att_btn_hover']}; }}
         """)
         self._att_clear_btn.clicked.connect(self._clear_attachments)
         att_lay.addWidget(self._att_clear_btn)
         root.addWidget(self._att_panel)
 
         # ── Область ввода ──
-        input_container = QWidget()
-        input_container.setStyleSheet(
-            "background: #1e1e2e; border-top: 1px solid #2d2d4f;"
+        self._input_container = QWidget()
+        self._input_container.setStyleSheet(
+            f"background: {c['bg_main']}; border-top: 1px solid {c['border']};"
         )
-        input_lay = QVBoxLayout(input_container)
+        input_lay = QVBoxLayout(self._input_container)
         input_lay.setContentsMargins(12, 8, 12, 8)
         input_lay.setSpacing(6)
 
         self._input = SpellCheckTextEdit()
         self._input.setPlaceholderText("Написать сообщение… (Ctrl+Enter — отправить)")
         self._input.setFixedHeight(70)
-        self._input.setStyleSheet("""
-            QTextEdit {
-                background: #2d2d3f;
-                color: #e0e0f0;
-                border: 1px solid #3d3d5f;
+        self._input.setStyleSheet(f"""
+            QTextEdit {{
+                background: {c['bg_input']};
+                color: {c['text_primary']};
+                border: 1px solid {c['border2']};
                 border-radius: 8px;
                 padding: 6px 10px;
                 font-size: 13px;
-            }
-            QTextEdit:focus { border-color: #4a6cf7; }
+            }}
+            QTextEdit:focus {{ border-color: {c['bubble_out']}; }}
         """)
         self._input_filter = _InputFilter()
         self._input_filter.send_triggered.connect(self._on_send)
@@ -995,37 +1074,100 @@ class _ChatView(QWidget):
 
         self._send_btn = QPushButton("Отправить")
         self._send_btn.setFixedHeight(34)
-        self._send_btn.setStyleSheet("""
-            QPushButton {
-                background: #4a6cf7; color: white;
+        self._send_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {c['bubble_out']}; color: white;
                 border-radius: 7px; font-size: 13px;
                 font-weight: 600; padding: 0 18px;
-            }
-            QPushButton:hover { background: #5a7cff; }
-            QPushButton:disabled { background: #2d2d5f; color: #6060a0; }
+            }}
+            QPushButton:hover {{ background: {c['bubble_out_hover']}; }}
+            QPushButton:disabled {{ background: {c['bg_btn']}; color: {c['text_secondary']}; }}
         """)
         self._send_btn.clicked.connect(self._on_send)
         btn_row.addWidget(self._send_btn)
 
         input_lay.addLayout(btn_row)
-        root.addWidget(input_container)
+        root.addWidget(self._input_container)
 
         self._set_input_enabled(False)
 
     @staticmethod
     def _mk_btn(icon: str, tip: str) -> QPushButton:
+        c = _vk_colors
         b = QPushButton(icon)
         b.setFixedSize(34, 34)
         b.setToolTip(tip)
-        b.setStyleSheet("""
-            QPushButton {
-                background: #2d2d4f; color: #8888c0;
+        b.setStyleSheet(f"""
+            QPushButton {{
+                background: {c['bg_btn']}; color: {c['text_btn']};
                 border-radius: 7px; font-size: 16px;
-            }
-            QPushButton:hover { background: #3a3a5f; color: #e0e0f0; }
-            QPushButton:disabled { background: #1e1e38; color: #404060; }
+            }}
+            QPushButton:hover {{ background: {c['bg_btn_hover']}; color: {c['text_primary']}; }}
+            QPushButton:disabled {{ background: {c['bg_main']}; color: {c['text_secondary']}; }}
         """)
         return b
+
+    def apply_theme(self, c: dict):
+        self.setStyleSheet(f"background: {c['bg_main']};")
+        self._header.setStyleSheet(
+            f"background: {c['bg_header']}; border-bottom: 1px solid {c['border']};"
+        )
+        self._chat_name_lbl.setStyleSheet(
+            f"color:{c['text_primary']}; font-size:15px; font-weight:700;"
+        )
+        self._load_status.setStyleSheet(
+            f"color:{c['text_secondary']}; font-size:11px; padding-left:16px;"
+        )
+        self._scroll.setStyleSheet(f"""
+            QScrollArea {{ border: none; background: {c['bg_main']}; }}
+            QScrollBar:vertical {{
+                width: 5px; background: transparent;
+            }}
+            QScrollBar::handle:vertical {{ background: {c['scrollbar']}; border-radius: 2px; }}
+        """)
+        self._msg_widget.setStyleSheet(f"background: {c['bg_main']};")
+        self._att_panel.setStyleSheet(
+            f"background: {c['bg_att']}; border-top: 1px solid {c['border2']};"
+        )
+        self._att_lbl.setStyleSheet(f"color:{c['text_btn']}; font-size:12px;")
+        self._att_clear_btn.setStyleSheet(f"""
+            QPushButton {{ background:{c['att_btn_bg']}; color:{c['att_btn_fg']};
+                          border-radius:4px; font-size:11px; padding:0 8px; }}
+            QPushButton:hover {{ background:{c['att_btn_hover']}; }}
+        """)
+        self._input_container.setStyleSheet(
+            f"background: {c['bg_main']}; border-top: 1px solid {c['border']};"
+        )
+        self._input.setStyleSheet(f"""
+            QTextEdit {{
+                background: {c['bg_input']};
+                color: {c['text_primary']};
+                border: 1px solid {c['border2']};
+                border-radius: 8px;
+                padding: 6px 10px;
+                font-size: 13px;
+            }}
+            QTextEdit:focus {{ border-color: {c['bubble_out']}; }}
+        """)
+        self._send_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {c['bubble_out']}; color: white;
+                border-radius: 7px; font-size: 13px;
+                font-weight: 600; padding: 0 18px;
+            }}
+            QPushButton:hover {{ background: {c['bubble_out_hover']}; }}
+            QPushButton:disabled {{ background: {c['bg_btn']}; color: {c['text_secondary']}; }}
+        """)
+        btn_ss = f"""
+            QPushButton {{
+                background: {c['bg_btn']}; color: {c['text_btn']};
+                border-radius: 7px; font-size: 16px;
+            }}
+            QPushButton:hover {{ background: {c['bg_btn_hover']}; color: {c['text_primary']}; }}
+            QPushButton:disabled {{ background: {c['bg_main']}; color: {c['text_secondary']}; }}
+        """
+        self._photo_btn.setStyleSheet(btn_ss)
+        self._doc_btn.setStyleSheet(btn_ss)
 
     def _set_input_enabled(self, enabled: bool):
         self._input.setEnabled(enabled)
@@ -1140,15 +1282,16 @@ class VkMessagesPanel(QWidget):
     # ── UI ──────────────────────────────────────────────────────────────────
 
     def _setup_ui(self):
-        self.setStyleSheet("background: #16162a;")
+        c = _vk_colors
+        self.setStyleSheet(f"background: {c['bg_conv']};")
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
         # Разделитель
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet("color: #2d2d4f;")
+        self._sep = QFrame()
+        self._sep.setFrameShape(QFrame.Shape.VLine)
+        self._sep.setStyleSheet(f"color: {c['border']};")
 
         self._conv_panel = _ConvListPanel()
         self._conv_panel._refresh_btn.clicked.connect(self._load_conversations)
@@ -1158,8 +1301,19 @@ class VkMessagesPanel(QWidget):
         self._chat_view.send_requested.connect(self._on_send_requested)
 
         root.addWidget(self._conv_panel)
-        root.addWidget(sep)
+        root.addWidget(self._sep)
         root.addWidget(self._chat_view, 1)
+
+    # ── Theme ────────────────────────────────────────────────────────────────
+
+    def set_dark(self, dark: bool) -> None:
+        _vk_colors.clear()
+        _vk_colors.update(_VK_DARK if dark else _VK_LIGHT)
+        c = _vk_colors
+        self.setStyleSheet(f"background: {c['bg_conv']};")
+        self._sep.setStyleSheet(f"color: {c['border']};")
+        self._conv_panel.apply_theme(c)
+        self._chat_view.apply_theme(c)
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -1347,8 +1501,8 @@ class VkMessagesPanel(QWidget):
         if worker and worker.isRunning():
             if hasattr(worker, "stop"):
                 worker.stop()
+            worker.finished.connect(worker.deleteLater)
             worker.quit()
-            worker.wait(2000)
 
     def _stop_all_workers(self):
         self._reload_timer.stop()

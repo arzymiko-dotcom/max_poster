@@ -1530,6 +1530,12 @@ class MainWindow(QMainWindow):
                 self._refresh_history()
             except Exception as exc:
                 _log.warning("Не удалось сохранить историю: %s", exc)
+            tg_notify.send_post_done(
+                addresses=h.get("addresses", []),
+                send_max=h.get("send_max", False),
+                send_vk=h.get("send_vk", False),
+                text=h.get("text", ""),
+            )
         else:
             tg_notify.send_error("Ошибка отправки поста", message)
             SendResultDialog(message, self).exec()
