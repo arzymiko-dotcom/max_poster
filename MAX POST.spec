@@ -25,6 +25,8 @@ a = Analysis(
         # Новые модули
         'stats_panel',
         'html', 'html.parser',       # парсер отчёта в stats_panel
+        'bs4', 'bs4.builder', 'bs4.builder._htmlparser',
+        'soupsieve',
         'log_setup', 'constants',
         # ui-пакет — импортируются внутри try/except, PyInstaller может пропустить
         'ui', 'ui.paths', 'ui.widgets', 'ui.emoji_picker',
