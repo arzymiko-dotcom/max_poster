@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 _log = logging.getLogger(__name__)
@@ -109,6 +110,40 @@ def _assets(name: str) -> str:
 # ──────────────────────────────────────────────────────────────
 #  Пароль для настроек подключений
 # ──────────────────────────────────────────────────────────────
+_PW_MAX_ATTEMPTS = 5
+_PW_LOCKOUT_SEC  = 5 * 60  # 5 минут
+_pw_fail_count: int   = 0
+_pw_locked_until: float = 0.0
+
+
+def _pw_check_locked() -> str | None:
+    """Возвращает сообщение если доступ заблокирован, иначе None."""
+    global _pw_locked_until
+    if _pw_locked_until and time.monotonic() < _pw_locked_until:
+        remaining = int(_pw_locked_until - time.monotonic())
+        mins, secs = divmod(remaining, 60)
+        return f"Слишком много неверных попыток.\nПовторите через {mins}:{secs:02d}."
+    return None
+
+
+def _pw_record_fail() -> str:
+    """Фиксирует неудачную попытку. Возвращает текст ошибки для пользователя."""
+    global _pw_fail_count, _pw_locked_until
+    _pw_fail_count += 1
+    remaining_attempts = _PW_MAX_ATTEMPTS - _pw_fail_count
+    if _pw_fail_count >= _PW_MAX_ATTEMPTS:
+        _pw_locked_until = time.monotonic() + _PW_LOCKOUT_SEC
+        _pw_fail_count = 0
+        return "Пароль неверный.\nДоступ заблокирован на 5 минут."
+    return f"Пароль неверный. Осталось попыток: {remaining_attempts}."
+
+
+def _pw_reset_fails() -> None:
+    global _pw_fail_count, _pw_locked_until
+    _pw_fail_count = 0
+    _pw_locked_until = 0.0
+
+
 def _verify_pw(password: str, stored: str) -> bool:
     """Проверяет пароль против PBKDF2-хэша."""
     if stored.startswith("pbkdf2:"):
@@ -428,6 +463,12 @@ class ShellWindow(QMainWindow):
 
     # ──────────────────────────────────────────────────────────
     def _open_settings_dialog(self) -> None:
+        # Проверка блокировки
+        lock_msg = _pw_check_locked()
+        if lock_msg:
+            QMessageBox.warning(self, "Доступ заблокирован", lock_msg)
+            return
+
         pw_hash = _get_admin_pw_hash()
         if not pw_hash:
             QMessageBox.warning(self, "Настройки недоступны",
@@ -439,9 +480,11 @@ class ShellWindow(QMainWindow):
         if enter_dlg.exec() != QDialog.DialogCode.Accepted:
             return
         if not _verify_pw(enter_dlg.entered_password(), pw_hash):
-            QMessageBox.warning(self, "Неверный пароль", "Пароль неверный.")
+            msg = _pw_record_fail()
+            QMessageBox.warning(self, "Неверный пароль", msg)
             return
 
+        _pw_reset_fails()
         from ui.settings_dialog import SettingsDialog
         dlg = SettingsDialog(self)
         dlg.settings_saved.connect(self._max_win.reload_senders)
