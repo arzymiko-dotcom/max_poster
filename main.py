@@ -611,7 +611,7 @@ class MainWindow(QMainWindow):
         # Иконки платформ
         _assets = _assets_dir()
         _max_icon_path = _assets / "max.ico"
-        _vk_icon_path = _assets / "vk.ico"
+        _vk_icon_path = _assets / "vk_2.ico"
         if _max_icon_path.exists():
             self.chk_max.setIcon(QIcon(str(_max_icon_path)))
             self.chk_max.setIconSize(QSize(18, 18))
@@ -866,7 +866,7 @@ class MainWindow(QMainWindow):
             return pix.scaled(_ico_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation) if not pix.isNull() else None
 
         self._hist_max_pix = _load_icon("max.ico")
-        self._hist_vk_pix = _load_icon("vk.ico")
+        self._hist_vk_pix = _load_icon("vk_2.ico")
 
         self._refresh_history()
         return frame

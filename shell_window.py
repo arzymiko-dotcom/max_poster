@@ -12,10 +12,10 @@ from pathlib import Path
 
 _log = logging.getLogger(__name__)
 
-from PyQt6.QtCore import QSize, QTimer, Qt
+from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QButtonGroup, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout,
+    QButtonGroup, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton,
     QStackedWidget, QVBoxLayout, QWidget,
 )
@@ -108,15 +108,8 @@ def _assets(name: str) -> str:
 # ──────────────────────────────────────────────────────────────
 #  Пароль для настроек подключений
 # ──────────────────────────────────────────────────────────────
-def _hash_pw(password: str) -> str:
-    """PBKDF2-HMAC-SHA256 с random salt. Формат: 'pbkdf2:<salt_hex>:<hash_hex>'."""
-    salt = os.urandom(16)
-    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 260_000)
-    return f"pbkdf2:{salt.hex()}:{key.hex()}"
-
-
 def _verify_pw(password: str, stored: str) -> bool:
-    """Проверяет пароль против PBKDF2 или устаревшего SHA256 хэша."""
+    """Проверяет пароль против PBKDF2-хэша."""
     if stored.startswith("pbkdf2:"):
         try:
             _, salt_hex, hash_hex = stored.split(":", 2)
@@ -125,65 +118,17 @@ def _verify_pw(password: str, stored: str) -> bool:
             return key.hex() == hash_hex
         except (ValueError, IndexError):
             return False
-    # Устаревший SHA256 — принимаем, но при следующем сохранении обновится
-    return hashlib.sha256(password.encode("utf-8")).hexdigest() == stored
+    return False
 
 
-class _SetPasswordDialog(QDialog):
-    """Первичная установка пароля."""
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Создать пароль для настроек")
-        self.setMinimumWidth(360)
-        self._hash: str = ""
-        self._hint: str = ""
+def _get_admin_pw_hash() -> str:
+    """Читает хэш пароля из .env (SETTINGS_PASSWORD_HASH).
+    Пароль задаётся разработчиком — пользователь изменить не может."""
+    from env_utils import get_env_path
+    from dotenv import dotenv_values
+    env = dotenv_values(get_env_path())
+    return env.get("SETTINGS_PASSWORD_HASH", "")
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 12)
-        layout.setSpacing(10)
-
-        layout.addWidget(QLabel("Защитите настройки паролем.\nОн потребуется при каждом открытии."))
-
-        form = QFormLayout()
-        form.setSpacing(8)
-        self._pw = QLineEdit()
-        self._pw.setEchoMode(QLineEdit.EchoMode.Password)
-        self._pw.setPlaceholderText("Придумайте пароль")
-        self._pw2 = QLineEdit()
-        self._pw2.setEchoMode(QLineEdit.EchoMode.Password)
-        self._pw2.setPlaceholderText("Повторите пароль")
-        self._hint_edit = QLineEdit()
-        self._hint_edit.setPlaceholderText("Необязательно — подсказка если забудете")
-        form.addRow("Пароль:", self._pw)
-        form.addRow("Повтор:", self._pw2)
-        form.addRow("Подсказка:", self._hint_edit)
-        layout.addLayout(form)
-
-        self._error = QLabel("")
-        self._error.setStyleSheet("color: #e05555;")
-        layout.addWidget(self._error)
-
-        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        btns.button(QDialogButtonBox.StandardButton.Ok).setText("Сохранить")
-        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("Отмена")
-        btns.accepted.connect(self._check)
-        btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
-
-    def _check(self) -> None:
-        pw = self._pw.text()
-        if not pw:
-            self._error.setText("Пароль не может быть пустым.")
-            return
-        if pw != self._pw2.text():
-            self._error.setText("Пароли не совпадают.")
-            return
-        self._hash = _hash_pw(pw)
-        self._hint = self._hint_edit.text().strip()
-        self.accept()
-
-    def result_data(self) -> tuple[str, str]:
-        return self._hash, self._hint
 
 
 class _EnterPasswordDialog(QDialog):
@@ -279,18 +224,14 @@ class _SideBar(QFrame):
         layout.addSpacing(10)
 
         # Кнопки модулей
-        self.btn_max   = _SideButton(_assets("MAX POST.ico"), "MAX POST — отправка сообщений",    "MP")
+        self.btn_max   = _SideButton(_assets("post.ico"), "MAX POST — отправка сообщений",    "MP")
         self.btn_qr    = _SideButton(_assets("qr.ico"),       "QR Generator — генератор карточек", "QR")
         self.btn_stats = _SideButton(_assets("state.ico"),    "Статистика групп",                  "📊")
         self.btn_mkd   = _SideButton(_assets("mkd.ico"),      "СУПЕР МКД+ — в разработке",         "МКД+")
 
         # ВКонтакте — кнопка с бейджем непрочитанных
-        self._vk_container = QWidget(self)
-        self._vk_container.setFixedSize(60, 60)
         self.btn_vk = _SideButton(_assets("vk_2.ico"), "Сообщения ВКонтакте", "VK")
-        self.btn_vk.setParent(self._vk_container)
-        self.btn_vk.setGeometry(0, 0, 60, 60)
-        self._vk_badge = QLabel("", self._vk_container)
+        self._vk_badge = QLabel("", self.btn_vk)
         self._vk_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._vk_badge.setFixedSize(18, 18)
         self._vk_badge.setStyleSheet(
@@ -305,7 +246,7 @@ class _SideBar(QFrame):
         layout.addSpacing(8)
         layout.addWidget(self.btn_stats)
         layout.addSpacing(8)
-        layout.addWidget(self._vk_container)
+        layout.addWidget(self.btn_vk)
         layout.addSpacing(8)
         layout.addWidget(self.btn_mkd)
 
@@ -460,17 +401,6 @@ class ShellWindow(QMainWindow):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._apply_dark_titlebar()
-        if not getattr(self, "_panels_warmed", False):
-            self._panels_warmed = True
-            QTimer.singleShot(400, self._warmup_panels)
-
-    def _warmup_panels(self) -> None:
-        """Прогрев всех панелей: Qt проводит layout/paint для каждой
-        заранее, чтобы первое переключение в сайдбаре было мгновенным."""
-        current = self._stack.currentIndex()
-        for i in range(self._stack.count()):
-            self._stack.setCurrentIndex(i)
-        self._stack.setCurrentIndex(current)
 
     # ──────────────────────────────────────────────────────────
     def _apply_dark_titlebar(self) -> None:
@@ -494,26 +424,19 @@ class ShellWindow(QMainWindow):
 
     # ──────────────────────────────────────────────────────────
     def _open_settings_dialog(self) -> None:
-        prefs = _load_ui_prefs()
-        pw_hash = prefs.get("settings_password_hash", "")
-        hint    = prefs.get("settings_password_hint", "")
-
+        pw_hash = _get_admin_pw_hash()
         if not pw_hash:
-            # Первый вход — предложить установить пароль
-            set_dlg = _SetPasswordDialog(self)
-            if set_dlg.exec() != QDialog.DialogCode.Accepted:
-                return
-            pw_hash, hint = set_dlg.result_data()
-            prefs["settings_password_hash"] = pw_hash
-            prefs["settings_password_hint"] = hint
-            _save_ui_prefs(prefs)
-        else:
-            enter_dlg = _EnterPasswordDialog(hint, self)
-            if enter_dlg.exec() != QDialog.DialogCode.Accepted:
-                return
-            if not _verify_pw(enter_dlg.entered_password(), pw_hash):
-                QMessageBox.warning(self, "Неверный пароль", "Пароль неверный. Попробуйте ещё раз.")
-                return
+            QMessageBox.warning(self, "Настройки недоступны",
+                                "Пароль администратора не задан.\n"
+                                "Добавьте SETTINGS_PASSWORD_HASH в .env.")
+            return
+
+        enter_dlg = _EnterPasswordDialog("", self)
+        if enter_dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        if not _verify_pw(enter_dlg.entered_password(), pw_hash):
+            QMessageBox.warning(self, "Неверный пароль", "Пароль неверный.")
+            return
 
         from ui.settings_dialog import SettingsDialog
         dlg = SettingsDialog(self)
