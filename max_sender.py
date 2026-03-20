@@ -7,13 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import requests
-from dotenv import load_dotenv
-
-from env_utils import get_env_path
+from env_utils import get_env_path, load_env_safe
 
 _log = logging.getLogger(__name__)
 
-load_dotenv(get_env_path())
+load_env_safe(get_env_path())
 
 
 def _json_or_raise(resp: requests.Response) -> dict | list:

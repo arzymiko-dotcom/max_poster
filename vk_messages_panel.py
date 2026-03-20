@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from dotenv import load_dotenv
 
 from PyQt6.QtCore import (
     QEvent, QObject, QRunnable, QSize, QThread, QTimer, QUrl,
@@ -36,7 +35,7 @@ from PyQt6.QtWidgets import (
     QSpacerItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
-from env_utils import get_env_path
+from env_utils import get_env_path, load_env_safe
 from ui.widgets import SpellCheckTextEdit
 
 _log = logging.getLogger(__name__)
@@ -1346,7 +1345,7 @@ class VkMessagesPanel(QWidget):
         except OSError:
             mtime = 0
         if mtime != getattr(self, "_env_mtime", None):
-            load_dotenv(env_path, override=True)
+            load_env_safe(env_path, override=True)
             self._env_mtime = mtime
         token    = os.environ.get("VK_GROUP_TOKEN", "").strip()
         group_id = os.environ.get("VK_GROUP_ID",    "").strip()

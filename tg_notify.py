@@ -22,11 +22,10 @@ from datetime import datetime
 from pathlib import Path
 
 import requests
-from dotenv import load_dotenv
 
-from env_utils import get_env_path
+from env_utils import get_env_path, load_env_safe
 
-load_dotenv(get_env_path())
+load_env_safe(get_env_path())
 
 # Паттерны для редактирования токенов из сообщений об ошибках
 _TOKEN_RE = re.compile(

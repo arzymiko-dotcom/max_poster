@@ -2,7 +2,6 @@
 import re
 from pathlib import Path
 
-from dotenv import load_dotenv
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
@@ -17,7 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from env_utils import get_env_path
+from env_utils import get_env_path, load_env_safe
 
 
 def _read_env() -> dict[str, str]:
@@ -223,6 +222,6 @@ class SettingsDialog(QDialog):
             "VK_GROUP_TOKEN":     self._vk_group_token.text().strip(),
             "VK_USER_TOKEN":      self._vk_user_token.text().strip(),
         })
-        load_dotenv(get_env_path(), override=True)
+        load_env_safe(get_env_path(), override=True)
         self.settings_saved.emit()
         self.accept()

@@ -19,7 +19,6 @@ from pathlib import Path
 
 import pandas as pd
 import requests
-from dotenv import load_dotenv
 from PyQt6.QtCore import QThread, QTimer, QUrl, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QDesktopServices, QFont
 from PyQt6.QtWidgets import (
@@ -39,7 +38,7 @@ except Exception as _web_err:
 
 _WEB_REPORT_URL = "https://bot-dev.gkh.spb.ru/gks2vyb-report.php"
 
-from env_utils import get_env_path
+from env_utils import get_env_path, load_env_safe
 
 _log = logging.getLogger(__name__)
 
@@ -133,7 +132,7 @@ class _FetchWorker(QThread):
         self._stop = False
 
     def run(self) -> None:
-        load_dotenv(get_env_path())
+        load_env_safe(get_env_path())
         api_url   = os.getenv("MAX_API_URL", "https://api.green-api.com")
         id_inst   = os.getenv("MAX_ID_INSTANCE", "")
         api_token = os.getenv("MAX_API_TOKEN", "")
@@ -1302,8 +1301,7 @@ class StatsPanel(QWidget):
 
     def _load_subscriber_history(self) -> None:
         """Загружает историю подписчиков: авто через бота или вручную из файла."""
-        from dotenv import load_dotenv
-        load_dotenv(get_env_path(), override=True)
+        load_env_safe(get_env_path(), override=True)
         instance_id = os.getenv("MAX_ID_INSTANCE", "").strip()
         api_token   = os.getenv("MAX_API_TOKEN",   "").strip()
 
