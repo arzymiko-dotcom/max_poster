@@ -23,7 +23,7 @@ def main() -> None:
     import os
     os.environ.setdefault(
         "QTWEBENGINE_CHROMIUM_FLAGS",
-        "--ignore-certificate-errors --disable-direct-composition"
+        "--disable-direct-composition"
     )
 
     try:

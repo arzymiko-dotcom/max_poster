@@ -4,6 +4,7 @@ shell_window.py — VS Code-style контейнер для всех модул�
 
 import ctypes
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -15,7 +16,7 @@ _log = logging.getLogger(__name__)
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
-    QButtonGroup, QDialog, QDialogButtonBox, QFrame, QHBoxLayout,
+    QButtonGroup, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton,
     QStackedWidget, QVBoxLayout, QWidget,
 )
@@ -115,7 +116,7 @@ def _verify_pw(password: str, stored: str) -> bool:
             _, salt_hex, hash_hex = stored.split(":", 2)
             salt = bytes.fromhex(salt_hex)
             key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 260_000)
-            return key.hex() == hash_hex
+            return hmac.compare_digest(key.hex(), hash_hex)
         except (ValueError, IndexError):
             return False
     return False
@@ -124,10 +125,10 @@ def _verify_pw(password: str, stored: str) -> bool:
 def _get_admin_pw_hash() -> str:
     """Читает хэш пароля из .env (SETTINGS_PASSWORD_HASH).
     Пароль задаётся разработчиком — пользователь изменить не может."""
-    from env_utils import get_env_path
-    from dotenv import dotenv_values
-    env = dotenv_values(get_env_path())
-    return env.get("SETTINGS_PASSWORD_HASH", "")
+    from env_utils import get_env_path, load_env_safe
+    path = get_env_path()
+    load_env_safe(path)
+    return os.getenv("SETTINGS_PASSWORD_HASH", "")
 
 
 

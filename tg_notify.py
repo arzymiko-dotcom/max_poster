@@ -31,7 +31,8 @@ load_env_safe(get_env_path())
 _TOKEN_RE = re.compile(
     r'vk1\.[a-zA-Z0-9_.\-]{20,}'          # VK токены
     r'|\b[a-f0-9]{40,}\b'                  # HEX токены (API ключи)
-    r'|\b\d{8,12}:[A-Za-z0-9_\-]{30,}\b', # Telegram bot токены
+    r'|\b\d{8,12}:[A-Za-z0-9_\-]{30,}\b'  # Telegram bot токены
+    r'|\b[A-Za-z0-9]{32,}\b',             # GREEN-API и прочие длинные токены
     re.IGNORECASE,
 )
 
