@@ -1186,7 +1186,13 @@ class VkMessagesPanel(QWidget):
 
     def _load_credentials(self):
         env_path = get_env_path()
-        load_dotenv(env_path, override=True)
+        try:
+            mtime = env_path.stat().st_mtime
+        except OSError:
+            mtime = 0
+        if mtime != getattr(self, "_env_mtime", None):
+            load_dotenv(env_path, override=True)
+            self._env_mtime = mtime
         token    = os.environ.get("VK_GROUP_TOKEN", "").strip()
         group_id = os.environ.get("VK_GROUP_ID",    "").strip()
 
@@ -1304,9 +1310,10 @@ class VkMessagesPanel(QWidget):
 
     def _stop_longpoll(self):
         if self._lp_worker:
-            self._lp_worker.stop()
-            self._lp_worker.quit()
-            self._lp_worker.wait(2000)
+            w = self._lp_worker
+            w.stop()
+            w.finished.connect(w.deleteLater)
+            w.quit()
             self._lp_worker = None
 
     def _on_lp_message(self, msg: dict):

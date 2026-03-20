@@ -12,7 +12,7 @@ from pathlib import Path
 
 _log = logging.getLogger(__name__)
 
-from PyQt6.QtCore import QSize, Qt
+from PyQt6.QtCore import QSize, QTimer, Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QButtonGroup, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout,
@@ -381,6 +381,7 @@ class ShellWindow(QMainWindow):
         # ── Инициализируем MAX POST ─────────────────────────────
         from main import MainWindow as MaxWindow
         self._max_win = MaxWindow()
+        self._max_win._shell_window = self  # чтобы трей мог управлять ShellWindow
 
         # ── Инициализируем QR Generator ────────────────────────
         try:
@@ -459,6 +460,17 @@ class ShellWindow(QMainWindow):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._apply_dark_titlebar()
+        if not getattr(self, "_panels_warmed", False):
+            self._panels_warmed = True
+            QTimer.singleShot(400, self._warmup_panels)
+
+    def _warmup_panels(self) -> None:
+        """Прогрев всех панелей: Qt проводит layout/paint для каждой
+        заранее, чтобы первое переключение в сайдбаре было мгновенным."""
+        current = self._stack.currentIndex()
+        for i in range(self._stack.count()):
+            self._stack.setCurrentIndex(i)
+        self._stack.setCurrentIndex(current)
 
     # ──────────────────────────────────────────────────────────
     def _apply_dark_titlebar(self) -> None:
@@ -603,10 +615,30 @@ class ShellWindow(QMainWindow):
 
     # ──────────────────────────────────────────────────────────
     def closeEvent(self, event) -> None:
+        # Если нажали X (не «Выход» из трея) — сворачиваем в трей
+        _tray = getattr(self._max_win, "_tray", None)
+        if not self._max_win._real_quit and _tray is not None and _tray.isVisible():
+            event.ignore()
+            self.hide()
+            n_sched = sum(
+                1 for v in self._max_win._scheduled_posts.values()
+                if v.get("timer") and v["timer"].isActive()
+            )
+            if n_sched:
+                self._max_win._tray_notify(
+                    "MAX POST свёрнут",
+                    f"Программа работает в фоне.\nОтложенных постов: {n_sched}.",
+                )
+            else:
+                self._max_win._tray_notify("MAX POST свёрнут", "Программа работает в фоне.")
+            return
+
+        # Полное закрытие
         self._max_win.close()
-        if self._qr_win is not None:
-            try:
-                self._qr_win.close()
-            except Exception:
-                pass
+        for panel in (self._qr_win, self._stats_panel, self._vk_panel):
+            if panel is not None:
+                try:
+                    panel.close()
+                except Exception:
+                    pass
         super().closeEvent(event)

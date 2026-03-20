@@ -2178,14 +2178,20 @@ class MainWindow(QMainWindow):
             self._show_from_tray()
 
     def _show_from_tray(self) -> None:
-        self.showNormal()
-        self.activateWindow()
-        self.raise_()
+        shell = getattr(self, "_shell_window", None)
+        target = shell if shell is not None else self
+        target.showNormal()
+        target.activateWindow()
+        target.raise_()
 
     def _quit_app(self) -> None:
         """Полное закрытие приложения (из меню трея или Файл → Выход)."""
         self._real_quit = True
-        self.close()
+        shell = getattr(self, "_shell_window", None)
+        if shell is not None:
+            shell.close()
+        else:
+            self.close()
 
     def _tray_notify(self, title: str, message: str,
                      icon: QSystemTrayIcon.MessageIcon = QSystemTrayIcon.MessageIcon.Information,
