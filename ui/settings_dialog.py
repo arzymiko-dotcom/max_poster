@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from env_utils import get_env_path, load_env_safe
+from env_utils import get_env_path, load_env_safe, read_env_text
 
 
 def _read_env() -> dict[str, str]:
@@ -24,7 +24,7 @@ def _read_env() -> dict[str, str]:
     path = get_env_path()
     if not path.exists():
         return values
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in read_env_text(path).splitlines():
         s = line.strip()
         if not s or s.startswith("#"):
             continue
@@ -37,7 +37,7 @@ def _read_env() -> dict[str, str]:
 def _write_env(updates: dict[str, str]) -> None:
     import tempfile
     path = get_env_path()
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    lines = read_env_text(path).splitlines() if path.exists() else []
     done: set[str] = set()
     result = []
     for line in lines:

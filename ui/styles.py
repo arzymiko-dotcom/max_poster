@@ -328,6 +328,20 @@ _DARK_STYLESHEET = """
                 border-color: #4a6cf7;
                 color: #8899ff;
             }
+            QPushButton#tplMiniBtn {
+                min-height: 0;
+                font-size: 14px;
+                padding: 2px 6px;
+                border-radius: 6px;
+                border: 1px solid #4a6cf7;
+                background: #1e2a5a;
+                color: #ccd6ff;
+            }
+            QPushButton#tplMiniBtn:hover {
+                background: #2d3f8a;
+                border-color: #7a9cff;
+                color: #ffffff;
+            }
             #sectionTitle {
                 font-size: 12px;
                 font-weight: 600;
@@ -749,6 +763,20 @@ _LIGHT_STYLESHEET = """
                 background: #eef4ff;
                 border-color: #2d6cdf;
                 color: #2d6cdf;
+            }
+            QPushButton#tplMiniBtn {
+                min-height: 0;
+                font-size: 14px;
+                padding: 2px 6px;
+                border-radius: 6px;
+                border: 1px solid #2d6cdf;
+                background: #eef4ff;
+                color: #2d6cdf;
+            }
+            QPushButton#tplMiniBtn:hover {
+                background: #2d6cdf;
+                border-color: #1a55c4;
+                color: #ffffff;
             }
             /* ── Секция платформ ──────────────────────────────────── */
             #sectionTitle {

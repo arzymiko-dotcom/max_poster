@@ -55,6 +55,7 @@ import tg_notify
 from address_parser import extract_all_addresses
 from excel_matcher import ExcelMatcher, MatchResult
 import history_manager
+import template_manager
 from max_sender import MaxSender
 from state_manager import StateManager
 from updater import check_for_updates
@@ -396,6 +397,11 @@ class MainWindow(QMainWindow):
         view_menu = menu.addMenu("Вид")
         help_menu = menu.addMenu("Справка")
 
+        self._tpl_file_menu = file_menu.addMenu("📋 Шаблоны")
+        self._rebuild_templates_file_menu()
+
+        file_menu.addSeparator()
+
         open_image_action = QAction("Открыть фото", self)
         open_image_action.setShortcut(QKeySequence("Ctrl+L"))
         open_image_action.triggered.connect(self.select_image)
@@ -489,6 +495,12 @@ class MainWindow(QMainWindow):
         lh_title.setObjectName("checklistTitle")
         lh_layout.addWidget(lh_title)
         lh_layout.addStretch()
+        self._tpl_btn = QPushButton("📋")
+        self._tpl_btn.setObjectName("tplMiniBtn")
+        self._tpl_btn.setFixedSize(28, 28)
+        self._tpl_btn.setToolTip("Шаблоны текста")
+        self._tpl_btn.clicked.connect(self._open_templates_menu)
+        lh_layout.addWidget(self._tpl_btn)
         left_layout.addWidget(left_header)
 
         self.text_input = LineNumberedEdit()
@@ -2033,6 +2045,87 @@ class MainWindow(QMainWindow):
         finally:
             self._addr_list.blockSignals(False)
         self._insert_pinned_group(pinned_checked)
+
+    # ── Шаблоны текста ──────────────────────────────────────────────────────
+
+    def _open_templates_menu(self) -> None:
+        """Показывает меню шаблонов под кнопкой 📋."""
+        menu = QMenu(self)
+        save_act = QAction("💾  Сохранить текущий текст как шаблон…", self)
+        save_act.triggered.connect(self._save_as_template)
+        menu.addAction(save_act)
+
+        templates = template_manager.load()
+        if templates:
+            menu.addSeparator()
+            for tpl in templates:
+                act = QAction(tpl["name"], self)
+                act.triggered.connect(lambda checked, t=tpl["text"]: self._apply_template(t))
+                menu.addAction(act)
+            menu.addSeparator()
+            manage_act = QAction("🗑  Удалить шаблон…", self)
+            manage_act.triggered.connect(self._delete_template_dialog)
+            menu.addAction(manage_act)
+
+        menu.exec(self._tpl_btn.mapToGlobal(self._tpl_btn.rect().bottomLeft()))
+
+    def _save_as_template(self) -> None:
+        text = self.text_input.toPlainText().strip()
+        if not text:
+            QMessageBox.warning(self, "Шаблоны", "Поле текста пустое — нечего сохранять.")
+            return
+        from PyQt6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "Сохранить шаблон", "Название шаблона:")
+        if not ok or not name.strip():
+            return
+        template_manager.save_template(name.strip(), text)
+        self._rebuild_templates_file_menu()
+        QMessageBox.information(self, "Шаблоны", f"Шаблон «{name.strip()}» сохранён.")
+
+    def _apply_template(self, text: str) -> None:
+        self.text_input.setPlainText(text)
+        self.text_input.moveCursor(self.text_input.textCursor().MoveOperation.End)
+
+    def _delete_template_dialog(self) -> None:
+        templates = template_manager.load()
+        if not templates:
+            return
+        from PyQt6.QtWidgets import QInputDialog
+        names = [t["name"] for t in templates]
+        name, ok = QInputDialog.getItem(
+            self, "Удалить шаблон", "Выберите шаблон для удаления:", names, 0, False
+        )
+        if not ok:
+            return
+        reply = QMessageBox.question(
+            self, "Удалить шаблон",
+            f"Удалить шаблон «{name}»?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            template_manager.delete_template(name)
+            self._rebuild_templates_file_menu()
+
+    def _rebuild_templates_file_menu(self) -> None:
+        """Обновляет подменю Файл → Шаблоны."""
+        self._tpl_file_menu.clear()
+        save_act = QAction("💾  Сохранить текущий текст как шаблон…", self)
+        save_act.triggered.connect(self._save_as_template)
+        self._tpl_file_menu.addAction(save_act)
+
+        templates = template_manager.load()
+        if templates:
+            self._tpl_file_menu.addSeparator()
+            for tpl in templates:
+                act = QAction(tpl["name"], self)
+                act.triggered.connect(lambda checked, t=tpl["text"]: self._apply_template(t))
+                self._tpl_file_menu.addAction(act)
+            self._tpl_file_menu.addSeparator()
+            manage_act = QAction("🗑  Удалить шаблон…", self)
+            manage_act.triggered.connect(self._delete_template_dialog)
+            self._tpl_file_menu.addAction(manage_act)
+
+    # ── Excel ────────────────────────────────────────────────────────────────
 
     def _reload_excel(self) -> None:
         """Перезагружает Excel-реестр адресов с диска."""

@@ -4,6 +4,16 @@ import sys
 from pathlib import Path
 
 
+def read_env_text(path: Path) -> str:
+    """Читает .env с автоопределением кодировки (utf-8-sig → cp1251 → latin-1)."""
+    for enc in ("utf-8-sig", "utf-8", "cp1251", "latin-1"):
+        try:
+            return path.read_text(encoding=enc)
+        except UnicodeDecodeError:
+            continue
+    return path.read_text(encoding="latin-1")  # последний fallback, без ошибок
+
+
 def load_env_safe(path: Path, override: bool = False) -> None:
     """load_dotenv с автоопределением кодировки (utf-8 → cp1251 → latin-1)."""
     from dotenv import load_dotenv

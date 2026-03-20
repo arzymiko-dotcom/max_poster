@@ -76,7 +76,7 @@ def create_qr_widget():
         try:
             win._update_checker.quit()
             win._update_checker.wait(2000)
-        except Exception:
+        except BaseException:
             pass
 
     # Конвертируем в встраиваемый виджет
