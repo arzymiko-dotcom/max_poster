@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
 )
 
 from env_utils import get_env_path
+from ui.widgets import SpellCheckTextEdit
 
 _log = logging.getLogger(__name__)
 
@@ -960,7 +961,7 @@ class _ChatView(QWidget):
         input_lay.setContentsMargins(12, 8, 12, 8)
         input_lay.setSpacing(6)
 
-        self._input = QTextEdit()
+        self._input = SpellCheckTextEdit()
         self._input.setPlaceholderText("Написать сообщение… (Ctrl+Enter — отправить)")
         self._input.setFixedHeight(70)
         self._input.setStyleSheet("""

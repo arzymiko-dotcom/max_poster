@@ -13,6 +13,8 @@ a = Analysis(
         ('app/my_qr_app/main.py',  'app/my_qr_app'),
         ('app/my_qr_app/assets',   'app/my_qr_app/assets'),
         ('app/my_qr_app/version.txt', 'app/my_qr_app'),
+        # pyspellchecker — русский словарь
+        ('.venv/Lib/site-packages/spellchecker/ru.json.gz', 'spellchecker'),
     ],
     hiddenimports=[
         'dotenv', 'dotenv.main',
@@ -29,6 +31,8 @@ a = Analysis(
         'ui.background', 'ui.animations', 'ui.preview_card',
         'ui.dialogs', 'ui.styles', 'ui.settings_dialog',
         'env_utils',
+        # spell checker
+        'spellchecker',
     ],
     hookspath=[],
     hooksconfig={},
