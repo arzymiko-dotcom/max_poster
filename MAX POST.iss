@@ -85,7 +85,7 @@ begin
   // Если у пользователя .env ещё нет — просто скопировать целиком
   if not FileExists(UserEnvPath) then
   begin
-    FileCopy(AppEnvPath, UserEnvPath, False);
+    CopyFile(AppEnvPath, UserEnvPath, False);
     Exit;
   end;
 

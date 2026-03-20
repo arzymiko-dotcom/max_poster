@@ -31,12 +31,21 @@ class SendResult:
     message: str
 
 
+def _ascii_strip(value: str) -> str:
+    """Удаляет невидимые и не-ASCII символы (BOM, ZWSP и т.п.) из строки."""
+    return "".join(ch for ch in value if ord(ch) < 128 and ch.isprintable())
+
+
 class MaxSender:
     def __init__(self) -> None:
-        self.api_url = os.getenv("MAX_API_URL", "https://api.green-api.com")
-        self.media_url = os.getenv("MAX_MEDIA_URL", "https://media.green-api.com")
-        self.id_instance = os.getenv("MAX_ID_INSTANCE", "")
-        self.api_token = os.getenv("MAX_API_TOKEN", "")
+        self.api_url   = _ascii_strip(os.getenv("MAX_API_URL",   "https://api.green-api.com"))
+        self.media_url = _ascii_strip(os.getenv("MAX_MEDIA_URL", "https://media.green-api.com"))
+        self.id_instance = _ascii_strip(os.getenv("MAX_ID_INSTANCE", ""))
+        self.api_token   = _ascii_strip(os.getenv("MAX_API_TOKEN",   ""))
+        if not self.api_url:
+            self.api_url = "https://api.green-api.com"
+        if not self.media_url:
+            self.media_url = "https://media.green-api.com"
 
     def _check_credentials(self) -> str | None:
         """Возвращает сообщение об ошибке если учётные данные не заполнены."""
