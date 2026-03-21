@@ -5,10 +5,14 @@ app.py — точка входа unified MAX POST shell.
 объединяющий MAX POST и QR Generator в одном окне.
 """
 
+import signal
 import sys
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QApplication
+
+# PyQt6 + VS Code terminal конфликтуют по SIGINT — используем стандартный C-обработчик
+signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 import tg_notify
 from crash_dialog import install_crash_hook

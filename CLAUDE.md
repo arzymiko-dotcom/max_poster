@@ -75,3 +75,18 @@ PyQt6 desktop-приложение для отправки объявлений 
 - `except Exception` → конкретные типы в `_verify_pw` — сделано
 - `beautifulsoup4` в requirements.txt — добавлен
 - `crash_dialog` в hiddenimports PyInstaller — добавлен
+- Шаблоны текста (`template_manager.py` + кнопка 📋 + подменю Файл→Шаблоны) — сделано
+- `tg_notify._sanitize()` улучшен: явное редактирование значений env-переменных — сделано
+- `log_setup.py`: frozen → INFO, dev → DEBUG — сделано
+- `updater.py`: WARNING в лог если SHA256 отсутствует — сделано
+- Напоминание сменить VK токен каждые 10 дней (balloon в трее) — сделано
+- Проверка валидности `VK_USER_TOKEN` при старте (`_VkTokenCheckWorker`) — сделано
+- Меню `Действия → 🔑 Сменил токены VK` — сделано
+- `last_token_rotation` в `app_state.json` — сделано
+- `signal.SIG_DFL` в `app.py` — фикс KeyboardInterrupt при запуске из VS Code terminal
+- Размер EXE ~600MB — из-за QtWebEngine (193MB Chromium DLL). Можно срезать до ~250MB убрав WebEngine из spec, но отложено
+- `pyspellchecker` → `pymorphy3` — точная проверка орфографии через морфологический словарь
+- `pymorphy2` НЕ работает на Python 3.11 — использовать только `pymorphy3`
+- Метод проверки: `morph.word_is_known(word)` — НЕ `tag.POS is not None`
+- `ui/settings_dialog.py`: кнопка «🔗 Получить токен VK» + «✓ Проверить» для VK и MAX токенов
+- VK токен: уведомление раз в день (`last_vk_invalid_warning` в `app_state.json`) — сделано

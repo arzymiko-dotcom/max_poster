@@ -7,6 +7,7 @@ class ParsedAddress:
     street: str | None = None
     house: str | None = None
     raw_fragment: str | None = None
+    line_idx: int | None = None
 
 
 def normalize_text(value: str) -> str:
@@ -160,7 +161,7 @@ def extract_all_addresses(text: str) -> list[ParsedAddress]:
     results: list[ParsedAddress] = []
     seen: set[tuple] = set()
 
-    for raw_line in text.splitlines():
+    for line_idx, raw_line in enumerate(text.splitlines()):
         # Разбиваем по ';' — для случаев "ул. X, 1;2"
         parts = [p.strip().strip(".,") for p in raw_line.split(";")]
         first_street: str | None = None
@@ -174,6 +175,7 @@ def extract_all_addresses(text: str) -> list[ParsedAddress]:
                 key = (addr.street.lower(), addr.house)
                 if key not in seen:
                     seen.add(key)
+                    addr.line_idx = line_idx
                     results.append(addr)
             elif first_street and re.match(r"^\d", part):
                 # Только номер дома после первого адреса на этой строке
@@ -183,6 +185,7 @@ def extract_all_addresses(text: str) -> list[ParsedAddress]:
                         street=first_street,
                         house=m.group(0),
                         raw_fragment=f"{first_street} {m.group(0)}",
+                        line_idx=line_idx,
                     )
                     key = (addr.street.lower(), addr.house)
                     if key not in seen:

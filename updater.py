@@ -173,6 +173,12 @@ class DownloadWorker(QThread):
                         f"Ожидается: {self.expected_sha256}\n"
                         f"Получено:  {actual}"
                     )
+            else:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "SHA256 не задан в version.txt — целостность установщика не проверена. "
+                    "Рекомендуется добавить строку 'sha256:<hex>' в version.txt."
+                )
 
             self.download_finished.emit(str(dest))
 

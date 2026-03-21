@@ -29,16 +29,30 @@ load_env_safe(get_env_path())
 
 # Паттерны для редактирования токенов из сообщений об ошибках
 _TOKEN_RE = re.compile(
-    r'vk1\.[a-zA-Z0-9_.\-]{20,}'          # VK токены
-    r'|\b[a-f0-9]{40,}\b'                  # HEX токены (API ключи)
-    r'|\b\d{8,12}:[A-Za-z0-9_\-]{30,}\b'  # Telegram bot токены
-    r'|\b[A-Za-z0-9]{32,}\b',             # GREEN-API и прочие длинные токены
+    r'vk1\.[a-zA-Z0-9_.\-]{20,}'           # VK токены (vk1.a.xxx)
+    r'|\b[a-f0-9]{40,}\b'                   # HEX токены (API ключи, GREEN-API)
+    r'|\b\d{8,12}:[A-Za-z0-9_\-]{30,}\b'   # Telegram bot токены
+    r'|\b[A-Za-z0-9][A-Za-z0-9_\-\.]{30,}[A-Za-z0-9]\b',  # длинные alphanum-токены (32+ символа)
     re.IGNORECASE,
+)
+
+# Имена чувствительных переменных окружения — их значения редактируются явно
+_SENSITIVE_ENV_VARS = (
+    "TG_BOT_TOKEN", "TG_CHAT_ID",
+    "VK_USER_TOKEN", "MAX_TOKEN",
+    "GREEN_API_INSTANCE", "GREEN_API_TOKEN",
+    "SETTINGS_PASSWORD_HASH",
 )
 
 
 def _sanitize(text: str) -> str:
-    """Заменяет паттерны, похожие на токены, на [REDACTED]."""
+    """Заменяет токены и чувствительные значения env-переменных на [REDACTED]."""
+    # Явно редактируем значения известных env-переменных (независимо от формата)
+    for _var in _SENSITIVE_ENV_VARS:
+        _val = os.getenv(_var, "")
+        if _val and len(_val) > 4:
+            text = text.replace(_val, "[REDACTED]")
+    # Применяем regex для неизвестных форматов
     return _TOKEN_RE.sub("[REDACTED]", text)
 
 

@@ -37,6 +37,7 @@ class ExcelMatcher:
     def __init__(self, excel_path: str | Path) -> None:
         self.excel_path = Path(excel_path)
         self._df = None  # кэш — читаем Excel один раз
+        self._search_index: list[tuple[str, MatchResult]] = []
 
     def load_dataframe(self):
         if self._df is None:
@@ -44,6 +45,7 @@ class ExcelMatcher:
             if hasattr(self, "_rows") and self._rows is not None:
                 import pandas as pd
                 self._df = pd.DataFrame(self._rows)
+                self._build_search_index()
                 return self._df
             import pandas as pd
             try:
@@ -54,7 +56,28 @@ class ExcelMatcher:
                 raise RuntimeError(
                     f"Не удалось открыть файл адресов '{self.excel_path}': {exc}"
                 ) from exc
+            self._build_search_index()
         return self._df
+
+    def _build_search_index(self) -> None:
+        """Строит индекс для быстрого поиска: list of (lower_addr, MatchResult)."""
+        df = self._df
+        address_col, link_col, id_col = self._resolve_columns(df)
+        index: list[tuple[str, MatchResult]] = []
+        for _, row in df.iterrows():
+            addr = str(row.get(address_col, "")).strip()
+            if not addr or addr.lower() == "nan":
+                continue
+            index.append((
+                addr.lower(),
+                MatchResult(
+                    address=addr,
+                    score=0,
+                    chat_link=_get_cell(row, link_col),
+                    chat_id=_get_cell(row, id_col),
+                ),
+            ))
+        self._search_index: list[tuple[str, MatchResult]] = index
 
     def _resolve_columns(self, df) -> tuple[str, str | None, str | None]:
         """Возвращает (колонка адреса, колонка ссылки, колонка ID)."""
@@ -135,25 +158,6 @@ class ExcelMatcher:
         q = query.strip().lower()
         if not q:
             return []
-        df = self.load_dataframe()
-        address_col, link_col, id_col = self._resolve_columns(df)
-        mask = (
-            df[address_col]
-            .astype(str)
-            .str.strip()
-            .str.lower()
-            .str.contains(q, na=False, regex=False)
-        )
-        filtered = df[mask].head(limit)
-        results: list[MatchResult] = []
-        for _, row in filtered.iterrows():
-            addr = str(row.get(address_col, "")).strip()
-            if not addr or addr.lower() == "nan":
-                continue
-            results.append(MatchResult(
-                address=addr,
-                score=0,
-                chat_link=_get_cell(row, link_col),
-                chat_id=_get_cell(row, id_col),
-            ))
-        return results
+        self.load_dataframe()  # гарантирует построение _search_index
+        results = [r for norm, r in self._search_index if q in norm]
+        return results[:limit]

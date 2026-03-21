@@ -4,70 +4,83 @@ import re
 
 from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import (
-    QAction, QColor, QPainter,
-    QSyntaxHighlighter, QTextCharFormat, QTextCursor,
+    QColor, QPainter,
+    QSyntaxHighlighter, QTextCharFormat,
 )
 from PyQt6.QtWidgets import QPlainTextEdit, QStyledItemDelegate, QTextEdit
 
 
-# ── Проверка орфографии (lazy singleton) ──────────────────────
-_spell_checker = None
+# ── Проверка орфографии через pymorphy2 (lazy singleton) ──────
+_morph_analyzer = None
 
-def _get_spell():
-    """Возвращает SpellChecker(ru) или None если библиотека не установлена."""
-    global _spell_checker
-    if _spell_checker is None:
+
+def _get_morph():
+    """Возвращает MorphAnalyzer или None если pymorphy2 не установлен."""
+    global _morph_analyzer
+    if _morph_analyzer is None:
         try:
-            from spellchecker import SpellChecker
-            _spell_checker = SpellChecker(language="ru")
+            import pymorphy3
+            _morph_analyzer = pymorphy3.MorphAnalyzer()
         except Exception:
-            _spell_checker = False
-    return _spell_checker or None
+            _morph_analyzer = False
+    return _morph_analyzer or None
 
 
-class _SpellHighlighter(QSyntaxHighlighter):
-    """Подчёркивает красной волной орфографические ошибки."""
-    _WORD_RE = re.compile(r"[а-яёА-ЯЁ]{2,}")
+_word_known_cache: dict[str, bool] = {}
+
+
+def _is_known(morph, word: str) -> bool:
+    """True если слово есть в словаре. Результат кэшируется на всю сессию."""
+    if word not in _word_known_cache:
+        _word_known_cache[word] = morph.word_is_known(word)
+    return _word_known_cache[word]
+
+
+class _CombinedHighlighter(QSyntaxHighlighter):
+    """Подчёркивает орфоошибки + подсвечивает строки с адресами (зелёный/оранжевый)."""
+    _WORD_RE = re.compile(r"[а-яёА-ЯЁ]{3,}")
 
     def __init__(self, document):
         super().__init__(document)
-        self._fmt = QTextCharFormat()
-        self._fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
-        self._fmt.setUnderlineColor(QColor("#e03e3e"))
+        self._spell_fmt = QTextCharFormat()
+        self._spell_fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
+        self._spell_fmt.setUnderlineColor(QColor("#e03e3e"))
+        self._addr_found_fmt = QTextCharFormat()
+        self._addr_found_fmt.setBackground(QColor("#d6f5e3"))   # светло-зелёный
+        self._addr_notfound_fmt = QTextCharFormat()
+        self._addr_notfound_fmt.setBackground(QColor("#ffeeba"))  # светло-оранжевый
+        self._line_marks: dict[int, bool] = {}  # line_idx → True=найден, False=не найден
+
+    def set_line_marks(self, marks: dict[int, bool]) -> None:
+        """Обновить подсветку строк. True=найден (зелёный), False=не найден (оранжевый)."""
+        self._line_marks = marks
+        self.rehighlight()
 
     def highlightBlock(self, text: str) -> None:
-        spell = _get_spell()
-        if not spell:
-            return
-        for m in self._WORD_RE.finditer(text):
-            if spell.unknown([m.group().lower()]):
-                self.setFormat(m.start(), len(m.group()), self._fmt)
+        line_idx = self.currentBlock().blockNumber()
+        # 1. Фон для адресных строк (целая строка)
+        if line_idx in self._line_marks:
+            bg_fmt = self._addr_found_fmt if self._line_marks[line_idx] else self._addr_notfound_fmt
+            self.setFormat(0, len(text), bg_fmt)
+        # 2. Орфография поверх фона (сохраняем цвет фона)
+        morph = _get_morph()
+        if morph:
+            for m in self._WORD_RE.finditer(text):
+                if not _is_known(morph, m.group().lower()):
+                    fmt = self.format(m.start())  # берём текущий формат (с фоном если есть)
+                    fmt.setUnderlineStyle(QTextCharFormat.UnderlineStyle.WaveUnderline)
+                    fmt.setUnderlineColor(QColor("#e03e3e"))
+                    self.setFormat(m.start(), len(m.group()), fmt)
 
 
 class _SpellMixin:
-    """Mixin: добавляет SpellHighlighter и контекстное меню с подсказками."""
+    """Mixin: добавляет CombinedHighlighter к полю ввода."""
 
     def _init_spellcheck(self) -> None:
-        self._spell_hl = _SpellHighlighter(self.document())
+        self._spell_hl = _CombinedHighlighter(self.document())
 
     def contextMenuEvent(self, event) -> None:
         menu = self.createStandardContextMenu()
-        spell = _get_spell()
-        if spell:
-            cursor = self.cursorForPosition(event.pos())
-            cursor.select(QTextCursor.SelectionType.WordUnderCursor)
-            word = cursor.selectedText()
-            if word and re.fullmatch(r"[а-яёА-ЯЁ]+", word) and spell.unknown([word.lower()]):
-                candidates = sorted(spell.candidates(word.lower()) or [])[:5]
-                if candidates:
-                    first = menu.actions()[0] if menu.actions() else None
-                    menu.insertSeparator(first)
-                    for s in reversed(candidates):
-                        act = QAction(s, menu)
-                        act.triggered.connect(
-                            lambda checked, w=s, c=cursor: c.insertText(w)
-                        )
-                        menu.insertAction(first, act)
         menu.exec(event.globalPos())
 
 
@@ -81,6 +94,10 @@ class LineNumberedEdit(_SpellMixin, QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._init_spellcheck()
+
+    def set_address_marks(self, marks: dict[int, bool]) -> None:
+        """Подсветить строки с адресами: True=найден (зелёный), False=не найден (оранжевый)."""
+        self._spell_hl.set_line_marks(marks)
 
     def paintEvent(self, event) -> None:
         # Полоски — один проход, вычисляем ширину один раз

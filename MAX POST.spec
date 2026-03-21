@@ -14,7 +14,7 @@ a = Analysis(
         ('app/my_qr_app/assets',   'app/my_qr_app/assets'),
         ('app/my_qr_app/version.txt', 'app/my_qr_app'),
         # pyspellchecker — русский словарь
-        ('.venv/Lib/site-packages/spellchecker/resources/ru.json.gz', 'spellchecker/resources'),
+        ('.venv/Lib/site-packages/pymorphy3_dicts_ru/data', 'pymorphy3_dicts_ru/data'),
     ],
     hiddenimports=[
         'dotenv', 'dotenv.main',
@@ -33,8 +33,8 @@ a = Analysis(
         'ui.background', 'ui.animations', 'ui.preview_card',
         'ui.dialogs', 'ui.styles', 'ui.settings_dialog',
         'env_utils',
-        # spell checker
-        'spellchecker',
+        # морфологический анализатор
+        'pymorphy3', 'pymorphy3_dicts_ru', 'dawg2_python',
     ],
     hookspath=[],
     hooksconfig={},

@@ -2,7 +2,7 @@
 import re
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -17,6 +17,60 @@ from PyQt6.QtWidgets import (
 )
 
 from env_utils import get_env_path, load_env_safe, read_env_text
+
+
+# ── Воркеры для проверки токенов ──────────────────────────────
+
+class _VkCheckWorker(QThread):
+    done = pyqtSignal(bool, str)
+
+    def __init__(self, token: str, parent=None):
+        super().__init__(parent)
+        self._token = token
+
+    def run(self):
+        import requests
+        try:
+            r = requests.post(
+                "https://api.vk.com/method/users.get",
+                data={"access_token": self._token, "v": "5.199"},
+                timeout=8,
+            )
+            r.raise_for_status()
+            data = r.json()
+            if "error" in data:
+                code = data["error"].get("error_code", "?")
+                msg  = data["error"].get("error_msg", "")
+                self.done.emit(False, f"Ошибка [{code}]: {msg}")
+            else:
+                name = data["response"][0].get("first_name", "")
+                self.done.emit(True, f"OK — {name}")
+        except Exception as e:
+            self.done.emit(False, str(e))
+
+
+class _MaxCheckWorker(QThread):
+    done = pyqtSignal(bool, str)
+
+    def __init__(self, instance: str, token: str, parent=None):
+        super().__init__(parent)
+        self._instance = instance
+        self._token = token
+
+    def run(self):
+        import requests
+        try:
+            url = f"https://api.green-api.com/waInstance{self._instance}/getStateInstance/{self._token}"
+            r = requests.get(url, timeout=8)
+            r.raise_for_status()
+            data = r.json()
+            state = data.get("stateInstance", "")
+            if state == "authorized":
+                self.done.emit(True, "OK — авторизован")
+            else:
+                self.done.emit(False, f"Статус: {state or 'неизвестен'}")
+        except Exception as e:
+            self.done.emit(False, str(e))
 
 
 def _read_env() -> dict[str, str]:
@@ -129,6 +183,20 @@ class SettingsDialog(QDialog):
         self._max_token = _SecretEdit(vals.get("MAX_API_TOKEN", ""))
         max_form.addRow("ID инстанса:", self._max_instance)
         max_form.addRow("API токен:", self._max_token)
+
+        # Кнопка проверки MAX токена
+        self._max_check_btn = QPushButton("✓ Проверить")
+        self._max_check_btn.setFixedWidth(110)
+        self._max_check_btn.setToolTip("Проверить подключение к GREEN-API")
+        self._max_check_btn.clicked.connect(self._check_max_token)
+        self._max_check_status = QLabel("")
+        self._max_check_status.setStyleSheet("font-size: 11px;")
+        max_check_row = QHBoxLayout()
+        max_check_row.addWidget(self._max_check_btn)
+        max_check_row.addWidget(self._max_check_status)
+        max_check_row.addStretch()
+        max_form.addRow("", max_check_row)
+
         max_form.addRow(
             "", _hint_label(
                 "Получить данные: личный кабинет "
@@ -149,12 +217,38 @@ class SettingsDialog(QDialog):
         vk_form.addRow("ID группы:", self._vk_group_id)
         vk_form.addRow("Токен группы:", self._vk_group_token)
         vk_form.addRow("Токен пользователя:", self._vk_user_token)
+
+        # Кнопки: получить токен + проверить
+        _VK_TOKEN_URL = (
+            "https://oauth.vk.com/authorize?client_id=2685278"
+            "&scope=wall,photos,offline"
+            "&redirect_uri=https://oauth.vk.com/blank.html"
+            "&response_type=token&v=5.199"
+        )
+        get_token_btn = QPushButton("🔗 Получить токен VK")
+        get_token_btn.setToolTip("Открыть браузер для получения токена пользователя")
+        get_token_btn.clicked.connect(lambda: __import__("webbrowser").open(_VK_TOKEN_URL))
+
+        self._vk_check_btn = QPushButton("✓ Проверить")
+        self._vk_check_btn.setFixedWidth(110)
+        self._vk_check_btn.setToolTip("Проверить валидность токена пользователя VK")
+        self._vk_check_btn.clicked.connect(self._check_vk_token)
+        self._vk_check_status = QLabel("")
+        self._vk_check_status.setStyleSheet("font-size: 11px;")
+
+        vk_btn_row = QHBoxLayout()
+        vk_btn_row.addWidget(get_token_btn)
+        vk_btn_row.addWidget(self._vk_check_btn)
+        vk_btn_row.addWidget(self._vk_check_status)
+        vk_btn_row.addStretch()
+        vk_form.addRow("", vk_btn_row)
+
         vk_form.addRow(
             "", _hint_label(
                 "<b>Токен группы</b> (для постов от имени группы): "
                 "vk.com → Управление → API → Создать ключ доступа.<br>"
                 "<b>Токен пользователя</b> (для загрузки фото к постам): "
-                "oauth.vk.com → client_id=2685278 (Kate Mobile), scope=wall,photos,offline."
+                "нажмите «Получить токен VK» выше."
             )
         )
 
@@ -225,3 +319,46 @@ class SettingsDialog(QDialog):
         load_env_safe(get_env_path(), override=True)
         self.settings_saved.emit()
         self.accept()
+
+    def _check_vk_token(self) -> None:
+        token = self._vk_user_token.text().strip()
+        if not token:
+            self._vk_check_status.setText("Токен не задан")
+            self._vk_check_status.setStyleSheet("color: #e05555; font-size: 11px;")
+            return
+        self._vk_check_btn.setEnabled(False)
+        self._vk_check_btn.setText("Проверяем…")
+        self._vk_check_status.setText("")
+        worker = _VkCheckWorker(token, self)
+        worker.done.connect(self._on_vk_check_done)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_vk_check_done(self, ok: bool, msg: str) -> None:
+        self._vk_check_btn.setEnabled(True)
+        self._vk_check_btn.setText("✓ Проверить")
+        color = "#2a7a2a" if ok else "#e05555"
+        self._vk_check_status.setStyleSheet(f"color: {color}; font-size: 11px;")
+        self._vk_check_status.setText(msg)
+
+    def _check_max_token(self) -> None:
+        instance = self._max_instance.text().strip()
+        token = self._max_token.text().strip()
+        if not instance or not token:
+            self._max_check_status.setText("ID инстанса и токен обязательны")
+            self._max_check_status.setStyleSheet("color: #e05555; font-size: 11px;")
+            return
+        self._max_check_btn.setEnabled(False)
+        self._max_check_btn.setText("Проверяем…")
+        self._max_check_status.setText("")
+        worker = _MaxCheckWorker(instance, token, self)
+        worker.done.connect(self._on_max_check_done)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_max_check_done(self, ok: bool, msg: str) -> None:
+        self._max_check_btn.setEnabled(True)
+        self._max_check_btn.setText("✓ Проверить")
+        color = "#2a7a2a" if ok else "#e05555"
+        self._max_check_status.setStyleSheet(f"color: {color}; font-size: 11px;")
+        self._max_check_status.setText(msg)

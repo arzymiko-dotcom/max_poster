@@ -6,7 +6,10 @@ import random
 import sys
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
+
+import requests
 
 from PyQt6.QtCore import QDateTime, QSize, QTime, QTimer, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPen, QPixmap
@@ -48,6 +51,8 @@ from PyQt6.QtWidgets import (
 
 # Роль для пометки вручную добавленных адресов
 _MANUAL_ROLE: int = Qt.ItemDataRole.UserRole + 1
+
+_TOKEN_ROTATION_DAYS = 10  # напоминание сменить токены раз в N дней
 # Роль для закреплённой основной группы МАХ
 _PINNED_ROLE: int = Qt.ItemDataRole.UserRole + 2
 
@@ -90,6 +95,97 @@ class _ConnCheckWorker(QThread):
     def run(self) -> None:
         result = self._sender.open_max_for_login()
         self.done.emit(result.success, result.message)
+
+
+class _VkTokenCheckWorker(QThread):
+    """Проверяет валидность VK_USER_TOKEN в фоне (не блокирует UI)."""
+    result = pyqtSignal(bool, str)  # (valid, error_message)
+
+    def __init__(self, token: str, parent=None) -> None:
+        super().__init__(parent)
+        self._token = token
+
+    def run(self) -> None:
+        try:
+            resp = requests.post(
+                "https://api.vk.com/method/users.get",
+                data={"access_token": self._token, "v": "5.199"},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            if "error" in data:
+                code = data["error"].get("error_code", 0)
+                msg  = data["error"].get("error_msg", "неизвестная ошибка")
+                self.result.emit(False, f"[{code}] {msg}")
+            else:
+                self.result.emit(True, "")
+        except Exception as exc:
+            self.result.emit(False, str(exc))
+
+
+class _ExcelWarmupWorker(QThread):
+    """Прогревает кэш ExcelMatcher в фоне при старте — чтобы первый поиск/парсинг был мгновенным."""
+    def __init__(self, matcher: "ExcelMatcher", parent=None) -> None:
+        super().__init__(parent)
+        self._matcher = matcher
+
+    def run(self) -> None:
+        try:
+            self._matcher.load_dataframe()
+        except Exception as exc:
+            _log.warning("Excel preload failed: %s", exc)
+
+
+class _AddressCheckWorker(QThread):
+    """Парсит адреса и ищет совпадения в Excel в фоне — не блокирует UI."""
+    done = pyqtSignal(list, dict)  # (new_items: list[MatchResult], line_marks: dict[int,bool])
+
+    def __init__(self, text: str, matcher: "ExcelMatcher", parent=None) -> None:
+        super().__init__(parent)
+        self._text = text
+        self._matcher = matcher
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def run(self) -> None:
+        parsed_list = extract_all_addresses(self._text)
+        if not parsed_list or self._cancelled:
+            self.done.emit([], {})
+            return
+
+        new_items: list[MatchResult] = []
+        seen_ids: set[str] = set()
+        line_marks: dict[int, bool] = {}
+
+        for parsed in parsed_list:
+            if self._cancelled:
+                self.done.emit([], {})
+                return
+            idx = parsed.line_idx
+            try:
+                matches = self._matcher.find_matches(parsed)
+            except Exception as exc:
+                _log.warning("find_matches failed for %r: %s", parsed, exc)
+                continue
+            found = bool(matches)
+            if idx is not None:
+                if idx not in line_marks:
+                    line_marks[idx] = found
+                elif not found:
+                    line_marks[idx] = False
+            if not matches:
+                continue
+            best = matches[0]
+            if best.chat_id and best.chat_id in seen_ids:
+                continue
+            if best.chat_id:
+                seen_ids.add(best.chat_id)
+            new_items.append(best)
+
+        self.done.emit(new_items, line_marks)
 
 
 class SendWorker(QThread):
@@ -319,6 +415,7 @@ class MainWindow(QMainWindow):
         self._matcher: "ExcelMatcher | None" = (
             ExcelMatcher(self.excel_path) if self.excel_path.exists() else None
         )
+        self._addr_check_worker: "_AddressCheckWorker | None" = None
 
         _appdata = Path(os.environ.get("APPDATA", Path.home())) / "MAX POST" if getattr(sys, "frozen", False) else Path(__file__).parent
         if getattr(sys, "frozen", False):
@@ -332,6 +429,8 @@ class MainWindow(QMainWindow):
         self.state_manager = StateManager(_appdata / "app_state.json")
         self.max_sender = MaxSender()
         self.vk_sender = VkSender()
+        self._last_token_rotation: str = ""      # дата последней смены токенов (YYYY-MM-DD)
+        self._last_vk_invalid_warning: str = ""  # дата последнего предупреждения о VK токене
         atexit.register(self._do_save_state)  # сохраняем состояние и при крэше
         self._pending_history: dict = {}
         self._scheduled_posts: dict = {}  # entry_id -> {"timer": QTimer, "data": dict}
@@ -358,6 +457,14 @@ class MainWindow(QMainWindow):
         # Загружаем шрифты и применяем сохранённый шрифт после показа окна
         QTimer.singleShot(0, self._deferred_font_load)
         QTimer.singleShot(500, self._load_scheduled_from_disk)
+        # Прогрев Excel — загружаем датафрейм в фоне чтобы первый парсинг был мгновенным
+        if self._matcher is not None:
+            _warmup = _ExcelWarmupWorker(self._matcher, self)
+            _warmup.finished.connect(_warmup.deleteLater)
+            QTimer.singleShot(200, _warmup.start)
+        # Проверки безопасности — откладываем чтобы не мешать старту
+        QTimer.singleShot(4000, self._check_token_reminder)
+        QTimer.singleShot(6000, self._check_vk_token)
 
         # Горячие клавиши (Ctrl+Return и Ctrl+L заданы через QAction в меню)
 
@@ -443,6 +550,13 @@ class MainWindow(QMainWindow):
         conn_action = QAction("Проверить соединение MAX…", self)
         conn_action.triggered.connect(self._check_max_connection)
         actions_menu.addAction(conn_action)
+
+        actions_menu.addSeparator()
+
+        rotate_action = QAction("🔑 Сменил токены VK", self)
+        rotate_action.setToolTip(f"Отметить что VK токен был обновлён сегодня (напоминание каждые {_TOKEN_ROTATION_DAYS} дней)")
+        rotate_action.triggered.connect(self._mark_tokens_rotated)
+        actions_menu.addAction(rotate_action)
 
         theme_action = QAction("Тема оформления…", self)
         theme_action.triggered.connect(self._open_theme_picker)
@@ -1880,70 +1994,71 @@ class MainWindow(QMainWindow):
                 "Отправляем автоматически.",
             )
 
+    def _clear_auto_addr_items(self) -> None:
+        """Удаляет из списка все автоматически найденные адреса, оставляя ручные."""
+        self.text_input.set_address_marks({})
+        pinned_checked = self._get_pinned_state()
+        manual_entries = []
+        for i in range(self._addr_list.count()):
+            itm = self._addr_list.item(i)
+            if not itm:
+                continue
+            if itm.data(_PINNED_ROLE):
+                continue
+            if itm.data(_MANUAL_ROLE):
+                m = itm.data(Qt.ItemDataRole.UserRole)
+                manual_entries.append((m, itm.checkState()))
+        if manual_entries or self._addr_list.count() > 0:
+            self._addr_list.blockSignals(True)
+            try:
+                self._addr_list.clear()
+                for m, state in manual_entries:
+                    item = QListWidgetItem(m.address)
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(state)
+                    item.setData(Qt.ItemDataRole.UserRole, m)
+                    item.setData(_MANUAL_ROLE, True)
+                    self._addr_list.addItem(item)
+            finally:
+                self._addr_list.blockSignals(False)
+            self._insert_pinned_group(pinned_checked)
+            self._update_checklist()
+            self.save_state()
+
     def _auto_check_addresses(self) -> None:
-        """Тихий автопарсинг адресов при изменении текста (без диалогов)."""
+        """Тихий автопарсинг адресов — тяжёлая работа идёт в фоновом потоке."""
         text = self.text_input.toPlainText().strip()
 
-        def _clear_auto_items() -> None:
-            """Удаляет из списка все автоматически найденные адреса."""
-            pinned_checked = self._get_pinned_state()
-            manual_entries = []
-            for i in range(self._addr_list.count()):
-                itm = self._addr_list.item(i)
-                if not itm:
-                    continue
-                if itm.data(_PINNED_ROLE):
-                    continue  # обрабатываем отдельно
-                if itm.data(_MANUAL_ROLE):
-                    m = itm.data(Qt.ItemDataRole.UserRole)
-                    manual_entries.append((m, itm.checkState()))
-            if manual_entries or self._addr_list.count() > 0:
-                self._addr_list.blockSignals(True)
-                try:
-                    self._addr_list.clear()
-                    for m, state in manual_entries:
-                        item = QListWidgetItem(m.address)
-                        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                        item.setCheckState(state)
-                        item.setData(Qt.ItemDataRole.UserRole, m)
-                        item.setData(_MANUAL_ROLE, True)
-                        self._addr_list.addItem(item)
-                finally:
-                    self._addr_list.blockSignals(False)
-                self._insert_pinned_group(pinned_checked)
-                self._update_checklist()
-                self.save_state()
+        # Отменяем предыдущий воркер если ещё не завершился
+        if self._addr_check_worker is not None:
+            self._addr_check_worker.cancel()
+            self._addr_check_worker = None
 
         if not text or not self.excel_path.exists():
-            _clear_auto_items()
+            self._clear_auto_addr_items()
             return
-        parsed_list = extract_all_addresses(text)
-        if not parsed_list:
-            _clear_auto_items()
-            return
+
         if self._matcher is None:
             self._matcher = ExcelMatcher(self.excel_path)
-        matcher = self._matcher
 
-        new_items: list[MatchResult] = []
-        seen_ids: set[str] = set()
-        for parsed in parsed_list:
-            try:
-                matches = matcher.find_matches(parsed)
-            except Exception as exc:
-                _log.warning("find_matches failed for %r: %s", parsed, exc)
-                continue
-            if not matches:
-                continue
-            best = matches[0]
-            if best.chat_id and best.chat_id in seen_ids:
-                continue
-            if best.chat_id:
-                seen_ids.add(best.chat_id)
-            new_items.append(best)
+        w = _AddressCheckWorker(text, self._matcher)
+        self._addr_check_worker = w
+        w.done.connect(lambda items, marks, _w=w: self._on_addr_check_done(items, marks, _w))
+        w.finished.connect(w.deleteLater)
+        w.start()
+
+    def _on_addr_check_done(
+        self, new_items: list, line_marks: dict, worker: "_AddressCheckWorker"
+    ) -> None:
+        """Вызывается из фонового потока — обновляет UI после матчинга адресов."""
+        if worker is not self._addr_check_worker:
+            return  # устаревший результат — игнорируем
+        self._addr_check_worker = None
+
+        self.text_input.set_address_marks(line_marks)
 
         if not new_items:
-            _clear_auto_items()
+            self._clear_auto_addr_items()
             return
 
         # Собираем вручную добавленные адреса — они НЕ перезаписываются автопарсингом
@@ -1959,7 +2074,7 @@ class MainWindow(QMainWindow):
             if not m:
                 continue
             if itm.data(_PINNED_ROLE):
-                continue  # pinned обрабатываем отдельно
+                continue
             if itm.data(_MANUAL_ROLE):
                 manual_entries.append((m, itm.checkState()))
             else:
@@ -1984,10 +2099,9 @@ class MainWindow(QMainWindow):
                 item.setCheckState(state)
                 item.setData(Qt.ItemDataRole.UserRole, best)
                 self._addr_list.addItem(item)
-            # Возвращаем ручные адреса (если их нет среди автопарсинга)
             for m, state in manual_entries:
                 if m.chat_id in new_ids:
-                    continue  # уже есть в авто-результатах — не дублируем
+                    continue
                 item = QListWidgetItem(m.address)
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(state)
@@ -2132,6 +2246,9 @@ class MainWindow(QMainWindow):
         self._matcher = None
         if self.excel_path.exists():
             self._matcher = ExcelMatcher(self.excel_path)
+            _warmup = _ExcelWarmupWorker(self._matcher, self)
+            _warmup.finished.connect(_warmup.deleteLater)
+            _warmup.start()
             QMessageBox.information(
                 self, "Реестр обновлён",
                 f"Файл {self.excel_path.name} перезагружен."
@@ -2181,6 +2298,8 @@ class MainWindow(QMainWindow):
             "pinned_checked": pinned_checked,
             "ui_font_family": self._ui_font_family,
             "ui_font_size": self._ui_font_size,
+            "last_token_rotation": self._last_token_rotation,
+            "last_vk_invalid_warning": self._last_vk_invalid_warning,
         })
 
     def load_state(self) -> None:
@@ -2198,6 +2317,9 @@ class MainWindow(QMainWindow):
             self._pending_font_size = int(data.get("ui_font_size", 0) or 0)
         except (ValueError, TypeError):
             self._pending_font_size = 0
+
+        self._last_token_rotation    = data.get("last_token_rotation", "")
+        self._last_vk_invalid_warning = data.get("last_vk_invalid_warning", "")
 
         bg_index = data.get("bg_index", None)
         bg_mode = data.get("bg_mode", 0)
@@ -2338,6 +2460,11 @@ class MainWindow(QMainWindow):
             self._worker.quit()
             self._worker.wait(3000)
 
+        if self._addr_check_worker and self._addr_check_worker.isRunning():
+            self._addr_check_worker.cancel()
+            self._addr_check_worker.quit()
+            self._addr_check_worker.wait(1000)
+
         conn = getattr(self, "_conn_worker", None)
         if conn and conn.isRunning():
             conn.quit()
@@ -2418,6 +2545,72 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self, "Проверка целостности",
             f"{status}\n\n" + "\n".join(results)
+        )
+
+    # ──────────────────────────────────────────────────────────────
+    #  Безопасность: ротация токенов и проверка валидности VK
+    # ──────────────────────────────────────────────────────────────
+
+    def _check_token_reminder(self) -> None:
+        """Показывает balloon если VK токен не менялся 10+ дней."""
+        if not self._last_token_rotation:
+            # Первый запуск — запоминаем сегодня, не беспокоим пользователя
+            self._last_token_rotation = datetime.now().strftime("%Y-%m-%d")
+            self._save_timer.start()
+            return
+        try:
+            last = datetime.strptime(self._last_token_rotation, "%Y-%m-%d")
+            days = (datetime.now() - last).days
+        except (ValueError, TypeError):
+            self._last_token_rotation = datetime.now().strftime("%Y-%m-%d")
+            self._save_timer.start()
+            return
+        if days >= _TOKEN_ROTATION_DAYS:
+            self._tray_notify(
+                "Безопасность — смените токен",
+                f"VK_USER_TOKEN не обновлялся {days} дн.\n"
+                "Смените токен в настройках .env,\n"
+                "затем нажмите «Действия → 🔑 Сменил токены VK».",
+                QSystemTrayIcon.MessageIcon.Warning,
+                10000,
+            )
+
+    def _check_vk_token(self) -> None:
+        """Проверяет валидность VK_USER_TOKEN при старте (тихо, в фоне)."""
+        from env_utils import get_env_path, load_env_safe
+        load_env_safe(get_env_path())
+        token = os.getenv("VK_USER_TOKEN", "")
+        if not token:
+            return
+        worker = _VkTokenCheckWorker(token, self)
+        worker.result.connect(self._on_vk_token_check)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+    def _on_vk_token_check(self, valid: bool, message: str) -> None:
+        if valid:
+            return
+        today = datetime.now().strftime("%Y-%m-%d")
+        if self._last_vk_invalid_warning == today:
+            return  # уже показывали сегодня — не беспокоить снова
+        self._last_vk_invalid_warning = today
+        self._save_timer.start()
+        self._tray_notify(
+            "VK токен устарел",
+            "VK_USER_TOKEN недействителен.\nОбновите токен в .env",
+            QSystemTrayIcon.MessageIcon.Warning,
+            8000,
+        )
+
+    def _mark_tokens_rotated(self) -> None:
+        """Сохраняет сегодняшнюю дату как дату последней смены токенов."""
+        self._last_token_rotation = datetime.now().strftime("%Y-%m-%d")
+        self._save_timer.start()
+        self._tray_notify("Безопасность", "Дата обновления токенов сохранена.")
+        QMessageBox.information(
+            self, "Токены обновлены",
+            f"Дата сохранена: {self._last_token_rotation}\n"
+            f"Следующее напоминание через {_TOKEN_ROTATION_DAYS} дней."
         )
 
 

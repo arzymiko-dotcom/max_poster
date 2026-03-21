@@ -27,12 +27,16 @@ def setup_logging() -> None:
         file_handler,
         logging.StreamHandler(sys.stderr),
     ]
+    # В production-сборке (frozen) используем INFO, в dev — DEBUG
+    level = logging.INFO if getattr(sys, "frozen", False) else logging.DEBUG
     logging.basicConfig(
-        level=logging.DEBUG,
+        level=level,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
         handlers=handlers,
     )
+    # basicConfig игнорирует level если логгер уже настроен — устанавливаем явно
+    logging.getLogger().setLevel(level)
     # Silence noisy third-party loggers
     logging.getLogger("PIL").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
