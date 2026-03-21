@@ -594,13 +594,15 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(12)
 
-        left_box = QGroupBox()
-        left_box.setObjectName("sidePanel")
-        left_layout = QVBoxLayout(left_box)
-        left_layout.setSpacing(12)
-        left_layout.setContentsMargins(12, 10, 12, 12)
+        # ══════════════════════════════════════════════════════════════
+        # ЛЕВАЯ ПАНЕЛЬ — только поле ввода текста (широкое)
+        # ══════════════════════════════════════════════════════════════
+        text_box = QGroupBox()
+        text_box.setObjectName("sidePanel")
+        text_layout = QVBoxLayout(text_box)
+        text_layout.setSpacing(8)
+        text_layout.setContentsMargins(12, 10, 12, 12)
 
-        # ── Заголовок левой панели ───────────────────────────────────
         left_header = QFrame()
         left_header.setObjectName("checklistFrame")
         lh_layout = QHBoxLayout(left_header)
@@ -615,14 +617,15 @@ class MainWindow(QMainWindow):
         self._tpl_btn.setToolTip("Шаблоны текста")
         self._tpl_btn.clicked.connect(self._open_templates_menu)
         lh_layout.addWidget(self._tpl_btn)
-        left_layout.addWidget(left_header)
+        text_layout.addWidget(left_header)
 
         self.text_input = LineNumberedEdit()
         self.text_input.textChanged.connect(self.sync_preview)
+        self.text_input.setPlaceholderText(
+            "Введите текст объявления…\n\nАдрес будет найден автоматически"
+        )
 
-        # Нижняя панель: смайлик + счётчик символов
         self._emoji_picker: "EmojiPicker | None" = None
-
         self._emoji_btn = QPushButton("😊")
         self._emoji_btn.setObjectName("emojiButton")
         self._emoji_btn.setFixedSize(28, 28)
@@ -644,10 +647,6 @@ class MainWindow(QMainWindow):
         bb_layout.addStretch()
         bb_layout.addWidget(right_bar)
 
-        self.text_input.setPlaceholderText(
-            "Введите текст объявления…\n\nАдрес будет найден автоматически"
-        )
-
         text_container = QFrame()
         text_container.setObjectName("textContainer")
         self._text_container = text_container
@@ -656,6 +655,17 @@ class MainWindow(QMainWindow):
         tc_layout.setSpacing(0)
         tc_layout.addWidget(self.text_input)
         tc_layout.addWidget(bottom_bar)
+
+        text_layout.addWidget(text_container, 1)
+
+        # ══════════════════════════════════════════════════════════════
+        # ПРАВАЯ ПАНЕЛЬ — адреса и управление
+        # ══════════════════════════════════════════════════════════════
+        ctrl_box = QGroupBox()
+        ctrl_box.setObjectName("sidePanel")
+        ctrl_layout = QVBoxLayout(ctrl_box)
+        ctrl_layout.setSpacing(8)
+        ctrl_layout.setContentsMargins(12, 10, 12, 12)
 
         self._addr_list = QListWidget()
         self._addr_list.setMinimumHeight(80)
@@ -666,23 +676,27 @@ class MainWindow(QMainWindow):
         self._addr_list.itemChanged.connect(self.save_state)
         self._insert_pinned_group()
 
-        left_layout.addWidget(text_container, 1)
         addr_header_frame = QFrame()
         addr_header_frame.setObjectName("checklistFrame")
         ah_layout = QHBoxLayout(addr_header_frame)
         ah_layout.setContentsMargins(14, 10, 14, 10)
         self._addr_count_lbl = QLabel("Адреса для рассылки MAX")
         self._addr_count_lbl.setObjectName("checklistTitle")
-        addr_lbl = self._addr_count_lbl
         self._add_addr_btn = QPushButton("+")
         self._add_addr_btn.setObjectName("addAddrBtn")
         self._add_addr_btn.setFixedSize(24, 24)
         self._add_addr_btn.setToolTip("Добавить адрес вручную")
         self._add_addr_btn.clicked.connect(self._add_address_manually)
-        ah_layout.addWidget(addr_lbl)
+        self._hist_btn = QPushButton("🕐")
+        self._hist_btn.setObjectName("tplMiniBtn")
+        self._hist_btn.setFixedSize(28, 28)
+        self._hist_btn.setToolTip("История публикаций")
+        self._hist_btn.clicked.connect(self._toggle_history_popup)
+        ah_layout.addWidget(self._addr_count_lbl)
         ah_layout.addStretch()
+        ah_layout.addWidget(self._hist_btn)
         ah_layout.addWidget(self._add_addr_btn)
-        left_layout.addWidget(addr_header_frame)
+        ctrl_layout.addWidget(addr_header_frame)
 
         self._addr_search = QLineEdit()
         self._addr_search.setPlaceholderText("🔍 Поиск в max_address.xlsx…")
@@ -693,27 +707,25 @@ class MainWindow(QMainWindow):
             self._addr_search.show()
         else:
             self._addr_search.hide()
-        left_layout.addWidget(self._addr_search)
+        ctrl_layout.addWidget(self._addr_search)
 
         self._addr_search_results = QListWidget()
         self._addr_search_results.setObjectName("addrSearchResults")
         self._addr_search_results.setMaximumHeight(180)
         self._addr_search_results.hide()
         self._addr_search_results.itemClicked.connect(self._on_addr_search_item_clicked)
-        left_layout.addWidget(self._addr_search_results)
+        ctrl_layout.addWidget(self._addr_search_results)
 
-        # Таймер debounce для поиска (300 мс)
         self._addr_search_timer = QTimer(self)
         self._addr_search_timer.setSingleShot(True)
         self._addr_search_timer.timeout.connect(self._do_addr_search)
 
-        addr_hint = QLabel("⚠️ Рекомендуется не более 10 групп за раз в 5 минут во избежание бана МАХ")
+        addr_hint = QLabel("⚠️ Не более 10 групп за раз (5 мин) — бан МАХ")
         addr_hint.setObjectName("addrHintLbl")
-        left_layout.addWidget(addr_hint)
+        ctrl_layout.addWidget(addr_hint)
 
-        left_layout.addWidget(self._addr_list, 1)
+        ctrl_layout.addWidget(self._addr_list, 1)
 
-        # Создаём заранее — используется в строке платформ
         self.clear_button = QPushButton("Очистить")
         self.clear_button.setObjectName("clearButton")
         self.clear_button.clicked.connect(self.clear_form)
@@ -734,7 +746,6 @@ class MainWindow(QMainWindow):
         self.chk_vk = QCheckBox("ВКонтакте")
         self.chk_vk.setChecked(False)
 
-        # Иконки платформ
         _assets = _assets_dir()
         _max_icon_path = _assets / "max.ico"
         _vk_icon_path = _assets / "vk_2.ico"
@@ -784,10 +795,9 @@ class MainWindow(QMainWindow):
         self.send_button.setObjectName("primaryButton")
         self.send_button.setToolTip("Опубликовать пост (Ctrl+Return)")
 
-        # Row 0: вспомогательные кнопки
         buttons_row.addWidget(self.check_button, 0, 0)
         buttons_row.addWidget(self.photo_button, 0, 1)
-        # Row 1: отложенный пост
+
         sched_frame = QFrame()
         sched_frame.setObjectName("scheduleRow")
         sched_fl = QHBoxLayout(sched_frame)
@@ -839,14 +849,12 @@ class MainWindow(QMainWindow):
         sched_fl.addWidget(self._sched_widget, 1)
         buttons_row.addWidget(sched_frame, 1, 0, 1, 2)
 
-        # Row 2: подсказка про режим отложенной публикации (скрыта пока "Отложить" не выбрано)
         self._sched_hint_lbl = QLabel()
         self._sched_hint_lbl.setObjectName("schedHintLbl")
         self._sched_hint_lbl.setWordWrap(True)
         self._sched_hint_lbl.hide()
         buttons_row.addWidget(self._sched_hint_lbl, 2, 0, 1, 2)
 
-        # Row 3: кнопка отправки / кнопка отмены (переключаются)
         self._cancel_button = QPushButton("✕  Отменить отправку")
         self._cancel_button.setObjectName("cancelSendBtn")
         self._cancel_button.hide()
@@ -860,55 +868,24 @@ class MainWindow(QMainWindow):
         sa_layout.addWidget(self._cancel_button)
         buttons_row.addWidget(send_area, 3, 0, 1, 2)
 
-        left_layout.addWidget(platforms_section)
+        ctrl_layout.addWidget(platforms_section)
 
-        # Прогресс-бар + кнопка отмены (скрыты в режиме ожидания)
         self._progress_bar = QProgressBar()
         self._progress_bar.setObjectName("sendProgress")
-        self._progress_bar.setRange(0, 0)  # indeterminate
+        self._progress_bar.setRange(0, 0)
         self._progress_bar.setFixedHeight(4)
         self._progress_bar.setTextVisible(False)
         self._progress_bar.hide()
 
-        left_layout.addLayout(buttons_row)
-        left_layout.addWidget(self._progress_bar)
+        ctrl_layout.addLayout(buttons_row)
+        ctrl_layout.addWidget(self._progress_bar)
 
-        version_label = QLabel(f"Version {self._app_version}")
-        version_label.setObjectName("versionLabel")
-        left_layout.addWidget(version_label, alignment=Qt.AlignmentFlag.AlignLeft)
-
-        right_box = QGroupBox()
-        right_box.setObjectName("sidePanel")
-        right_layout = QVBoxLayout(right_box)
-        right_layout.setSpacing(12)
-        right_layout.setContentsMargins(12, 10, 12, 12)
-
-        preview_header_frame = QFrame()
-        preview_header_frame.setObjectName("checklistFrame")
-        ph_layout = QHBoxLayout(preview_header_frame)
-        ph_layout.setContentsMargins(14, 10, 14, 10)
-
-        preview_title = QLabel("Предпросмотр")
-        preview_title.setObjectName("previewTitle")
-
-        ph_layout.addWidget(preview_title)
-        ph_layout.addStretch()
-        right_layout.addWidget(preview_header_frame)
-
-        self.preview = PreviewCard()
-        self.preview.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        right_layout.addWidget(self.preview)
-
-        # ── Чеклист готовности ──────────────────────────────────────
-        checklist_frame = QFrame()
-        checklist_frame.setObjectName("checklistFrame")
-        cl_layout = QVBoxLayout(checklist_frame)
-        cl_layout.setContentsMargins(14, 10, 14, 10)
-        cl_layout.setSpacing(6)
-
-        cl_title = QLabel("Готовность к отправке")
-        cl_title.setObjectName("checklistTitle")
-        cl_layout.addWidget(cl_title)
+        # ── Чеклист ──────────────────────────────────────────────────
+        checklist_bar = QFrame()
+        checklist_bar.setObjectName("checklistBarFrame")
+        cb_layout = QHBoxLayout(checklist_bar)
+        cb_layout.setContentsMargins(4, 4, 4, 4)
+        cb_layout.setSpacing(12)
 
         self._cl_text     = QLabel()
         self._cl_photo    = QLabel()
@@ -917,11 +894,16 @@ class MainWindow(QMainWindow):
 
         for lbl in (self._cl_text, self._cl_photo, self._cl_address, self._cl_platform):
             lbl.setObjectName("checklistItem")
-            cl_layout.addWidget(lbl)
+            cb_layout.addWidget(lbl)
+        cb_layout.addStretch()
 
-        right_layout.addWidget(checklist_frame)
+        ctrl_layout.addWidget(checklist_bar)
 
-        # подключаем чекбоксы к обновлению чеклиста и аватара предпросмотра
+        version_label = QLabel(f"Version {self._app_version}")
+        version_label.setObjectName("versionLabel")
+        ctrl_layout.addWidget(version_label, alignment=Qt.AlignmentFlag.AlignLeft)
+
+        # ── Подключения чекбоксов ─────────────────────────────────────
         self.chk_max.stateChanged.connect(self._update_checklist)
         self.chk_vk.stateChanged.connect(self._update_checklist)
         self.chk_max.stateChanged.connect(self._sync_preview_avatar)
@@ -929,16 +911,23 @@ class MainWindow(QMainWindow):
         self.chk_max.stateChanged.connect(lambda _: self._update_sched_hint())
         self.chk_vk.stateChanged.connect(lambda _: self._update_sched_hint())
 
-        # ── История публикаций ───────────────────────────────────────
-        right_layout.addWidget(self._build_history_panel())
+        # ── Preview — нужен для логики, не отображается ───────────────
+        self.preview = PreviewCard()
+        self.preview.setParent(central)
+        self.preview.hide()
 
-        root.addWidget(left_box, 5)
-        root.addWidget(right_box, 6)
+        # ── История — всплывающее окно по кнопке 🕐 ──────────────────
+        self._hist_popup = QFrame(self, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self._hist_popup.setObjectName("historyFrame")
+        self._hist_popup.setMinimumWidth(540)
+        popup_l = QVBoxLayout(self._hist_popup)
+        popup_l.setContentsMargins(0, 0, 0, 0)
+        popup_l.addWidget(self._build_history_panel())
 
-        # Оверлей успеха — поверх всего
+        root.addWidget(text_box, 6)
+        root.addWidget(ctrl_box, 4)
+
         self._success_overlay = SuccessOverlay(central)
-
-        # Начальный аватар предпросмотра
         self._sync_preview_avatar()
 
 
@@ -946,10 +935,23 @@ class MainWindow(QMainWindow):
     #  История публикаций
     # ──────────────────────────────────────────────────────────────────
 
+    def _toggle_history_popup(self) -> None:
+        """Показывает/скрывает всплывающее окно истории под кнопкой 🕐."""
+        if self._hist_popup.isVisible():
+            self._hist_popup.hide()
+            return
+        self._refresh_history()
+        btn = self._hist_btn
+        pos = btn.mapToGlobal(btn.rect().bottomRight())
+        self._hist_popup.adjustSize()
+        w = max(self._hist_popup.width(), 540)
+        self._hist_popup.setFixedWidth(w)
+        self._hist_popup.move(pos.x() - w, pos.y() + 2)
+        self._hist_popup.show()
+
     def _build_history_panel(self) -> QFrame:
         frame = QFrame()
         frame.setObjectName("historyFrame")
-        frame.setFixedHeight(190)
 
         outer = QVBoxLayout(frame)
         outer.setContentsMargins(14, 10, 14, 8)

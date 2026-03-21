@@ -104,6 +104,10 @@ _DARK_STYLESHEET = """
                 border: 1px solid #2a5a3e;
                 font-size: 13px;
             }
+            #checklistBarFrame {
+                border-top: 1px solid #3a3a55;
+                background: transparent;
+            }
             #checklistFrame {
                 border: 1px solid #3a3a55;
                 border-radius: 10px;
@@ -540,6 +544,10 @@ _LIGHT_STYLESHEET = """
                 color: #1a7a3f;
                 border: 1px solid #a8dfc0;
                 font-size: 13px;
+            }
+            #checklistBarFrame {
+                border-top: 1px solid #e4eaf0;
+                background: transparent;
             }
             #checklistFrame {
                 border: 1px solid #e4eaf0;
