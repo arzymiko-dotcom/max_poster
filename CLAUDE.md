@@ -117,3 +117,9 @@ PyQt6 desktop-приложение для отправки объявлений 
 - `_update_photo_thumb`: убран лишний `exists()` перед `QPixmap()` (TOCTOU)
 - Balloon + звук по завершении рассылки (`_notify_send_done`) — `winsound.MessageBeep` + `_tray_notify`; только реальная отправка (не dry-run)
 - `PasteAddressesDialog` — вставка нескольких адресов сразу (кнопка 📋 в заголовке адресов)
+- `_recent_photos: list[str]` (макс. 5) — галерея последних фото под превью, кнопки 48×48, сохраняются в `app_state.json`
+- `btn_theme` (🌙/☀️) в `_SideBar` — переключает тему без входа в настройки; `_SideBar.set_dark(dark)` обновляет иконку
+- `_photo_pinned: bool` + кнопка 📌 рядом с «Загрузить фото» — `clear_form` пропускает сброс фото если закреплено
+- `_excel_watch_timer` (10с) — следит за `st_mtime` Excel; при изменении показывает `_excel_changed_bar` (жёлтый тостер) + balloon; `_reload_excel_silent` перезагружает без диалога
+- `QSplitter` между левой и правой панелью — размеры сохраняются в `app_state.json` как `splitter_sizes`
+- `_excel_watch_timer` останавливается в `closeEvent`

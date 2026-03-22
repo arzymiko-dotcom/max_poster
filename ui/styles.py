@@ -2,6 +2,8 @@
 
 
 _DARK_STYLESHEET = """
+            QSplitter::handle { background: #2d2d42; }
+            QSplitter::handle:hover { background: #4a6cf7; }
             #maxPosterContent { background: #1e1e2e; }
             QGroupBox {
                 font-size: 15px;
@@ -308,6 +310,16 @@ _DARK_STYLESHEET = """
                 background: #1a2a5a;
                 color: #a0b4ff;
             }
+            QPushButton#excelChangedBar {
+                font-size: 12px;
+                color: #fbbf24;
+                background: #2a2010;
+                border: 1px solid #92400e;
+                border-radius: 6px;
+                padding: 2px 8px;
+                text-align: left;
+            }
+            QPushButton#excelChangedBar:hover { background: #3a2f10; }
             QPushButton#testButton {
                 font-size: 13px;
                 color: #7878aa;
@@ -490,6 +502,8 @@ def get_dark_stylesheet() -> str:
 
 
 _LIGHT_STYLESHEET = """
+            QSplitter::handle { background: #dde1e7; }
+            QSplitter::handle:hover { background: #2563eb; }
             #maxPosterContent { background: #f3f4f6; }
             QGroupBox {
                 font-size: 15px;
@@ -789,6 +803,16 @@ _LIGHT_STYLESHEET = """
                 background: #eff6ff;
                 color: #1d4ed8;
             }
+            QPushButton#excelChangedBar {
+                font-size: 12px;
+                color: #92400e;
+                background: #fffbeb;
+                border: 1px solid #fbbf24;
+                border-radius: 6px;
+                padding: 2px 8px;
+                text-align: left;
+            }
+            QPushButton#excelChangedBar:hover { background: #fef3c7; }
             QPushButton#testButton {
                 font-size: 13px;
                 color: #6b7280;

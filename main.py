@@ -42,6 +42,7 @@ from PyQt6.QtWidgets import (
     QRadioButton,
     QScrollArea,
     QSizePolicy,
+    QSplitter,
     QSpinBox,
     QStyledItemDelegate,
     QSlider,
@@ -414,8 +415,12 @@ class MainWindow(QMainWindow):
 
         self.excel_path: Path = self._resolve_excel_path()
         self.image_path: "Path | None" = None
+        self._photo_pinned: bool = False
         self._recent_photos: list[str] = []   # до 5 последних путей к фото
         self._worker: "SendWorker | None" = None
+        self._excel_mtime: float = (
+            self.excel_path.stat().st_mtime if self.excel_path.exists() else 0.0
+        )
         self._send_log_results: list[tuple[str, bool, str]] = []  # (адрес, успех, время)
         self._pending_dry_run: bool = False
         self._bg_index: "int | None" = None
@@ -464,6 +469,13 @@ class MainWindow(QMainWindow):
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(SAVE_DEBOUNCE_MS)
         self._save_timer.timeout.connect(self._do_save_state)
+
+        # Слежение за изменением Excel-реестра — проверяем каждые 10 сек
+        self._excel_watch_timer = QTimer(self)
+        self._excel_watch_timer.setInterval(10_000)
+        self._excel_watch_timer.timeout.connect(self._check_excel_changed)
+        if self.excel_path.exists():
+            self._excel_watch_timer.start()
 
         self.setAcceptDrops(True)
         self._real_quit = False  # True → полное закрытие; False → сворачивание в трей
@@ -609,9 +621,14 @@ class MainWindow(QMainWindow):
         self._bg_widget = central
         self.setCentralWidget(central)
 
-        root = QHBoxLayout(central)
+        root = QVBoxLayout(central)
         root.setContentsMargins(12, 12, 12, 12)
-        root.setSpacing(12)
+        root.setSpacing(0)
+
+        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter.setHandleWidth(6)
+        self._main_splitter.setChildrenCollapsible(False)
+        root.addWidget(self._main_splitter)
 
         # ══════════════════════════════════════════════════════════════
         # ЛЕВАЯ ПАНЕЛЬ — только поле ввода текста (широкое)
@@ -747,6 +764,14 @@ class MainWindow(QMainWindow):
         ah_layout.addWidget(self._add_addr_btn)
         ctrl_layout.addWidget(addr_header_frame)
 
+        # Тостер: реестр изменён
+        self._excel_changed_bar = QPushButton("⟳  Реестр адресов изменён — нажмите для обновления")
+        self._excel_changed_bar.setObjectName("excelChangedBar")
+        self._excel_changed_bar.setFixedHeight(26)
+        self._excel_changed_bar.clicked.connect(self._reload_excel_silent)
+        self._excel_changed_bar.hide()
+        ctrl_layout.addWidget(self._excel_changed_bar)
+
         self._addr_search = QLineEdit()
         self._addr_search.setPlaceholderText("🔍 Поиск в max_address.xlsx…")
         self._addr_search.setObjectName("addrSearch")
@@ -853,13 +878,27 @@ class MainWindow(QMainWindow):
         self.photo_button.clicked.connect(self.select_image)
         self.photo_button.setToolTip("Выбрать фото (Ctrl+L)")
 
+        self._pin_photo_btn = QPushButton("📌")
+        self._pin_photo_btn.setObjectName("tplMiniBtn")
+        self._pin_photo_btn.setFixedSize(28, 28)
+        self._pin_photo_btn.setCheckable(True)
+        self._pin_photo_btn.setToolTip("Закрепить фото — не сбрасывать при очистке формы")
+        self._pin_photo_btn.toggled.connect(self._on_photo_pin_toggled)
+
+        photo_row_w = QWidget()
+        photo_row_l = QHBoxLayout(photo_row_w)
+        photo_row_l.setContentsMargins(0, 0, 0, 0)
+        photo_row_l.setSpacing(4)
+        photo_row_l.addWidget(self.photo_button, 1)
+        photo_row_l.addWidget(self._pin_photo_btn)
+
         self.send_button = QPushButton("Опубликовать")
         self.send_button.clicked.connect(self.send_post)
         self.send_button.setObjectName("primaryButton")
         self.send_button.setToolTip("Опубликовать пост (Ctrl+Return)")
 
         buttons_row.addWidget(self.check_button, 0, 0)
-        buttons_row.addWidget(self.photo_button, 0, 1)
+        buttons_row.addWidget(photo_row_w, 0, 1)
 
         sched_frame = QFrame()
         sched_frame.setObjectName("scheduleRow")
@@ -999,8 +1038,10 @@ class MainWindow(QMainWindow):
         popup_l.setContentsMargins(0, 0, 0, 0)
         popup_l.addWidget(self._build_history_panel())
 
-        root.addWidget(text_box, 6)
-        root.addWidget(ctrl_box, 4)
+        self._main_splitter.addWidget(text_box)
+        self._main_splitter.addWidget(ctrl_box)
+        self._main_splitter.setStretchFactor(0, 6)
+        self._main_splitter.setStretchFactor(1, 4)
 
         self._success_overlay = SuccessOverlay(central)
         self._sync_preview_avatar()
@@ -1415,6 +1456,38 @@ class MainWindow(QMainWindow):
         self.text_input.setTextCursor(cursor)
         self.text_input.setFocus()
 
+    def _on_photo_pin_toggled(self, checked: bool) -> None:
+        self._photo_pinned = checked
+        self._pin_photo_btn.setToolTip(
+            "Фото закреплено — не сбросится при очистке формы" if checked
+            else "Закрепить фото — не сбрасывать при очистке формы"
+        )
+
+    def _check_excel_changed(self) -> None:
+        """Проверяет, изменился ли файл реестра адресов."""
+        if not self.excel_path.exists():
+            return
+        mtime = self.excel_path.stat().st_mtime
+        if mtime != self._excel_mtime:
+            self._excel_mtime = mtime
+            self._excel_changed_bar.show()
+            self._tray_notify(
+                "Реестр адресов изменён",
+                f"{self.excel_path.name} обновлён — нажмите кнопку в приложении для перезагрузки",
+            )
+
+    def _reload_excel_silent(self) -> None:
+        """Перезагружает Excel без диалога, скрывает тостер."""
+        self._excel_changed_bar.hide()
+        self._matcher = None
+        if self.excel_path.exists():
+            self._matcher = ExcelMatcher(self.excel_path)
+            _warmup = _ExcelWarmupWorker(self._matcher, self)
+            _warmup.finished.connect(_warmup.deleteLater)
+            _warmup.start()
+            self._excel_mtime = self.excel_path.stat().st_mtime
+            self._tray_notify("Реестр обновлён", f"{self.excel_path.name} перезагружен.")
+
     def _add_to_recent_photos(self, path: str) -> None:
         """Добавляет путь в начало списка последних фото (макс. 5, без дублей)."""
         self._recent_photos = [p for p in self._recent_photos if p != path]
@@ -1569,11 +1642,12 @@ class MainWindow(QMainWindow):
         self._addr_list.clear()
         self._insert_pinned_group(checked=True)
         self.preview.set_preview_text("")
-        self.preview.set_image(None)
-        self.image_path = None
-        self.photo_button.setText("Загрузить фото")
-        self.photo_button.setObjectName("photoButton")
-        self.photo_button.setStyle(self.photo_button.style())
+        if not self._photo_pinned:
+            self.preview.set_image(None)
+            self.image_path = None
+            self.photo_button.setText("Загрузить фото")
+            self.photo_button.setObjectName("photoButton")
+            self.photo_button.setStyle(self.photo_button.style())
         self._update_photo_thumb()
         self._update_checklist()
         self.save_state()
@@ -2638,6 +2712,8 @@ class MainWindow(QMainWindow):
             "last_token_rotation": self._last_token_rotation,
             "last_vk_invalid_warning": self._last_vk_invalid_warning,
             "recent_photos": self._recent_photos,
+            "photo_pinned": self._photo_pinned,
+            "splitter_sizes": self._main_splitter.sizes(),
         })
 
     def load_state(self) -> None:
@@ -2660,6 +2736,11 @@ class MainWindow(QMainWindow):
         self._last_vk_invalid_warning = data.get("last_vk_invalid_warning", "")
         self._recent_photos = data.get("recent_photos", [])
         self._rebuild_recent_bar()
+        self._photo_pinned = bool(data.get("photo_pinned", False))
+        self._pin_photo_btn.setChecked(self._photo_pinned)
+        splitter_sizes = data.get("splitter_sizes")
+        if splitter_sizes and len(splitter_sizes) == 2:
+            self._main_splitter.setSizes(splitter_sizes)
 
         bg_index = data.get("bg_index", None)
         bg_mode = data.get("bg_mode", 0)
@@ -2816,6 +2897,7 @@ class MainWindow(QMainWindow):
         self._parse_timer.stop()
         self._addr_search_timer.stop()
         self._hist_search_timer.stop()
+        self._excel_watch_timer.stop()
         self._do_save_state()
 
         for entry in self._scheduled_posts.values():
