@@ -50,6 +50,7 @@ class _CombinedHighlighter(QSyntaxHighlighter):
         self._addr_notfound_fmt = QTextCharFormat()
         self._addr_notfound_fmt.setBackground(QColor("#ffeeba"))  # светло-оранжевый
         self._line_marks: dict[int, bool] = {}  # line_idx → True=найден, False=не найден
+        self._morph = _get_morph()  # кэшируем один раз при создании хайлайтера
 
     def set_line_marks(self, marks: dict[int, bool]) -> None:
         """Обновить подсветку строк. True=найден (зелёный), False=не найден (оранжевый)."""
@@ -63,7 +64,7 @@ class _CombinedHighlighter(QSyntaxHighlighter):
             bg_fmt = self._addr_found_fmt if self._line_marks[line_idx] else self._addr_notfound_fmt
             self.setFormat(0, len(text), bg_fmt)
         # 2. Орфография поверх фона (сохраняем цвет фона)
-        morph = _get_morph()
+        morph = self._morph
         if morph:
             for m in self._WORD_RE.finditer(text):
                 if not _is_known(morph, m.group().lower()):
@@ -100,7 +101,7 @@ class LineNumberedEdit(_SpellMixin, QPlainTextEdit):
         self._spell_hl.set_line_marks(marks)
 
     def paintEvent(self, event) -> None:
-        # Полоски — один проход, вычисляем ширину один раз
+        # Полоски фона — до вызова super (super рисует текст поверх)
         painter = QPainter(self.viewport())
         block = self.firstVisibleBlock()
         offset = self.contentOffset()
@@ -118,16 +119,16 @@ class LineNumberedEdit(_SpellMixin, QPlainTextEdit):
         painter.end()
         super().paintEvent(event)
 
-        # Номера справа (поверх текста) — шрифт вычисляем один раз
+        # Номера строк — один проход поверх текста, шрифт и ширина вычисляются один раз
         painter2 = QPainter(self.viewport())
-        block = self.firstVisibleBlock()
-        block_num = block.blockNumber()
-        offset = self.contentOffset()
         font = painter2.font()
         font.setPointSize(max(7, font.pointSize() - 1))
         painter2.setFont(font)
         painter2.setPen(self._NUM_COLOR)
         num_rect_w = vp_w - 8
+        block = self.firstVisibleBlock()
+        block_num = block.blockNumber()
+        offset = self.contentOffset()
         while block.isValid():
             rect = self.blockBoundingGeometry(block).translated(offset)
             if rect.top() > clip_bottom:

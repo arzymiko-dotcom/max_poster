@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -197,6 +198,15 @@ class SettingsDialog(QDialog):
         max_check_row.addStretch()
         max_form.addRow("", max_check_row)
 
+        self._send_delay = QSpinBox()
+        self._send_delay.setRange(0, 30)
+        self._send_delay.setSuffix(" сек")
+        self._send_delay.setValue(int(vals.get("SEND_DELAY_SEC", "0") or 0))
+        self._send_delay.setToolTip(
+            "Дополнительная пауза между отправками поверх случайной задержки 5–12 сек"
+        )
+        max_form.addRow("Пауза между сообщениями:", self._send_delay)
+
         max_form.addRow(
             "", _hint_label(
                 "Получить данные: личный кабинет "
@@ -315,6 +325,7 @@ class SettingsDialog(QDialog):
             "VK_GROUP_ID":        self._vk_group_id.text().strip(),
             "VK_GROUP_TOKEN":     self._vk_group_token.text().strip(),
             "VK_USER_TOKEN":      self._vk_user_token.text().strip(),
+            "SEND_DELAY_SEC":     str(self._send_delay.value()),
         })
         load_env_safe(get_env_path(), override=True)
         self.settings_saved.emit()

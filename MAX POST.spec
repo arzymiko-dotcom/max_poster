@@ -15,6 +15,8 @@ a = Analysis(
         ('app/my_qr_app/version.txt', 'app/my_qr_app'),
         # pyspellchecker — русский словарь
         ('.venv/Lib/site-packages/pymorphy3_dicts_ru/data', 'pymorphy3_dicts_ru/data'),
+        # История изменений
+        ('changelog.json', '.'),
     ],
     hiddenimports=[
         'dotenv', 'dotenv.main',

@@ -272,6 +272,15 @@ _DARK_STYLESHEET = """
             }
             #addrList::item { padding: 3px 6px; }
             #addrList::item:selected { background: #1e3a8a; color: #e0e0ff; }
+            #sendLogList {
+                border: 1px solid #3a3a55;
+                border-radius: 8px;
+                background: #2a2a3e;
+                alternate-background-color: #25253a;
+                color: #d0d0e8;
+                font-size: 13px;
+            }
+            #sendLogList::item { padding: 3px 6px; }
             QPushButton#clearButton {
                 min-height: 28px;
                 font-size: 12px;
@@ -285,6 +294,32 @@ _DARK_STYLESHEET = """
                 background: #3a1a1a;
                 color: #f87171;
                 border-color: #6b2020;
+            }
+            QPushButton#saveReportBtn {
+                min-height: 28px;
+                font-size: 12px;
+                color: #4a6cf7;
+                background: transparent;
+                border: 1px solid #4a6cf7;
+                border-radius: 6px;
+                padding: 2px 12px;
+            }
+            QPushButton#saveReportBtn:hover {
+                background: #1a2a5a;
+                color: #a0b4ff;
+            }
+            QPushButton#testButton {
+                font-size: 13px;
+                color: #7878aa;
+                background: transparent;
+                border: 1px solid #3a3a55;
+                border-radius: 8px;
+                padding: 6px 14px;
+            }
+            QPushButton#testButton:hover {
+                background: #1a2a3a;
+                color: #93c5fd;
+                border-color: #2563eb;
             }
             QPushButton#addAddrBtn {
                 min-height: 0;
@@ -712,6 +747,14 @@ _LIGHT_STYLESHEET = """
             }
             #addrList::item { padding: 3px 6px; }
             #addrList::item:selected { background: #eef4ff; color: #1a1a1a; }
+            #sendLogList {
+                border: 1px solid #c7d0db;
+                border-radius: 8px;
+                background: #ffffff;
+                alternate-background-color: #f8f9fb;
+                font-size: 13px;
+            }
+            #sendLogList::item { padding: 3px 6px; }
             QPushButton#clearButton {
                 min-height: 28px;
                 font-size: 12px;
@@ -725,6 +768,32 @@ _LIGHT_STYLESHEET = """
                 background: #fff0f0;
                 color: #d94040;
                 border-color: #f0b0b0;
+            }
+            QPushButton#saveReportBtn {
+                min-height: 28px;
+                font-size: 12px;
+                color: #2563eb;
+                background: transparent;
+                border: 1px solid #2563eb;
+                border-radius: 6px;
+                padding: 2px 12px;
+            }
+            QPushButton#saveReportBtn:hover {
+                background: #eff6ff;
+                color: #1d4ed8;
+            }
+            QPushButton#testButton {
+                font-size: 13px;
+                color: #6b7280;
+                background: transparent;
+                border: 1px solid #c7d0db;
+                border-radius: 8px;
+                padding: 6px 14px;
+            }
+            QPushButton#testButton:hover {
+                background: #eff6ff;
+                color: #2563eb;
+                border-color: #2563eb;
             }
             QPushButton#addAddrBtn {
                 min-height: 0;

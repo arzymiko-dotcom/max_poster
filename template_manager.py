@@ -8,6 +8,12 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+_MONTHS_GEN = {
+    1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+    5: "мая", 6: "июня", 7: "июля", 8: "августа",
+    9: "сентября", 10: "октября", 11: "ноября", 12: "декабря",
+}
+
 _lock = threading.Lock()
 
 
@@ -56,6 +62,20 @@ def save_template(name: str, text: str) -> None:
 def delete_template(name: str) -> None:
     templates = [t for t in load() if t.get("name") != name]
     _write(templates)
+
+
+def apply_variables(text: str, address: str | None = None) -> str:
+    """Подставляет переменные {{адрес}}, {{дата}}, {{месяц}}, {{год}} в текст шаблона."""
+    now = datetime.now()
+    replacements = {
+        "{{адрес}}":  address or "",
+        "{{дата}}":   now.strftime("%d.%m.%Y"),
+        "{{месяц}}":  _MONTHS_GEN[now.month],
+        "{{год}}":    str(now.year),
+    }
+    for key, value in replacements.items():
+        text = text.replace(key, value)
+    return text
 
 
 def _write(templates: list[dict]) -> None:

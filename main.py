@@ -1,4 +1,5 @@
 import atexit
+import csv
 import json
 import logging
 import os
@@ -61,7 +62,7 @@ from address_parser import extract_all_addresses
 from excel_matcher import ExcelMatcher, MatchResult
 import history_manager
 import template_manager
-from max_sender import MaxSender
+from max_sender import MaxSender, SendResult
 from state_manager import StateManager
 from updater import check_for_updates
 from vk_sender import VkSender
@@ -192,6 +193,7 @@ class SendWorker(QThread):
     result_ready = pyqtSignal(bool, str)
     progress = pyqtSignal(str)
     progress_step = pyqtSignal(int, int)   # (current, total)
+    address_result = pyqtSignal(int, bool, str)  # (idx, success, message)
 
     def __init__(
         self,
@@ -202,6 +204,8 @@ class SendWorker(QThread):
         image_path: "str | None",
         send_max: bool,
         send_vk: bool,
+        dry_run: bool = False,
+        extra_delay: int = 0,
     ) -> None:
         super().__init__()
         self.max_sender = max_sender
@@ -211,6 +215,8 @@ class SendWorker(QThread):
         self.image_path = image_path
         self.send_max = send_max
         self.send_vk = send_vk
+        self.dry_run = dry_run
+        self.extra_delay = extra_delay
         self._cancelled = False
         self.vk_post_id: int | None = None  # заполняется в run() при успешной отправке в ВК
 
@@ -239,7 +245,7 @@ class SendWorker(QThread):
                     return
                 # Случайная пауза между отправками — имитирует живого человека
                 if i > 1:
-                    delay = random.randint(5, 12)
+                    delay = random.randint(5, 12) + self.extra_delay
                     for sec in range(delay):
                         if self._cancelled:
                             break
@@ -247,21 +253,30 @@ class SendWorker(QThread):
                         time.sleep(1)
                 self.progress.emit(f"MAX {i}/{total}…")
                 self.progress_step.emit(i, total)
-                r = self.max_sender.send_post(
-                    chat_link=chat_id,
-                    text=self.text,
-                    image_path=self.image_path,
-                )
+                if self.dry_run:
+                    time.sleep(0.4)
+                    r = SendResult(True, "[ТЕСТ] симуляция")
+                else:
+                    r = self.max_sender.send_post(
+                        chat_link=chat_id,
+                        text=self.text,
+                        image_path=self.image_path,
+                    )
                 lines.append(f"MAX [{i}/{total}]: {r.message}")
+                self.address_result.emit(i - 1, r.success, r.message)
                 if not r.success:
                     success = False
 
         if not self._cancelled and self.send_vk:
-            r = self.vk_sender.send_post(
-                text=self.text,
-                image_path=self.image_path,
-                progress=lambda msg: self.progress.emit(f"ВК: {msg}"),
-            )
+            if self.dry_run:
+                time.sleep(0.4)
+                r = SendResult(True, "[ТЕСТ] симуляция ВК")
+            else:
+                r = self.vk_sender.send_post(
+                    text=self.text,
+                    image_path=self.image_path,
+                    progress=lambda msg: self.progress.emit(f"ВК: {msg}"),
+                )
             lines.append(f"ВК: {r.message}")
             if not r.success:
                 success = False
@@ -399,6 +414,8 @@ class MainWindow(QMainWindow):
         self.excel_path: Path = self._resolve_excel_path()
         self.image_path: "Path | None" = None
         self._worker: "SendWorker | None" = None
+        self._send_log_results: list[tuple[str, bool, str]] = []  # (адрес, успех, время)
+        self._pending_dry_run: bool = False
         self._bg_index: "int | None" = None
         self._bg_mode: int = 0  # 0 = фон, 1 = наложение
         self._bg_opacity: int = 50
@@ -658,6 +675,13 @@ class MainWindow(QMainWindow):
 
         text_layout.addWidget(text_container, 1)
 
+        self._photo_thumb = QLabel()
+        self._photo_thumb.setObjectName("photoThumb")
+        self._photo_thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._photo_thumb.setMaximumHeight(110)
+        self._photo_thumb.hide()
+        text_layout.addWidget(self._photo_thumb)
+
         # ══════════════════════════════════════════════════════════════
         # ПРАВАЯ ПАНЕЛЬ — адреса и управление
         # ══════════════════════════════════════════════════════════════
@@ -672,8 +696,8 @@ class MainWindow(QMainWindow):
         self._addr_list.setObjectName("addrList")
         self._addr_list.setAlternatingRowColors(True)
         self._addr_list.setItemDelegate(_NumberedItemDelegate(self._addr_list))
-        self._addr_list.itemChanged.connect(self._update_checklist)
-        self._addr_list.itemChanged.connect(self.save_state)
+        self._addr_list.itemChanged.connect(self._on_addr_item_changed)
+        self._addr_list.itemDoubleClicked.connect(self._toggle_addr_item)
         self._insert_pinned_group()
 
         addr_header_frame = QFrame()
@@ -692,9 +716,16 @@ class MainWindow(QMainWindow):
         self._hist_btn.setFixedSize(28, 28)
         self._hist_btn.setToolTip("История публикаций")
         self._hist_btn.clicked.connect(self._toggle_history_popup)
+        self._select_all_btn = QPushButton("☑")
+        self._select_all_btn.setObjectName("tplMiniBtn")
+        self._select_all_btn.setFixedSize(28, 28)
+        self._select_all_btn.setToolTip("Выбрать все / Снять все")
+        self._select_all_btn.clicked.connect(self._toggle_select_all)
+
         ah_layout.addWidget(self._addr_count_lbl)
         ah_layout.addStretch()
         ah_layout.addWidget(self._hist_btn)
+        ah_layout.addWidget(self._select_all_btn)
         ah_layout.addWidget(self._add_addr_btn)
         ctrl_layout.addWidget(addr_header_frame)
 
@@ -725,6 +756,12 @@ class MainWindow(QMainWindow):
         ctrl_layout.addWidget(addr_hint)
 
         ctrl_layout.addWidget(self._addr_list, 1)
+
+        self._send_log_list = QListWidget()
+        self._send_log_list.setObjectName("sendLogList")
+        self._send_log_list.setAlternatingRowColors(True)
+        self._send_log_list.hide()
+        ctrl_layout.addWidget(self._send_log_list, 1)
 
         self.clear_button = QPushButton("Очистить")
         self.clear_button.setObjectName("clearButton")
@@ -772,9 +809,17 @@ class MainWindow(QMainWindow):
         chk_vk_fl.setContentsMargins(10, 6, 10, 6)
         chk_vk_fl.addWidget(self.chk_vk)
 
+        self._save_report_btn = QPushButton("Сохранить отчёт")
+        self._save_report_btn.setObjectName("saveReportBtn")
+        self._save_report_btn.setFixedHeight(28)
+        self._save_report_btn.setToolTip("Сохранить лог отправки в CSV")
+        self._save_report_btn.hide()
+        self._save_report_btn.clicked.connect(self._export_report_csv)
+
         platforms_row.addWidget(chk_max_frame)
         platforms_row.addWidget(chk_vk_frame)
         platforms_row.addStretch()
+        platforms_row.addWidget(self._save_report_btn)
         platforms_row.addWidget(self.clear_button)
         pl_layout.addLayout(platforms_row)
 
@@ -860,11 +905,23 @@ class MainWindow(QMainWindow):
         self._cancel_button.hide()
         self._cancel_button.clicked.connect(self._cancel_send)
 
+        self._dry_run_btn = QPushButton("Тест")
+        self._dry_run_btn.setObjectName("testButton")
+        self._dry_run_btn.setToolTip("Пробный прогон — сообщения не отправляются")
+        self._dry_run_btn.clicked.connect(self._send_dry_run)
+
+        send_row_w = QWidget()
+        send_row_l = QHBoxLayout(send_row_w)
+        send_row_l.setContentsMargins(0, 0, 0, 0)
+        send_row_l.setSpacing(6)
+        send_row_l.addWidget(self.send_button, 1)
+        send_row_l.addWidget(self._dry_run_btn)
+
         send_area = QFrame()
         sa_layout = QVBoxLayout(send_area)
         sa_layout.setContentsMargins(0, 0, 0, 0)
         sa_layout.setSpacing(0)
-        sa_layout.addWidget(self.send_button)
+        sa_layout.addWidget(send_row_w)
         sa_layout.addWidget(self._cancel_button)
         buttons_row.addWidget(send_area, 3, 0, 1, 2)
 
@@ -940,6 +997,7 @@ class MainWindow(QMainWindow):
         if self._hist_popup.isVisible():
             self._hist_popup.hide()
             return
+        self._hist_search.clear()
         self._refresh_history()
         btn = self._hist_btn
         pos = btn.mapToGlobal(btn.rect().bottomRight())
@@ -968,6 +1026,17 @@ class MainWindow(QMainWindow):
         title_row.addStretch()
         title_row.addWidget(clear_btn)
         outer.addLayout(title_row)
+
+        self._hist_search = QLineEdit()
+        self._hist_search.setPlaceholderText("🔍 Поиск в истории…")
+        self._hist_search.setFixedHeight(26)
+        self._hist_search.setObjectName("addrSearch")
+        self._hist_search_timer = QTimer(self)
+        self._hist_search_timer.setSingleShot(True)
+        self._hist_search_timer.setInterval(200)
+        self._hist_search_timer.timeout.connect(self._refresh_history)
+        self._hist_search.textChanged.connect(self._hist_search_timer.start)
+        outer.addWidget(self._hist_search)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1006,7 +1075,16 @@ class MainWindow(QMainWindow):
             if item.widget():
                 item.widget().deleteLater()
 
+        filter_text = self._hist_search.text().strip().lower()
+
         entries = history_manager.load()
+        if filter_text:
+            def _matches(e: dict) -> bool:
+                addrs = " ".join(e.get("max", [])).lower()
+                platforms = ("max " if e.get("max") else "") + ("вк вконтакте " if e.get("vk") else "")
+                return filter_text in addrs or filter_text in platforms
+            entries = [e for e in entries if _matches(e)]
+
         if not entries:
             lbl = QLabel("Нет записей")
             lbl.setObjectName("histEmpty")
@@ -1192,6 +1270,61 @@ class MainWindow(QMainWindow):
     def _apply_styles(self) -> None:
         self.setStyleSheet(get_stylesheet())
 
+    def _has_unchecked_items(self) -> bool:
+        """True если есть хотя бы один непомеченный не-pinned адрес."""
+        return any(
+            self._addr_list.item(i).checkState() != Qt.CheckState.Checked
+            for i in range(self._addr_list.count())
+            if self._addr_list.item(i) and not self._addr_list.item(i).data(_PINNED_ROLE)
+        )
+
+    def _on_addr_item_changed(self) -> None:
+        """Один слот вместо двух подключений itemChanged."""
+        self._update_checklist()
+        self.save_state()
+        self._select_all_btn.setToolTip(
+            "Снять все" if not self._has_unchecked_items() else "Выбрать все"
+        )
+
+    def _toggle_select_all(self) -> None:
+        """Выбирает все адреса или снимает все (кроме закреплённой группы)."""
+        has_unchecked = self._has_unchecked_items()
+        new_state = Qt.CheckState.Checked if has_unchecked else Qt.CheckState.Unchecked
+        try:
+            self._addr_list.blockSignals(True)
+            for i in range(self._addr_list.count()):
+                item = self._addr_list.item(i)
+                if item and not item.data(_PINNED_ROLE):
+                    item.setCheckState(new_state)
+        finally:
+            self._addr_list.blockSignals(False)
+        self._on_addr_item_changed()
+
+    def _export_report_csv(self) -> None:
+        """Сохраняет лог последней рассылки в CSV."""
+        if not self._send_log_results:
+            return
+        default_name = f"report_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Сохранить отчёт", default_name, "CSV файлы (*.csv)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Адрес", "Статус", "Время"])
+                for addr, success, ts in self._send_log_results:
+                    writer.writerow([addr, "Успех" if success else "Ошибка", ts])
+            QMessageBox.information(self, "Отчёт", f"Отчёт сохранён:\n{path}")
+        except OSError as exc:
+            QMessageBox.warning(self, "Ошибка", f"Не удалось сохранить файл:\n{exc}")
+
+    def _send_dry_run(self) -> None:
+        """Запускает пробный прогон без реальной отправки."""
+        self._pending_dry_run = True
+        self.send_post()
+
     def _update_checklist(self) -> None:
         def row(ok: bool, label: str) -> str:
             if ok:
@@ -1204,10 +1337,14 @@ class MainWindow(QMainWindow):
         has_address = len(checked) > 0
         has_platform = self.chk_max.isChecked() or self.chk_vk.isChecked()
 
-        # Счётчик выбранных адресов в заголовке
+        # Счётчик выбранных адресов в заголовке (отмечено/всего)
         n = len(checked)
-        if n > 0:
-            self._addr_count_lbl.setText(f"Адреса для рассылки MAX  ({n})")
+        total = sum(
+            1 for i in range(self._addr_list.count())
+            if self._addr_list.item(i) and self._addr_list.item(i).data(Qt.ItemDataRole.UserRole)
+        )
+        if total > 0:
+            self._addr_count_lbl.setText(f"Адреса для рассылки MAX  ({n}/{total})")
         else:
             self._addr_count_lbl.setText("Адреса для рассылки MAX")
 
@@ -1260,6 +1397,22 @@ class MainWindow(QMainWindow):
         self.text_input.setTextCursor(cursor)
         self.text_input.setFocus()
 
+    def _update_photo_thumb(self) -> None:
+        """Обновляет миниатюру фото в левой панели."""
+        if self.image_path:
+            pix = QPixmap(str(self.image_path))
+            if not pix.isNull():
+                thumb = pix.scaled(
+                    self._photo_thumb.width() or 400, 100,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                self._photo_thumb.setPixmap(thumb)
+                self._photo_thumb.show()
+                return
+        self._photo_thumb.clear()
+        self._photo_thumb.hide()
+
     def select_image(self) -> None:
         file_name, _ = QFileDialog.getOpenFileName(
             self, "Выберите изображение", "", "Images (*.png *.jpg *.jpeg *.webp)"
@@ -1269,6 +1422,7 @@ class MainWindow(QMainWindow):
         self.image_path = Path(file_name)
         self.preview.set_image(str(self.image_path))
         self._set_photo_button_name(self.image_path.name)
+        self._update_photo_thumb()
         self._update_checklist()
         self.save_state()
 
@@ -1341,6 +1495,8 @@ class MainWindow(QMainWindow):
         self._addr_search_results.hide()
 
     def clear_form(self) -> None:
+        self._save_report_btn.hide()
+        self._send_log_results = []
         self.text_input.clear()
         self._addr_search.clear()
         self._addr_list.clear()
@@ -1351,6 +1507,7 @@ class MainWindow(QMainWindow):
         self.photo_button.setText("Загрузить фото")
         self.photo_button.setObjectName("photoButton")
         self.photo_button.setStyle(self.photo_button.style())
+        self._update_photo_thumb()
         self._update_checklist()
         self.save_state()
 
@@ -1416,6 +1573,20 @@ class MainWindow(QMainWindow):
                 if match:
                     results.append(match)
         return results
+
+    def _toggle_addr_item(self, item: "QListWidgetItem") -> None:
+        """Двойной клик — переключает галочку адреса."""
+        if item.data(_PINNED_ROLE):
+            return  # закреплённая группа — не трогаем двойным кликом
+        new_state = (Qt.CheckState.Unchecked
+                     if item.checkState() == Qt.CheckState.Checked
+                     else Qt.CheckState.Checked)
+        try:
+            self._addr_list.blockSignals(True)
+            item.setCheckState(new_state)
+        finally:
+            self._addr_list.blockSignals(False)
+        self._on_addr_item_changed()
 
     def _open_font_picker(self) -> None:
         prev_family = self._ui_font_family
@@ -1531,11 +1702,17 @@ class MainWindow(QMainWindow):
         self.save_state()
 
     def send_post(self) -> None:
+        # Забираем и сбрасываем флаг dry_run сразу — до любых ранних return
+        dry_run = self._pending_dry_run
+        self._pending_dry_run = False
         if self._worker is not None and self._worker.isRunning():
             return  # отправка уже идёт — игнорируем повторное нажатие
         if self._chk_schedule.isChecked():
             self._schedule_post()
             return
+        # Сбрасываем предыдущий лог и скрываем кнопку отчёта
+        self._send_log_results = []
+        self._save_report_btn.hide()
         text = self.text_input.toPlainText().strip()
         if not text:
             QMessageBox.warning(self, "Отправка", "Нельзя отправить пустой текст.")
@@ -1587,11 +1764,14 @@ class MainWindow(QMainWindow):
                 return
 
         self.send_button.hide()
+        self._dry_run_btn.hide()
         self.check_button.setEnabled(False)
         self._cancel_button.setEnabled(True)
         self._cancel_button.setText("✕  Отменить отправку")
         self._cancel_button.show()
         self._progress_bar.show()
+        if dry_run:
+            self.setWindowTitle("MAX POST — ТЕСТ (сообщения не отправляются)")
 
         self._pending_history = {
             "addresses": [m.address for m in checked],
@@ -1600,6 +1780,7 @@ class MainWindow(QMainWindow):
             "text": text,
         }
 
+        extra_delay = int(os.getenv("SEND_DELAY_SEC", "0") or 0)
         self._worker = SendWorker(
             max_sender=self.max_sender,
             vk_sender=self.vk_sender,
@@ -1608,13 +1789,43 @@ class MainWindow(QMainWindow):
             image_path=str(self.image_path) if self.image_path else None,
             send_max=send_max,
             send_vk=send_vk,
+            dry_run=dry_run,
+            extra_delay=extra_delay,
         )
         self._worker.progress.connect(self._on_send_progress)
         self._worker.progress_step.connect(self._on_send_step)
         self._worker.result_ready.connect(self._on_send_finished)
+
+        # Лог отправки — показываем только если отправляем в MAX
+        if send_max and checked:
+            self._send_log_list.clear()
+            for m in checked:
+                log_item = QListWidgetItem(f"⏳  {m.address}")
+                log_item.setData(Qt.ItemDataRole.UserRole, m.address)
+                self._send_log_list.addItem(log_item)
+            self._addr_list.hide()
+            self._send_log_list.show()
+            self._worker.address_result.connect(self._on_address_result)
+
         self._progress_bar.setRange(0, len(chat_ids) if send_max else 0)
         self._progress_bar.setValue(0)
         self._worker.start()
+
+    def _on_address_result(self, idx: int, success: bool, msg: str) -> None:
+        """Обновляет иконку строки в логе отправки (✓/✗)."""
+        item = self._send_log_list.item(idx)
+        if not item:
+            return
+        addr = item.data(Qt.ItemDataRole.UserRole)
+        if success:
+            item.setText(f"✓  {addr}")
+            item.setForeground(QColor("#16a34a"))
+        else:
+            item.setText(f"✗  {addr}")
+            item.setForeground(QColor("#dc2626"))
+        self._send_log_list.scrollToItem(item)
+        ts = datetime.now().strftime("%H:%M:%S")
+        self._send_log_results.append((addr, success, ts))
 
     def _on_send_progress(self, step: str) -> None:
         self.send_button.setText(step)
@@ -1633,17 +1844,31 @@ class MainWindow(QMainWindow):
             self.setWindowTitle("MAX POST — Отменяется…")
 
     def _on_send_finished(self, success: bool, message: str) -> None:
+        is_dry_run = getattr(self._worker, "dry_run", False) if self._worker else False
         self._cancel_button.hide()
         self.send_button.show()
+        self._dry_run_btn.show()
         self.send_button.setEnabled(True)
         self.send_button.setText("Опубликовать")
         self.check_button.setEnabled(True)
         self._progress_bar.hide()
         self.setWindowTitle("MAX POST")
+        # Восстанавливаем список адресов после отправки
+        self._send_log_list.hide()
+        self._addr_list.show()
+        # Показываем кнопку сохранения отчёта если есть результаты MAX
+        if self._send_log_results:
+            self._save_report_btn.show()
         vk_post_id = getattr(self._worker, "vk_post_id", None) if self._worker else None
         if self._worker is not None:
             self._worker.deleteLater()
             self._worker = None
+        if is_dry_run:
+            QMessageBox.information(
+                self, "Тест завершён",
+                "Пробный прогон выполнен.\nРеальных отправок не было."
+            )
+            return
         if success:
             self._success_overlay.show_success()
             h = self._pending_history
@@ -2199,6 +2424,9 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Шаблоны", f"Шаблон «{name.strip()}» сохранён.")
 
     def _apply_template(self, text: str) -> None:
+        checked = self._get_checked_matches()
+        first_addr = checked[0].address if checked else None
+        text = template_manager.apply_variables(text, first_addr)
         self.text_input.setPlainText(text)
         self.text_input.moveCursor(self.text_input.textCursor().MoveOperation.End)
 
@@ -2446,6 +2674,9 @@ class MainWindow(QMainWindow):
 
         # Полное закрытие
         self._save_timer.stop()
+        self._parse_timer.stop()
+        self._addr_search_timer.stop()
+        self._hist_search_timer.stop()
         self._do_save_state()
 
         for entry in self._scheduled_posts.values():
@@ -2486,6 +2717,7 @@ class MainWindow(QMainWindow):
         self.photo_button.setText("Загрузить фото")
         self.photo_button.setObjectName("photoButton")
         self.photo_button.setStyle(self.photo_button.style())
+        self._update_photo_thumb()
         self._update_checklist()
         self.save_state()
 

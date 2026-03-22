@@ -14,12 +14,12 @@ from pathlib import Path
 
 _log = logging.getLogger(__name__)
 
-from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import QPoint, QRect, QSize, Qt, QTimer
+from PyQt6.QtGui import QCursor, QIcon
 from PyQt6.QtWidgets import (
-    QButtonGroup, QDialog, QDialogButtonBox, QFormLayout, QFrame, QHBoxLayout,
-    QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton,
-    QStackedWidget, QVBoxLayout, QWidget,
+    QApplication, QButtonGroup, QDialog, QDialogButtonBox, QFormLayout,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
+    QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 
@@ -92,6 +92,39 @@ QPushButton#sideBtn:disabled {
     background: transparent;
     border-left: 3px solid transparent;
 }
+QPushButton#updBtn {
+    border: none;
+    background: transparent;
+    min-width: 0px;
+    min-height: 0px;
+}
+QPushButton#updBtn:hover {
+    background: rgba(255,255,255,0.07);
+}
+"""
+
+_CHANGELOG_POPUP_DARK = """
+QFrame#changelogPopup {
+    background: #252535;
+    border: 1px solid #3a3a55;
+    border-radius: 10px;
+}
+QLabel#changelogTitle  { color: #4a6cf7; font-size: 13px; font-weight: 700; }
+QLabel#changelogVersion{ color: #aaaacc; font-size: 11px; }
+QLabel#changelogItem   { color: #d0d0e8; font-size: 12px; }
+QLabel#changelogSep    { color: #3a3a55; font-size: 10px; }
+"""
+
+_CHANGELOG_POPUP_LIGHT = """
+QFrame#changelogPopup {
+    background: #ffffff;
+    border: 1px solid #c7d0db;
+    border-radius: 10px;
+}
+QLabel#changelogTitle  { color: #2563eb; font-size: 13px; font-weight: 700; }
+QLabel#changelogVersion{ color: #6b7280; font-size: 11px; }
+QLabel#changelogItem   { color: #1a1a2e; font-size: 12px; }
+QLabel#changelogSep    { color: #c7d0db; font-size: 10px; }
 """
 
 _SHELL_STYLE = """
@@ -215,6 +248,144 @@ class _EnterPasswordDialog(QDialog):
 # ──────────────────────────────────────────────────────────────
 #  Кнопка сайдбара с иконкой + подписью
 # ──────────────────────────────────────────────────────────────
+#  Попап changelog при наведении на кнопку upd
+# ──────────────────────────────────────────────────────────────
+
+def _app_base_dir() -> Path:
+    """Возвращает папку рядом с EXE (frozen) или скриптом (dev)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path(__file__).parent
+
+
+def _load_changelog() -> list[dict]:
+    """Читает changelog.json рядом с EXE или скриптом."""
+    p = _app_base_dir() / "changelog.json"
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+
+class _ChangelogPopup(QFrame):
+    """Попап с историей изменений — появляется при наведении на кнопку upd."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setObjectName("changelogPopup")
+        self.setMinimumWidth(320)
+        self.setMaximumWidth(400)
+
+        # Polling-таймер: вместо enter/leave проверяем позицию курсора каждые 60мс.
+        # Это полностью исключает мигание, т.к. popup-окно может перехватывать mouse-события.
+        self._poll_timer = QTimer(self)
+        self._poll_timer.setInterval(60)
+        self._poll_timer.timeout.connect(self._check_cursor)
+        self._btn_ref: "QPushButton | None" = None  # задаётся из _UpdBtn
+        self.setStyleSheet(_CHANGELOG_POPUP_DARK)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
+
+        changelog = _load_changelog()
+        from updater import _local_version  # noqa: PLC0415 — circular import avoided
+        current_ver = _local_version()
+
+        if not changelog:
+            layout.addWidget(QLabel("Нет данных об обновлениях"))
+        else:
+            for idx, entry in enumerate(changelog[:3]):
+                ver = entry.get("version", "")
+                changes = entry.get("changes", [])
+
+                if idx > 0:
+                    sep = QFrame()
+                    sep.setFrameShape(QFrame.Shape.HLine)
+                    sep.setObjectName("changelogSep")
+                    layout.addWidget(sep)
+
+                header = QHBoxLayout()
+                title = QLabel(f"Версия {ver}")
+                title.setObjectName("changelogTitle" if ver == current_ver else "changelogVersion")
+                header.addWidget(title)
+                if ver == current_ver:
+                    badge = QLabel("  текущая")
+                    badge.setObjectName("changelogVersion")
+                    header.addWidget(badge)
+                header.addStretch()
+                layout.addLayout(header)
+
+                for change in changes:
+                    lbl = QLabel(f"• {change}")
+                    lbl.setObjectName("changelogItem")
+                    lbl.setWordWrap(True)
+                    layout.addWidget(lbl)
+
+    def set_dark(self, dark: bool) -> None:
+        self.setStyleSheet(_CHANGELOG_POPUP_DARK if dark else _CHANGELOG_POPUP_LIGHT)
+
+    def show_near(self, btn: "QPushButton") -> None:
+        """Показать попап справа от кнопки, выровненный по нижнему краю кнопки."""
+        self._btn_ref = btn
+        self.adjustSize()
+        btn_br = btn.mapToGlobal(btn.rect().bottomRight())
+        # Выровнять низ попапа по низу кнопки
+        x = btn_br.x() + 6
+        y = btn_br.y() - self.height()
+        self.move(x, y)
+        self.show()
+        self._poll_timer.start()
+
+    def _check_cursor(self) -> None:
+        """Скрыть если курсор ушёл и с кнопки, и с попапа."""
+        cursor = QCursor.pos()
+
+        # Проверяем попап
+        popup_rect = QRect(self.pos(), self.size())
+        if popup_rect.contains(cursor):
+            return
+
+        # Проверяем кнопку
+        if self._btn_ref is not None:
+            btn_tl = self._btn_ref.mapToGlobal(QPoint(0, 0))
+            btn_rect = QRect(btn_tl, self._btn_ref.size())
+            if btn_rect.contains(cursor):
+                return
+
+        # Курсор ни там ни там — скрываем
+        self._poll_timer.stop()
+        self.hide()
+
+
+class _UpdBtn(QPushButton):
+    """Кнопка обновлений с попапом changelog при наведении."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("updBtn")
+        self.setFixedSize(60, 50)
+        self.setToolTip("История обновлений")
+        _icon = QIcon(_assets("upd.ico"))
+        if not _icon.isNull():
+            self.setIcon(_icon)
+            self.setIconSize(QSize(28, 28))
+        else:
+            self.setText("🔄")
+
+        self._popup = _ChangelogPopup()
+
+    def set_dark(self, dark: bool) -> None:
+        self._popup.set_dark(dark)
+
+    def enterEvent(self, event) -> None:
+        if not self._popup.isVisible():
+            self._popup.show_near(self)
+        super().enterEvent(event)
+
+
+# ──────────────────────────────────────────────────────────────
 class _SideButton(QPushButton):
     def __init__(self, icon_path: str, tooltip: str, fallback: str):
         super().__init__()
@@ -287,6 +458,11 @@ class _SideBar(QFrame):
         layout.addWidget(self.btn_mkd)
 
         layout.addStretch()
+
+        # Кнопка changelog (история обновлений)
+        self.btn_upd = _UpdBtn(self)
+        layout.addWidget(self.btn_upd)
+        layout.addSpacing(2)
 
         # Кнопка авторизации (токены)
         self.btn_auth = QPushButton()
@@ -430,6 +606,7 @@ class ShellWindow(QMainWindow):
         # ── Тёмная тема — восстанавливаем состояние ─────────────
         prefs = _load_ui_prefs()
         self._dark_mode: bool = prefs.get("dark_mode", False)
+        self._sidebar.btn_upd.set_dark(self._dark_mode)
         if self._dark_mode:
             self._apply_dark_mode(self._dark_mode)
         elif hasattr(self._vk_panel, "set_dark"):
@@ -508,6 +685,7 @@ class ShellWindow(QMainWindow):
             self._stats_panel.set_dark(dark)
         if self._vk_panel is not None and hasattr(self._vk_panel, "set_dark"):
             self._vk_panel.set_dark(dark)
+        self._sidebar.btn_upd.set_dark(dark)
 
     # ──────────────────────────────────────────────────────────
     def _on_stats_clicked(self) -> None:
@@ -614,3 +792,5 @@ class ShellWindow(QMainWindow):
                 except Exception:
                     pass
         super().closeEvent(event)
+        # QSystemTrayIcon может удерживать event loop — явно завершаем
+        QApplication.quit()

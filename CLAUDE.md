@@ -90,3 +90,28 @@ PyQt6 desktop-приложение для отправки объявлений 
 - Метод проверки: `morph.word_is_known(word)` — НЕ `tag.POS is not None`
 - `ui/settings_dialog.py`: кнопка «🔗 Получить токен VK» + «✓ Проверить» для VK и MAX токенов
 - VK токен: уведомление раз в день (`last_vk_invalid_warning` в `app_state.json`) — сделано
+- Миниатюра фото в левой панели (`_photo_thumb` QLabel, `_update_photo_thumb()`) — сделано
+- Счётчик адресов `(n/total)` в заголовке раздела — сделано
+- Двойной клик на адрес — снять/поставить галочку (`_toggle_addr_item`) — сделано
+- Лог отправки реал-тайм ✓/✗ (`_send_log_list`, `SendWorker.address_result` сигнал) — сделано
+- Кнопка changelog `upd.ico` в сайдбаре над btn_auth (`_UpdBtn`, `_ChangelogPopup`) — сделано
+- `changelog.json` в корне — формат `[{version, changes[]}]`, добавить новую версию сверху
+- Фикс: программа не завершалась после выхода — `QApplication.quit()` в `ShellWindow.closeEvent`
+- `_addr_search_timer` + `_parse_timer` останавливаются в `closeEvent` — сделано
+- `_CombinedHighlighter._morph` кэшируется в `__init__` — сделано
+- `itemChanged` × 2 → `_on_addr_item_changed` — сделано
+- Папка `fonts/` пуста — программа использует системный Segoe UI (Windows default)
+- Claude Code auto-approve: `"defaultMode": "acceptEdits"` в settings.json — настроено
+- `QCursor`, `QRect`, `QPoint` в `shell_window.py` — в топ-левел импортах (не внутри `_check_cursor`)
+- `from updater import _local_version` в `_ChangelogPopup.__init__` — оставлен локальным (circular import)
+- `template_manager.apply_variables(text, address)` — подстановка `{{адрес}}`, `{{дата}}`, `{{месяц}}`, `{{год}}` в шаблоны
+- `SEND_DELAY_SEC` в `.env` — дополнительная пауза между отправками (настраивается в settings_dialog)
+- `SendWorker` принимает `dry_run: bool` и `extra_delay: int` — не менять сигнатуру без нужды
+- `_pending_dry_run: bool` в MainWindow — флаг для dry-run, устанавливается `_send_dry_run()`, сбрасывается в `send_post()`
+- `_send_log_results: list[tuple[str, bool, str]]` — (адрес, успех, время), собирается в `_on_address_result`
+- `_save_report_btn` — показывается после MAX-рассылки если есть результаты, скрывается в `clear_form`
+- `_select_all_btn` — ☑ в заголовке адресов, выбирает/снимает все (кроме pinned)
+- `_hist_search_timer` останавливается в `closeEvent` — сделано (crash fix)
+- `_toggle_select_all` вызывает `_on_addr_item_changed()` — тултип кнопки ☑ обновляется корректно
+- `_refresh_history` читает `self._hist_search.text()` напрямую (не через `getattr`)
+- `_update_photo_thumb`: убран лишний `exists()` перед `QPixmap()` (TOCTOU)

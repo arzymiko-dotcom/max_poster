@@ -52,6 +52,12 @@ if exist version.txt (
 
 copy *.xlsx "dist\MAX POST\" 2>NUL
 
+if exist changelog.json (
+    copy changelog.json "dist\MAX POST\changelog.json"
+) else (
+    echo Предупреждение: changelog.json не найден
+)
+
 if exist .env (
     copy .env "dist\MAX POST\.env"
 ) else (
