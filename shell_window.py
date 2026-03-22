@@ -15,7 +15,7 @@ from pathlib import Path
 _log = logging.getLogger(__name__)
 
 from PyQt6.QtCore import QPoint, QRect, QSize, Qt, QTimer
-from PyQt6.QtGui import QCursor, QIcon
+from PyQt6.QtGui import QCursor, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QButtonGroup, QDialog, QDialogButtonBox, QFormLayout,
     QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
@@ -464,6 +464,15 @@ class _SideBar(QFrame):
         layout.addWidget(self.btn_upd)
         layout.addSpacing(2)
 
+        # Кнопка переключения темы
+        self.btn_theme = QPushButton("🌙")
+        self.btn_theme.setObjectName("updBtn")
+        self.btn_theme.setFixedSize(60, 36)
+        self.btn_theme.setToolTip("Переключить тему (тёмная / светлая)")
+        self.btn_theme.setFont(QFont("Segoe UI Emoji", 16))
+        layout.addWidget(self.btn_theme)
+        layout.addSpacing(2)
+
         # Кнопка авторизации (токены)
         self.btn_auth = QPushButton()
         self.btn_auth.setObjectName("settingsBtn")
@@ -506,6 +515,10 @@ class _SideBar(QFrame):
             self._vk_badge.setVisible(True)
         else:
             self._vk_badge.setVisible(False)
+
+    def set_dark(self, dark: bool) -> None:
+        self.btn_theme.setText("☀️" if dark else "🌙")
+        self.btn_theme.setToolTip("Переключить на светлую тему" if dark else "Переключить на тёмную тему")
 
 
 # ──────────────────────────────────────────────────────────────
@@ -603,10 +616,13 @@ class ShellWindow(QMainWindow):
         if self._vk_available:
             self._vk_panel.unread_changed.connect(self._sidebar.set_vk_badge)  # type: ignore[union-attr]
 
+        self._sidebar.btn_theme.clicked.connect(self._toggle_dark_mode)
+
         # ── Тёмная тема — восстанавливаем состояние ─────────────
         prefs = _load_ui_prefs()
         self._dark_mode: bool = prefs.get("dark_mode", False)
         self._sidebar.btn_upd.set_dark(self._dark_mode)
+        self._sidebar.set_dark(self._dark_mode)
         if self._dark_mode:
             self._apply_dark_mode(self._dark_mode)
         elif hasattr(self._vk_panel, "set_dark"):
@@ -686,6 +702,7 @@ class ShellWindow(QMainWindow):
         if self._vk_panel is not None and hasattr(self._vk_panel, "set_dark"):
             self._vk_panel.set_dark(dark)
         self._sidebar.btn_upd.set_dark(dark)
+        self._sidebar.set_dark(dark)
 
     # ──────────────────────────────────────────────────────────
     def _on_stats_clicked(self) -> None:

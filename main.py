@@ -414,6 +414,7 @@ class MainWindow(QMainWindow):
 
         self.excel_path: Path = self._resolve_excel_path()
         self.image_path: "Path | None" = None
+        self._recent_photos: list[str] = []   # до 5 последних путей к фото
         self._worker: "SendWorker | None" = None
         self._send_log_results: list[tuple[str, bool, str]] = []  # (адрес, успех, время)
         self._pending_dry_run: bool = False
@@ -682,6 +683,16 @@ class MainWindow(QMainWindow):
         self._photo_thumb.setMaximumHeight(110)
         self._photo_thumb.hide()
         text_layout.addWidget(self._photo_thumb)
+
+        # Галерея последних фото
+        self._recent_bar = QFrame()
+        self._recent_bar.setObjectName("recentPhotoBar")
+        self._recent_bar_layout = QHBoxLayout(self._recent_bar)
+        self._recent_bar_layout.setContentsMargins(0, 2, 0, 2)
+        self._recent_bar_layout.setSpacing(4)
+        self._recent_bar_layout.addStretch()
+        self._recent_bar.hide()
+        text_layout.addWidget(self._recent_bar)
 
         # ══════════════════════════════════════════════════════════════
         # ПРАВАЯ ПАНЕЛЬ — адреса и управление
@@ -1404,6 +1415,54 @@ class MainWindow(QMainWindow):
         self.text_input.setTextCursor(cursor)
         self.text_input.setFocus()
 
+    def _add_to_recent_photos(self, path: str) -> None:
+        """Добавляет путь в начало списка последних фото (макс. 5, без дублей)."""
+        self._recent_photos = [p for p in self._recent_photos if p != path]
+        self._recent_photos.insert(0, path)
+        self._recent_photos = self._recent_photos[:5]
+        self._rebuild_recent_bar()
+
+    def _rebuild_recent_bar(self) -> None:
+        """Перестраивает галерею миниатюр последних фото."""
+        # Убираем старые кнопки (кроме последнего stretch)
+        while self._recent_bar_layout.count() > 1:
+            item = self._recent_bar_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        valid = [p for p in self._recent_photos if Path(p).exists()]
+        self._recent_photos = valid[:5]
+
+        for path in valid:
+            pix = QPixmap(path)
+            if pix.isNull():
+                continue
+            thumb = pix.scaled(44, 44, Qt.AspectRatioMode.KeepAspectRatio,
+                                Qt.TransformationMode.SmoothTransformation)
+            btn = QPushButton()
+            btn.setFixedSize(48, 48)
+            btn.setIcon(QIcon(thumb))
+            btn.setIconSize(QSize(44, 44))
+            btn.setToolTip(Path(path).name)
+            btn.setObjectName("recentPhotoBtn")
+            btn.clicked.connect(lambda _checked, p=path: self._use_recent_photo(p))
+            self._recent_bar_layout.insertWidget(self._recent_bar_layout.count() - 1, btn)
+
+        self._recent_bar.setVisible(bool(valid))
+
+    def _use_recent_photo(self, path: str) -> None:
+        """Устанавливает выбранное из галереи фото как текущее."""
+        p = Path(path)
+        if not p.exists():
+            self._rebuild_recent_bar()
+            return
+        self.image_path = p
+        self.preview.set_image(str(p))
+        self._set_photo_button_name(p.name)
+        self._update_photo_thumb()
+        self._update_checklist()
+        self.save_state()
+
     def _update_photo_thumb(self) -> None:
         """Обновляет миниатюру фото в левой панели."""
         if self.image_path:
@@ -1430,6 +1489,7 @@ class MainWindow(QMainWindow):
         self.preview.set_image(str(self.image_path))
         self._set_photo_button_name(self.image_path.name)
         self._update_photo_thumb()
+        self._add_to_recent_photos(str(self.image_path))
         self._update_checklist()
         self.save_state()
 
@@ -2577,6 +2637,7 @@ class MainWindow(QMainWindow):
             "ui_font_size": self._ui_font_size,
             "last_token_rotation": self._last_token_rotation,
             "last_vk_invalid_warning": self._last_vk_invalid_warning,
+            "recent_photos": self._recent_photos,
         })
 
     def load_state(self) -> None:
@@ -2597,6 +2658,8 @@ class MainWindow(QMainWindow):
 
         self._last_token_rotation    = data.get("last_token_rotation", "")
         self._last_vk_invalid_warning = data.get("last_vk_invalid_warning", "")
+        self._recent_photos = data.get("recent_photos", [])
+        self._rebuild_recent_bar()
 
         bg_index = data.get("bg_index", None)
         bg_mode = data.get("bg_mode", 0)

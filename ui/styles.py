@@ -332,6 +332,13 @@ _DARK_STYLESHEET = """
                 padding: 0;
             }
             QPushButton#addAddrBtn:hover { background: #1e2a5a; }
+            QPushButton#recentPhotoBtn {
+                border: 1px solid #3a3a55;
+                border-radius: 6px;
+                background: #2a2a3e;
+                padding: 1px;
+            }
+            QPushButton#recentPhotoBtn:hover { border-color: #4a6cf7; background: #1e2a5a; }
             QLabel#groupBoxTitle {
                 font-size: 15px;
                 font-weight: 600;
@@ -806,6 +813,13 @@ _LIGHT_STYLESHEET = """
                 padding: 0;
             }
             QPushButton#addAddrBtn:hover { background: #eef4ff; }
+            QPushButton#recentPhotoBtn {
+                border: 1px solid #c7d0db;
+                border-radius: 6px;
+                background: #f8f9fb;
+                padding: 1px;
+            }
+            QPushButton#recentPhotoBtn:hover { border-color: #2563eb; background: #eff6ff; }
             QLabel#groupBoxTitle {
                 font-size: 15px;
                 font-weight: 600;
