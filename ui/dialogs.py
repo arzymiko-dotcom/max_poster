@@ -314,6 +314,84 @@ class AddAddressDialog(QDialog):
         return MatchResult(address=address, score=0, chat_link=url, chat_id=chat_id)
 
 
+class PasteAddressesDialog(QDialog):
+    """Диалог вставки нескольких адресов сразу.
+
+    Поддерживаемые форматы строк (по одному на строку):
+      https://web.max.ru/-123456789
+      Название | https://web.max.ru/-123456789
+      Название | -123456789
+      Просто текст адреса (без chat_id)
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Вставить несколько адресов")
+        self.setMinimumWidth(480)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(10)
+
+        hint = QLabel(
+            "Вставьте адреса — по одному на строку.\n"
+            "Форматы: просто текст  |  текст | URL  |  текст | chat_id  |  URL"
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #888; font-size: 12px;")
+        layout.addWidget(hint)
+
+        self._edit = QPlainTextEdit()
+        self._edit.setPlaceholderText(
+            "https://web.max.ru/-123456789\n"
+            "ул. Примерная д.1 | https://web.max.ru/-987654321\n"
+            "Офис Центр | -112233445"
+        )
+        self._edit.setMinimumHeight(180)
+        layout.addWidget(self._edit)
+
+        buttons = QDialogButtonBox()
+        buttons.addButton("Добавить", QDialogButtonBox.ButtonRole.AcceptRole)
+        buttons.addButton("Отмена", QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _on_accept(self) -> None:
+        if not self._edit.toPlainText().strip():
+            QMessageBox.warning(self, "Вставить адреса", "Введите хотя бы один адрес.")
+            return
+        self.accept()
+
+    def result_matches(self) -> list[MatchResult]:
+        results = []
+        for raw in self._edit.toPlainText().splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            if "|" in line:
+                left, right = line.split("|", 1)
+                address = left.strip()
+                right = right.strip()
+                if "web.max.ru/" in right:
+                    chat_id = right.split("web.max.ru/")[-1].strip("/")
+                    chat_link = right
+                else:
+                    chat_id = right
+                    chat_link = ""
+            elif line.startswith("http"):
+                chat_link = line
+                chat_id = line.split("web.max.ru/")[-1].strip("/") if "web.max.ru/" in line else ""
+                address = line
+            else:
+                address = line
+                chat_link = ""
+                chat_id = ""
+            if address:
+                results.append(MatchResult(address=address, score=0, chat_link=chat_link, chat_id=chat_id))
+        return results
+
+
 class VkEditDialog(QDialog):
     """Диалог редактирования опубликованного поста ВКонтакте."""
 

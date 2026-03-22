@@ -115,3 +115,5 @@ PyQt6 desktop-приложение для отправки объявлений 
 - `_toggle_select_all` вызывает `_on_addr_item_changed()` — тултип кнопки ☑ обновляется корректно
 - `_refresh_history` читает `self._hist_search.text()` напрямую (не через `getattr`)
 - `_update_photo_thumb`: убран лишний `exists()` перед `QPixmap()` (TOCTOU)
+- Balloon + звук по завершении рассылки (`_notify_send_done`) — `winsound.MessageBeep` + `_tray_notify`; только реальная отправка (не dry-run)
+- `PasteAddressesDialog` — вставка нескольких адресов сразу (кнопка 📋 в заголовке адресов)

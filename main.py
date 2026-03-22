@@ -7,6 +7,7 @@ import random
 import sys
 import time
 import uuid
+import winsound
 from datetime import datetime
 from pathlib import Path
 
@@ -73,7 +74,7 @@ from ui.emoji_picker import EmojiPicker
 from ui.background import _BgWidget
 from ui.animations import SuccessOverlay
 from ui.preview_card import PreviewCard
-from ui.dialogs import ThemePickerDialog, FontPickerDialog, AddAddressDialog, VkEditDialog
+from ui.dialogs import ThemePickerDialog, FontPickerDialog, AddAddressDialog, PasteAddressesDialog, VkEditDialog
 from ui.styles import get_stylesheet
 from constants import (
     PARSE_DEBOUNCE_MS,
@@ -711,6 +712,11 @@ class MainWindow(QMainWindow):
         self._add_addr_btn.setFixedSize(24, 24)
         self._add_addr_btn.setToolTip("Добавить адрес вручную")
         self._add_addr_btn.clicked.connect(self._add_address_manually)
+        self._paste_addr_btn = QPushButton("📋")
+        self._paste_addr_btn.setObjectName("tplMiniBtn")
+        self._paste_addr_btn.setFixedSize(28, 28)
+        self._paste_addr_btn.setToolTip("Вставить несколько адресов сразу")
+        self._paste_addr_btn.clicked.connect(self._paste_addresses)
         self._hist_btn = QPushButton("🕐")
         self._hist_btn.setObjectName("tplMiniBtn")
         self._hist_btn.setFixedSize(28, 28)
@@ -726,6 +732,7 @@ class MainWindow(QMainWindow):
         ah_layout.addStretch()
         ah_layout.addWidget(self._hist_btn)
         ah_layout.addWidget(self._select_all_btn)
+        ah_layout.addWidget(self._paste_addr_btn)
         ah_layout.addWidget(self._add_addr_btn)
         ctrl_layout.addWidget(addr_header_frame)
 
@@ -1701,6 +1708,44 @@ class MainWindow(QMainWindow):
         self._update_checklist()
         self.save_state()
 
+    def _paste_addresses(self) -> None:
+        """Вставка нескольких адресов сразу через диалог."""
+        dlg = PasteAddressesDialog(parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        matches = dlg.result_matches()
+        # Собираем уже существующие адреса/chat_id для проверки дублей
+        existing_addrs: set[str] = set()
+        existing_ids: set[str] = set()
+        for i in range(self._addr_list.count()):
+            ex = self._addr_list.item(i)
+            if not ex:
+                continue
+            ex_m = ex.data(Qt.ItemDataRole.UserRole)
+            if ex_m:
+                existing_addrs.add(ex_m.address)
+                if ex_m.chat_id:
+                    existing_ids.add(ex_m.chat_id)
+        added = 0
+        for match in matches:
+            if match.address in existing_addrs:
+                continue
+            if match.chat_id and match.chat_id in existing_ids:
+                continue
+            item = QListWidgetItem(match.address)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            item.setData(Qt.ItemDataRole.UserRole, match)
+            item.setData(_MANUAL_ROLE, True)
+            self._addr_list.addItem(item)
+            existing_addrs.add(match.address)
+            if match.chat_id:
+                existing_ids.add(match.chat_id)
+            added += 1
+        if added:
+            self._update_checklist()
+            self.save_state()
+
     def send_post(self) -> None:
         # Забираем и сбрасываем флаг dry_run сразу — до любых ранних return
         dry_run = self._pending_dry_run
@@ -1892,6 +1937,8 @@ class MainWindow(QMainWindow):
         else:
             tg_notify.send_error("Ошибка отправки поста", message)
             SendResultDialog(message, self).exec()
+
+        self._notify_send_done(success)
 
     # ──────────────────────────────────────────────────────────────────
     #  Отложенные посты
@@ -2651,6 +2698,35 @@ class MainWindow(QMainWindow):
         tray = getattr(self, "_tray", None)
         if tray and tray.isVisible():
             tray.showMessage(title, message, icon, duration_ms)
+
+    def _notify_send_done(self, success: bool) -> None:
+        """Balloon + звук по завершении рассылки."""
+        h = self._pending_history
+        send_max = h.get("send_max", False)
+        send_vk = h.get("send_vk", False)
+
+        parts = []
+        if send_max and self._send_log_results:
+            ok = sum(1 for _, s, _ in self._send_log_results if s)
+            total = len(self._send_log_results)
+            parts.append(f"MAX: {ok}/{total}")
+        if send_vk:
+            parts.append("ВК: ✓" if success else "ВК: ✗")
+
+        if not parts:
+            return
+
+        if success:
+            title = "✓ Рассылка завершена"
+            icon = QSystemTrayIcon.MessageIcon.Information
+            sound = winsound.MB_OK
+        else:
+            title = "✗ Рассылка завершена с ошибками"
+            icon = QSystemTrayIcon.MessageIcon.Warning
+            sound = winsound.MB_ICONEXCLAMATION
+
+        self._tray_notify(title, " · ".join(parts), icon, 6000)
+        winsound.MessageBeep(sound)
 
     def closeEvent(self, event) -> None:
         # Если нажали X (не «Выход») — сворачиваем в трей
