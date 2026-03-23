@@ -19,7 +19,7 @@ from PyQt6.QtGui import QCursor, QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QButtonGroup, QDialog, QDialogButtonBox, QFormLayout,
     QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
-    QPushButton, QStackedWidget, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 
@@ -274,8 +274,7 @@ class _ChangelogPopup(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
         self.setObjectName("changelogPopup")
-        self.setMinimumWidth(320)
-        self.setMaximumWidth(400)
+        self.setFixedWidth(360)
 
         # Polling-таймер: вместо enter/leave проверяем позицию курсора каждые 60мс.
         # Это полностью исключает мигание, т.к. popup-окно может перехватывать mouse-события.
@@ -285,7 +284,24 @@ class _ChangelogPopup(QFrame):
         self._btn_ref: "QPushButton | None" = None  # задаётся из _UpdBtn
         self.setStyleSheet(_CHANGELOG_POPUP_DARK)
 
-        layout = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Скролл-область — фиксирует высоту попапа, устраняет наложение текста
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setMaximumHeight(480)
+        outer.addWidget(scroll)
+
+        # Контент-виджет с явной шириной (нужно для корректного wordWrap в QLabel)
+        content = QWidget()
+        content.setFixedWidth(360)
+        scroll.setWidget(content)
+
+        layout = QVBoxLayout(content)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(8)
 
@@ -322,6 +338,8 @@ class _ChangelogPopup(QFrame):
                     lbl.setObjectName("changelogItem")
                     lbl.setWordWrap(True)
                     layout.addWidget(lbl)
+
+        layout.addStretch()
 
     def set_dark(self, dark: bool) -> None:
         self.setStyleSheet(_CHANGELOG_POPUP_DARK if dark else _CHANGELOG_POPUP_LIGHT)
@@ -366,7 +384,6 @@ class _UpdBtn(QPushButton):
         super().__init__(parent)
         self.setObjectName("updBtn")
         self.setFixedSize(60, 50)
-        self.setToolTip("История обновлений")
         _icon = QIcon(_assets("upd.ico"))
         if not _icon.isNull():
             self.setIcon(_icon)
@@ -431,10 +448,11 @@ class _SideBar(QFrame):
         layout.addSpacing(10)
 
         # Кнопки модулей
-        self.btn_max   = _SideButton(_assets("post.ico"), "MAX POST — отправка сообщений",    "MP")
-        self.btn_qr    = _SideButton(_assets("qr.ico"),       "QR Generator — генератор карточек", "QR")
-        self.btn_stats = _SideButton(_assets("state.ico"),    "Статистика групп",                  "📊")
-        self.btn_mkd   = _SideButton(_assets("mkd.ico"),      "СУПЕР МКД+ — в разработке",         "МКД+")
+        self.btn_max    = _SideButton(_assets("post.ico"),  "MAX POST — отправка сообщений",    "MP")
+        self.btn_qr     = _SideButton(_assets("qr.ico"),   "QR Generator — генератор карточек", "QR")
+        self.btn_stats  = _SideButton(_assets("state.ico"),"Статистика групп",                  "📊")
+        self.btn_mkd    = _SideButton(_assets("mkd.ico"),  "СУПЕР МКД+ — в разработке",         "МКД+")
+        self.btn_claude = _SideButton(_assets("chat.ico"), "Claude AI — помощник",              "✨")
 
         # ВКонтакте — кнопка с бейджем непрочитанных
         self.btn_vk = _SideButton(_assets("vk_2.ico"), "Сообщения ВКонтакте", "VK")
@@ -454,6 +472,8 @@ class _SideBar(QFrame):
         layout.addWidget(self.btn_stats)
         layout.addSpacing(8)
         layout.addWidget(self.btn_vk)
+        layout.addSpacing(8)
+        layout.addWidget(self.btn_claude)
         layout.addSpacing(8)
         layout.addWidget(self.btn_mkd)
 
@@ -503,10 +523,11 @@ class _SideBar(QFrame):
         # Группа — только одна кнопка активна
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
-        self._group.addButton(self.btn_max,   0)
+        self._group.addButton(self.btn_max,    0)
         self._group.addButton(self.btn_qr,    1)
         self._group.addButton(self.btn_stats, 2)
         self._group.addButton(self.btn_vk,    3)
+        self._group.addButton(self.btn_claude, 4)
         self.btn_max.setChecked(True)
 
     def set_vk_badge(self, count: int) -> None:
@@ -582,6 +603,17 @@ class ShellWindow(QMainWindow):
             self._vk_panel.setStyleSheet("color:#888; font-size:14px; background:#1e1e2e;")  # type: ignore[union-attr]
             self._vk_available = False
 
+        # ── Инициализируем панель Claude AI ─────────────────────────
+        try:
+            from claude_panel import ClaudePanel
+            self._claude_panel = ClaudePanel()
+            self._claude_available = True
+        except Exception as e:
+            self._claude_panel = QLabel(f"Claude AI недоступен:\n{e}")
+            self._claude_panel.setAlignment(Qt.AlignmentFlag.AlignCenter)  # type: ignore[union-attr]
+            self._claude_panel.setStyleSheet("color:#888; font-size:14px; background:#1e1e2e;")  # type: ignore[union-attr]
+            self._claude_available = False
+
         # ── FadeStack ───────────────────────────────────────────
         self._stack = _FadeStack()
 
@@ -590,10 +622,11 @@ class ShellWindow(QMainWindow):
         max_widget = self._max_win.centralWidget()
         max_widget.setStyleSheet(self._max_win.styleSheet())
 
-        self._stack.addWidget(max_widget)        # index 0
-        self._stack.addWidget(qr_widget)         # index 1
-        self._stack.addWidget(self._stats_panel) # index 2
-        self._stack.addWidget(self._vk_panel)    # index 3
+        self._stack.addWidget(max_widget)           # index 0
+        self._stack.addWidget(qr_widget)            # index 1
+        self._stack.addWidget(self._stats_panel)    # index 2
+        self._stack.addWidget(self._vk_panel)       # index 3
+        self._stack.addWidget(self._claude_panel)   # index 4
 
         # ── Компоновка ──────────────────────────────────────────
         self._sidebar = _SideBar()
@@ -613,8 +646,13 @@ class ShellWindow(QMainWindow):
         self._sidebar.btn_mkd.clicked.connect(self._show_mkd_coming_soon)
         self._sidebar.btn_stats.clicked.connect(self._on_stats_clicked)
         self._sidebar.btn_vk.clicked.connect(self._on_vk_clicked)
+        self._sidebar.btn_claude.clicked.connect(self._on_claude_clicked)
         if self._vk_available:
             self._vk_panel.unread_changed.connect(self._sidebar.set_vk_badge)  # type: ignore[union-attr]
+        if self._claude_available:
+            self._claude_panel.set_post_text_getter(  # type: ignore[union-attr]
+                lambda: self._max_win.text_input.toPlainText()
+            )
 
         self._sidebar.btn_theme.clicked.connect(self._toggle_dark_mode)
 
@@ -625,9 +663,12 @@ class ShellWindow(QMainWindow):
         self._sidebar.set_dark(self._dark_mode)
         if self._dark_mode:
             self._apply_dark_mode(self._dark_mode)
-        elif hasattr(self._vk_panel, "set_dark"):
-            # VK-панель по умолчанию тёмная — синхронизируем со светлой темой
-            self._vk_panel.set_dark(False)
+        else:
+            # VK и Claude по умолчанию тёмные — синхронизируем со светлой темой
+            if hasattr(self._vk_panel, "set_dark"):
+                self._vk_panel.set_dark(False)
+            if hasattr(self._claude_panel, "set_dark"):
+                self._claude_panel.set_dark(False)
 
     # ──────────────────────────────────────────────────────────
     def showEvent(self, event) -> None:
@@ -701,6 +742,8 @@ class ShellWindow(QMainWindow):
             self._stats_panel.set_dark(dark)
         if self._vk_panel is not None and hasattr(self._vk_panel, "set_dark"):
             self._vk_panel.set_dark(dark)
+        if hasattr(self._claude_panel, "set_dark"):
+            self._claude_panel.set_dark(dark)
         self._sidebar.btn_upd.set_dark(dark)
         self._sidebar.set_dark(dark)
 
@@ -713,6 +756,11 @@ class ShellWindow(QMainWindow):
     def _on_vk_clicked(self) -> None:
         """Переключает на панель VK-сообщений."""
         self._stack.switch_to(3)
+
+    # ──────────────────────────────────────────────────────────
+    def _on_claude_clicked(self) -> None:
+        """Переключает на панель Claude AI."""
+        self._stack.switch_to(4)
 
     # ──────────────────────────────────────────────────────────
     def _show_mkd_coming_soon(self) -> None:
@@ -802,7 +850,7 @@ class ShellWindow(QMainWindow):
 
         # Полное закрытие
         self._max_win.close()
-        for panel in (self._qr_win, self._stats_panel, self._vk_panel):
+        for panel in (self._qr_win, self._stats_panel, self._vk_panel, self._claude_panel):
             if panel is not None:
                 try:
                     panel.close()

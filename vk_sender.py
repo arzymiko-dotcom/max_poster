@@ -1,19 +1,18 @@
 import logging
 import os
 import sys
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import requests
 from env_utils import get_env_path, load_env_safe
+from constants import VK_API_URL, VK_API_VERSION, VK_MAX_PHOTO_MB, VK_RETRY_DELAYS
 
 _log = logging.getLogger(__name__)
 
 load_env_safe(get_env_path())
-
-VK_API = "https://api.vk.com/method"
-VK_VER = "5.199"
 
 
 @dataclass
@@ -43,10 +42,22 @@ class VkSender:
 
     def _call(self, method: str, token: str, **params) -> dict:
         params["access_token"] = token
-        params["v"] = VK_VER
-        resp = requests.post(f"{VK_API}/{method}", data=params, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+        params["v"] = VK_API_VERSION
+        url = f"{VK_API_URL}/{method}"
+        last_exc: Exception | None = None
+        for attempt, delay in enumerate(VK_RETRY_DELAYS + (None,)):
+            try:
+                resp = requests.post(url, data=params, timeout=30)
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            except requests.RequestException as e:
+                last_exc = e
+                _log.warning("VK API %s: сетевая ошибка (попытка %d): %s", method, attempt + 1, e)
+                if delay is not None:
+                    time.sleep(delay)
+        else:
+            raise RuntimeError(f"Сеть: {last_exc}")
         if not isinstance(data, dict):
             raise RuntimeError(f"Неожиданный формат ответа ВК: {data!r}")
         if "error" in data:
@@ -64,6 +75,13 @@ class VkSender:
         def _step(msg: str) -> None:
             if progress:
                 progress(msg)
+
+        # 0. Проверка размера файла
+        file_mb = Path(image_path).stat().st_size / (1024 * 1024)
+        if file_mb > VK_MAX_PHOTO_MB:
+            raise RuntimeError(
+                f"Файл слишком большой: {file_mb:.1f} МБ (лимит ВК — {VK_MAX_PHOTO_MB} МБ)"
+            )
 
         # 1. Получаем upload URL (user token + group_id)
         _step("Подготовка загрузки…")

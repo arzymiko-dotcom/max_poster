@@ -60,6 +60,8 @@ if exist changelog.json (
 
 if exist .env (
     copy .env "dist\MAX POST\.env"
+    icacls ".env" /inheritance:r /grant:r "%USERNAME%:R" >nul 2>&1
+    echo Права на .env ограничены (только %USERNAME%)
 ) else (
     echo Предупреждение: .env не найден - токены не будут скопированы
 )

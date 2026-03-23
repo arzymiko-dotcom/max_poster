@@ -84,7 +84,7 @@ PyQt6 desktop-приложение для отправки объявлений 
 - Меню `Действия → 🔑 Сменил токены VK` — сделано
 - `last_token_rotation` в `app_state.json` — сделано
 - `signal.SIG_DFL` в `app.py` — фикс KeyboardInterrupt при запуске из VS Code terminal
-- Размер EXE ~600MB — из-за QtWebEngine (193MB Chromium DLL). Можно срезать до ~250MB убрав WebEngine из spec, но отложено
+- QtWebEngine **удалён** — EXE теперь ~250MB. В stats_panel осталась кнопка «🌐 Веб-отчёт» — открывает `_WEB_REPORT_URL` в браузере через `QDesktopServices`. `PyQt6-WebEngine` убран из requirements.txt, `app.py` очищен от init-кода WebEngine.
 - `pyspellchecker` → `pymorphy3` — точная проверка орфографии через морфологический словарь
 - `pymorphy2` НЕ работает на Python 3.11 — использовать только `pymorphy3`
 - Метод проверки: `morph.word_is_known(word)` — НЕ `tag.POS is not None`
@@ -122,4 +122,17 @@ PyQt6 desktop-приложение для отправки объявлений 
 - `_photo_pinned: bool` + кнопка 📌 рядом с «Загрузить фото» — `clear_form` пропускает сброс фото если закреплено
 - `_excel_watch_timer` (10с) — следит за `st_mtime` Excel; при изменении показывает `_excel_changed_bar` (жёлтый тостер) + balloon; `_reload_excel_silent` перезагружает без диалога
 - `QSplitter` между левой и правой панелью — размеры сохраняются в `app_state.json` как `splitter_sizes`
+- `_ChangelogPopup` фикс наложения текста: `QLabel wordWrap` требует `setFixedWidth` на контейнере; контент обёрнут в `QScrollArea(max 480px)`; тултип с кнопки убран (конфликт с попапом)
 - `_excel_watch_timer` останавливается в `closeEvent`
+- Защита `.env` через `icacls`: в `MAX POST.iss` (`SecureEnvFile()` вызывается после `MergeEnvToAppData()`) и в `build_MAX POST.bat` (после копирования `.env` в dist) — права только для текущего пользователя `/inheritance:r /grant:r "%USERNAME%:R"`
+- `claude_panel.py` — панель чата с DeepSeek AI (индекс 4 в стеке `shell_window.py`); `btn_claude` (`chat.ico`) в `_SideBar`; модель `deepseek-chat`, base_url `https://api.deepseek.com`; `DEEPSEEK_API_KEY` в `.env`; SDK `openai>=1.30.0` с кастомным base_url; `openai` в hiddenimports PyInstaller
+
+### QR Генератор (`app/my_qr_app/main.py`) — сделано в 1.2.57
+- Галочка «Показывать наименование на карточке» под `inp_org` — `chk_show_org`, состояние в QSettings (`show_org`)
+- `PreviewCard.set_org(text, show)` — рисует org_text мелким серым шрифтом **9pt фиксировано** (не зависит от слайдера заголовка) в самом низу карточки (`fy + sh * 0.945`)
+- `save_full_card`: имя файла берётся из части **после** `::` — «Чат дома\n::аллея» → `аллея.png`
+- `btn_main` — единая кнопка «Создать» → «Сохранить» с fade-анимацией (`QGraphicsOpacityEffect` + `QPropertyAnimation`); ссылки `_btn_anim_out/in` держатся чтобы GC не удалил
+- Авто-сохранение в `Desktop/Адреса с QR/` — `_get_save_folder()` создаёт папку если нет; `Path.home() / 'Desktop'` с fallback через `SHGetFolderPathW`
+- После сохранения: `_save_result_widget` (QWidget-контейнер) показывает `✓ filename.png` + кнопку `📂 Открыть папку`
+- Пульс-анимация при сохранении: `QSequentialAnimationGroup` — fade_out 110мс + fade_in 300мс с `OutQuart`
+- **Важно**: результат сохранения завёрнут в `QWidget` (не голый `QHBoxLayout`) — иначе `setVisible` на дочерних виджетах не обновляет layout

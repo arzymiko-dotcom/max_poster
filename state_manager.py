@@ -2,6 +2,7 @@ import json
 import shutil
 import tempfile
 import threading
+import time
 import warnings
 from pathlib import Path
 from typing import Any
@@ -47,11 +48,17 @@ class StateManager:
                 ) as tmp:
                     json.dump(data, tmp, ensure_ascii=False, indent=2)
                     tmp_path = Path(tmp.name)
-                try:
-                    tmp_path.replace(self.file_path)
-                except OSError:
-                    tmp_path.unlink(missing_ok=True)
-                    raise
+                # Retry: Windows Defender может держать .tmp файл на момент rename
+                for attempt in range(3):
+                    try:
+                        tmp_path.replace(self.file_path)
+                        break
+                    except OSError:
+                        if attempt < 2:
+                            time.sleep(0.15)
+                        else:
+                            tmp_path.unlink(missing_ok=True)
+                            raise
             except OSError as exc:
                 warnings.warn(
                     f"Не удалось сохранить состояние приложения в {self.file_path}: {exc}",

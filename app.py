@@ -25,22 +25,6 @@ def main() -> None:
     install_crash_hook()
     tg_notify.send_startup()
 
-    import os
-    os.environ.setdefault(
-        "QTWEBENGINE_CHROMIUM_FLAGS",
-        "--disable-direct-composition"
-    )
-
-    try:
-        from PyQt6.QtWebEngineQuick import QtWebEngineQuick
-        QtWebEngineQuick.initialize()
-    except Exception:
-        pass
-    try:
-        import PyQt6.QtWebEngineWidgets  # noqa: F401 — должен быть до QApplication
-    except Exception:
-        pass
-
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 

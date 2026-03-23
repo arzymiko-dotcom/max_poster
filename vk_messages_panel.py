@@ -17,7 +17,6 @@ import random
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 
 import requests
 
@@ -30,20 +29,21 @@ from PyQt6.QtGui import (
     QKeyEvent, QPainter, QPainterPath, QPixmap,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLabel, QListWidget,
-    QListWidgetItem, QPushButton, QScrollArea, QSizePolicy,
+    QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QListWidget, QListWidgetItem, QPushButton, QScrollArea, QSizePolicy,
     QSpacerItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
+from constants import VK_API_URL, VK_API_VERSION, VK_MAX_ATTACHMENTS, VK_RETRY_DELAYS
 from env_utils import get_env_path, load_env_safe
 from ui.widgets import SpellCheckTextEdit
 
 _log = logging.getLogger(__name__)
 
-_VK_API   = "https://api.vk.com/method"
-_VK_VER   = "5.199"
 _LP_WAIT  = 25      # секунд ожидания Long Poll
 _LP_RETRY = 10      # секунд до переподключения при ошибке
+
+_MONTHS = ["янв","фев","мар","апр","май","июн","июл","авг","сен","окт","ноя","дек"]
 
 # Держит ссылки на активные _ImageLoader чтобы GC и Qt не уничтожали их раньше времени
 _running_loaders: set = set()
@@ -78,18 +78,26 @@ _vk_colors: dict = dict(_VK_DARK)  # текущая тема (мутабельн
 # ─────────────────────────── helpers ────────────────────────────────────────
 
 def _api(method: str, token: str, post: bool = False, **params) -> dict:
-    """Обёртка над VK API. Поднимает RuntimeError при ошибке."""
-    params.update({"access_token": token, "v": _VK_VER})
-    url = f"{_VK_API}/{method}"
-    try:
-        if post:
-            r = requests.post(url, data=params, timeout=30)
-        else:
-            r = requests.get(url, params=params, timeout=30)
-        r.raise_for_status()
-        data = r.json()
-    except requests.RequestException as e:
-        raise RuntimeError(f"Сеть: {e}") from e
+    """Обёртка над VK API с retry при сетевых ошибках."""
+    params.update({"access_token": token, "v": VK_API_VERSION})
+    url = f"{VK_API_URL}/{method}"
+    last_exc: Exception | None = None
+    for attempt, delay in enumerate(VK_RETRY_DELAYS + (None,)):
+        try:
+            if post:
+                r = requests.post(url, data=params, timeout=30)
+            else:
+                r = requests.get(url, params=params, timeout=30)
+            r.raise_for_status()
+            data = r.json()
+            break
+        except requests.RequestException as e:
+            last_exc = e
+            _log.warning("VK API %s: сетевая ошибка (попытка %d): %s", method, attempt + 1, e)
+            if delay is not None:
+                time.sleep(delay)
+    else:
+        raise RuntimeError(f"Сеть: {last_exc}")
     if "error" in data:
         err = data["error"]
         raise RuntimeError(f"VK {err.get('error_code','?')}: {err.get('error_msg','')}")
@@ -103,10 +111,8 @@ def _fmt_time(ts: int) -> str:
         now = datetime.now()
         if dt.date() == now.date():
             return dt.strftime("%H:%M")
-        months = ["янв","фев","мар","апр","май","июн",
-                  "июл","авг","сен","окт","ноя","дек"]
         if dt.year == now.year:
-            return f"{dt.day} {months[dt.month - 1]}"
+            return f"{dt.day} {_MONTHS[dt.month - 1]}"
         return dt.strftime("%d.%m.%Y")
     except Exception:
         return ""
@@ -188,11 +194,11 @@ class _LongPollWorker(QThread):
                 _log.warning("LP outer error: %s", e)
 
             if not self._stop:
-                # ждём перед переподключением
-                for _ in range(_LP_RETRY * 10):
+                # ждём перед переподключением (20 × 0.5с = 10с)
+                for _ in range(_LP_RETRY * 2):
                     if self._stop:
                         return
-                    time.sleep(0.1)
+                    time.sleep(0.5)
 
 
 class _ConvWorker(QThread):
@@ -408,8 +414,9 @@ class _AvatarLabel(QLabel):
         self._sz      = size
         self._initials = "?"
         self._color    = self._COLORS[0]
-        self._pixmap_raw: Optional[QPixmap] = None
-        self._loader: Optional[_ImageLoader] = None
+        self._pixmap_raw: QPixmap | None = None
+        self._pixmap_scaled: QPixmap | None = None
+        self._loader: _ImageLoader | None = None
         self.setFixedSize(size, size)
 
     def set_profile(self, profile: dict):
@@ -418,6 +425,7 @@ class _AvatarLabel(QLabel):
         idx  = abs(hash(name)) % len(self._COLORS)
         self._color    = self._COLORS[idx]
         self._pixmap_raw = None
+        self._pixmap_scaled = None
         self.update()
 
         url = profile.get("photo_50", "")
@@ -438,6 +446,7 @@ class _AvatarLabel(QLabel):
 
     def _on_loaded(self, _url: str, px: QPixmap):
         self._pixmap_raw = px
+        self._pixmap_scaled = None
         self.update()
 
     def paintEvent(self, event):
@@ -448,14 +457,15 @@ class _AvatarLabel(QLabel):
         painter.setClipPath(path)
 
         if self._pixmap_raw and not self._pixmap_raw.isNull():
-            scaled = self._pixmap_raw.scaled(
-                self._sz, self._sz,
-                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-            x = (self._sz - scaled.width())  // 2
-            y = (self._sz - scaled.height()) // 2
-            painter.drawPixmap(x, y, scaled)
+            if self._pixmap_scaled is None:
+                self._pixmap_scaled = self._pixmap_raw.scaled(
+                    self._sz, self._sz,
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            x = (self._sz - self._pixmap_scaled.width())  // 2
+            y = (self._sz - self._pixmap_scaled.height()) // 2
+            painter.drawPixmap(x, y, self._pixmap_scaled)
         else:
             painter.fillPath(path, QColor(self._color))
             painter.setPen(QColor("#ffffff"))
@@ -512,6 +522,7 @@ class _ConvItem(QWidget):
         super().__init__(parent)
         self._peer_id  = peer_id
         self._selected = False
+        self.name: str = _profile_name(profile)
 
         self.setFixedHeight(64)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -533,7 +544,7 @@ class _ConvItem(QWidget):
         name_row.setSpacing(4)
         name_row.setContentsMargins(0, 0, 0, 0)
 
-        self._name_lbl = QLabel(_profile_name(profile))
+        self._name_lbl = QLabel(self.name)
         self._name_lbl.setStyleSheet(f"color:{_vk_colors['text_primary']}; font-weight:600; font-size:13px;")
         name_row.addWidget(self._name_lbl)
         name_row.addStretch()
@@ -691,11 +702,11 @@ class _MsgBubble(QWidget):
         if outgoing:
             outer.addStretch()
 
-        # Аватар входящего
+        # Аватар и имя входящего (один lookup)
+        in_profile = profiles.get(from_id, {}) if not outgoing else {}
         if not outgoing:
-            profile = profiles.get(from_id, {})
             av = _AvatarLabel(30)
-            av.set_profile(profile)
+            av.set_profile(in_profile)
             outer.addWidget(av, 0, Qt.AlignmentFlag.AlignBottom)
 
         # Контент
@@ -721,9 +732,7 @@ class _MsgBubble(QWidget):
 
         # Имя отправителя (для входящих)
         if not outgoing:
-            profile = profiles.get(from_id, {})
-            name = _profile_name(profile)
-            name_lbl = QLabel(name)
+            name_lbl = QLabel(_profile_name(in_profile))
             name_lbl.setStyleSheet(f"color:{c['text_sender']}; font-size:11px; font-weight:600;")
             bubble_lay.addWidget(name_lbl)
 
@@ -805,6 +814,17 @@ class _ConvListPanel(QWidget):
         h_lay.addWidget(self._refresh_btn)
         root.addWidget(self._header)
 
+        # ── Поиск диалогов ──
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("🔍 Поиск…")
+        self._search.setFixedHeight(32)
+        self._search_wrap = QWidget()
+        sw_lay = QHBoxLayout(self._search_wrap)
+        sw_lay.setContentsMargins(8, 4, 8, 4)
+        sw_lay.addWidget(self._search)
+        self._search.textChanged.connect(self._filter_convs)
+        root.addWidget(self._search_wrap)
+
         # ── Строка состояния ──
         self._status_lbl = QLabel("Загрузка…")
         self._status_lbl.setFixedHeight(26)
@@ -836,7 +856,8 @@ class _ConvListPanel(QWidget):
         root.addWidget(self._scroll, 1)
 
         self._items: dict[int, _ConvItem] = {}   # peer_id → widget
-        self._current_peer: Optional[int] = None
+        self._current_peer: int | None = None
+        self.apply_theme(c)  # финальная инициализация стилей
 
     def apply_theme(self, c: dict):
         self.setStyleSheet(f"background: {c['bg_conv']};")
@@ -860,8 +881,22 @@ class _ConvListPanel(QWidget):
             QScrollBar::handle:vertical {{ background: {c['scrollbar']}; border-radius: 2px; }}
         """)
         self._list_widget.setStyleSheet(f"background: {c['bg_conv']};")
+        self._search_wrap.setStyleSheet(f"background: {c['bg_conv']};")
+        self._search.setStyleSheet(f"""
+            QLineEdit {{
+                background: {c['bg_input']}; color: {c['text_primary']};
+                border: 1px solid {c['border2']}; border-radius: 6px;
+                padding: 0 10px; font-size: 12px;
+            }}
+            QLineEdit:focus {{ border-color: {c['bubble_out']}; }}
+        """)
         for w in self._items.values():
             w.apply_theme(c)
+
+    def _filter_convs(self, text: str):
+        q = text.strip().lower()
+        for w in self._items.values():
+            w.setVisible(not q or q in w.name.lower())
 
     def set_status(self, text: str):
         self._status_lbl.setText(text)
@@ -911,11 +946,7 @@ class _ConvListPanel(QWidget):
         self._current_peer = peer_id
         if peer_id in self._items:
             self._items[peer_id].set_selected(True)
-        # Определить имя
-        name = "Диалог"
-        if peer_id in self._items:
-            w = self._items[peer_id]
-            name = w._name_lbl.text()
+        name = self._items[peer_id].name if peer_id in self._items else "Диалог"
         self.conv_selected.emit(peer_id, name)
 
     def clear_unread(self, peer_id: int):
@@ -1209,20 +1240,13 @@ class _ChatView(QWidget):
         sb.setValue(sb.maximum())
 
     def _attach_photo(self):
-        from PyQt6.QtWidgets import QFileDialog
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, "Выбрать фото", "",
-            "Изображения (*.png *.jpg *.jpeg *.gif *.webp *.bmp)"
-        )
-        if paths:
-            self._pending_files.extend(paths)
-            self._update_att_panel()
+        self._attach_files("Выбрать фото", "Изображения (*.png *.jpg *.jpeg *.gif *.webp *.bmp)")
 
     def _attach_doc(self):
-        from PyQt6.QtWidgets import QFileDialog
-        paths, _ = QFileDialog.getOpenFileNames(
-            self, "Выбрать документ", "", "Все файлы (*)"
-        )
+        self._attach_files("Выбрать документ", "Все файлы (*)")
+
+    def _attach_files(self, title: str, filt: str):
+        paths, _ = QFileDialog.getOpenFileNames(self, title, "", filt)
         if paths:
             self._pending_files.extend(paths)
             self._update_att_panel()
@@ -1264,10 +1288,10 @@ class VkMessagesPanel(QWidget):
         self._group_id  = 0
         self._creds_ok  = False
 
-        self._conv_worker:    Optional[_ConvWorker]    = None
-        self._history_worker: Optional[_HistoryWorker] = None
-        self._send_worker:    Optional[_SendWorker]    = None
-        self._lp_worker:      Optional[_LongPollWorker] = None
+        self._conv_worker:    _ConvWorker    | None = None
+        self._history_worker: _HistoryWorker | None = None
+        self._send_worker:    _SendWorker    | None = None
+        self._lp_worker:      _LongPollWorker | None = None
 
         self._current_peer_id = 0
         self._current_profiles: dict = {}
@@ -1430,6 +1454,14 @@ class VkMessagesPanel(QWidget):
     def _on_send_requested(self, text: str, files: list[str]):
         if not self._creds_ok or not self._current_peer_id:
             return
+        # Фильтрация: только существующие файлы
+        files = [f for f in files if Path(f).exists()]
+        # Лимит вложений
+        if len(files) > VK_MAX_ATTACHMENTS:
+            files = files[:VK_MAX_ATTACHMENTS]
+            self._chat_view.set_load_status(
+                f"Прикреплено только первые {VK_MAX_ATTACHMENTS} файлов"
+            )
         self._chat_view._send_btn.setEnabled(False)
         self._stop_worker(self._send_worker)
         _w = _SendWorker(
@@ -1496,7 +1528,7 @@ class VkMessagesPanel(QWidget):
     # ── Cleanup ──────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _stop_worker(worker: Optional[QThread]):
+    def _stop_worker(worker: QThread | None):
         if worker and worker.isRunning():
             if hasattr(worker, "stop"):
                 worker.stop()

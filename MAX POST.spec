@@ -37,6 +37,8 @@ a = Analysis(
         'env_utils',
         # морфологический анализатор
         'pymorphy3', 'pymorphy3_dicts_ru', 'dawg2_python',
+        # DeepSeek AI панель
+        'claude_panel', 'openai',
     ],
     hookspath=[],
     hooksconfig={},

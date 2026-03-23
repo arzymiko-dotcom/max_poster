@@ -31,3 +31,10 @@ COLOR_NUM_LABEL = "#c4cdd8"
 # История
 HISTORY_MAX_ENTRIES = 200
 HISTORY_SNIPPET_LEN = 60
+
+# VK API
+VK_API_URL         = "https://api.vk.com/method"
+VK_API_VERSION     = "5.199"
+VK_MAX_PHOTO_MB    = 50          # лимит размера фото для загрузки на стену
+VK_MAX_ATTACHMENTS = 10          # максимум вложений в одном сообщении
+VK_RETRY_DELAYS    = (1, 2, 4)   # паузы между попытками при сетевой ошибке

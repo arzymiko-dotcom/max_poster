@@ -54,7 +54,6 @@ var
   ResultCode: Integer;
 begin
   Exec('taskkill.exe', '/f /im "MAX POST.exe" /t', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('taskkill.exe', '/f /im QtWebEngineProcess.exe /t', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
 function InitializeSetup(): Boolean;
@@ -124,8 +123,24 @@ begin
     SaveStringsToFile(UserEnvPath, UserLines, False);
 end;
 
+procedure SecureEnvFile();
+var
+  EnvPath, UserName: String;
+  ResultCode: Integer;
+begin
+  EnvPath := ExpandConstant('{userappdata}\MAX POST\.env');
+  UserName := ExpandConstant('{username}');
+  if FileExists(EnvPath) then
+    Exec(ExpandConstant('{sys}\icacls.exe'),
+         '"' + EnvPath + '" /inheritance:r /grant:r "' + UserName + ':R"',
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
+  begin
     MergeEnvToAppData();
+    SecureEnvFile();
+  end;
 end;
