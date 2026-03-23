@@ -185,7 +185,7 @@ def _verify_pw(password: str, stored: str) -> bool:
             salt = bytes.fromhex(salt_hex)
             key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 260_000)
             return hmac.compare_digest(key.hex(), hash_hex)
-        except (ValueError, IndexError):
+        except (ValueError, IndexError, TypeError):
             return False
     return False
 

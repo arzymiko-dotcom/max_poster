@@ -253,15 +253,16 @@ class _FetchWorker(QThread):
                         else:
                             members = "—"   # API вернул ошибку — реально нет доступа
                         break  # выходим из retry-цикла (успех или нет доступа)
-                    except requests.exceptions.Timeout:
-                        _log.warning("getGroupData %s: timeout (попытка %d)", chat_id, attempt + 1)
+                    except (requests.exceptions.Timeout,
+                            requests.exceptions.ConnectionError):
+                        _log.warning("getGroupData %s: сетевая ошибка (попытка %d)", chat_id, attempt + 1)
                         if attempt == 0:
                             time.sleep(3)   # ждём 3с перед повтором
                             continue
-                        members = "~"   # таймаут — неизвестно, доступ может быть
+                        members = "~"   # не удалось — доступ неизвестен
                     except Exception as exc:
                         _log.warning("getGroupData %s: %s", chat_id, exc)
-                        members = "~"   # сетевая ошибка
+                        members = "~"   # прочая ошибка
                         break
 
             # ── getChatHistory: последнее сообщение (кэш 6 ч) ────

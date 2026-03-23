@@ -21,7 +21,7 @@ from pathlib import Path
 import requests
 
 from PyQt6.QtCore import (
-    QEvent, QObject, QRunnable, QSize, QThread, QTimer, QUrl,
+    QEvent, QObject, QRunnable, QSize, QThread, QThreadPool, QTimer, QUrl,
     Qt, pyqtSignal, pyqtSlot,
 )
 from PyQt6.QtGui import (
@@ -45,7 +45,10 @@ _LP_RETRY = 10      # секунд до переподключения при о
 
 _MONTHS = ["янв","фев","мар","апр","май","июн","июл","авг","сен","окт","ноя","дек"]
 
-# Держит ссылки на активные _ImageLoader чтобы GC и Qt не уничтожали их раньше времени
+# Пул потоков для загрузки аватаров/фото — не более 4 одновременных HTTP-запросов
+_loader_pool = QThreadPool()
+_loader_pool.setMaxThreadCount(4)
+# Держит ссылки на сигнальные объекты чтобы GC не уничтожал их до завершения
 _running_loaders: set = set()
 
 # ── Цветовые схемы ────────────────────────────────────────────
@@ -156,6 +159,7 @@ class _LongPollWorker(QThread):
 
     def run(self):
         while not self._stop:
+            delay_reconnect = True
             try:
                 lp = _api("groups.getLongPollServer",
                           self._token, group_id=self._group_id)
@@ -178,7 +182,10 @@ class _LongPollWorker(QThread):
                         if code == 1:
                             ts = data["ts"]
                             continue
-                        break  # 2 or 3 — need new server
+                        # Код 2 (ключ устарел) или 3 (ts устарел) — нужен новый сервер,
+                        # переподключаемся без задержки
+                        delay_reconnect = False
+                        break
 
                     ts = data.get("ts", ts)
                     for upd in data.get("updates", []):
@@ -193,8 +200,8 @@ class _LongPollWorker(QThread):
             except Exception as e:
                 _log.warning("LP outer error: %s", e)
 
-            if not self._stop:
-                # ждём перед переподключением (20 × 0.5с = 10с)
+            if not self._stop and delay_reconnect:
+                # ждём перед переподключением только при сетевых ошибках (20 × 0.5с = 10с)
                 for _ in range(_LP_RETRY * 2):
                     if self._stop:
                         return
@@ -373,30 +380,39 @@ class _SendWorker(QThread):
                 self.error.emit(str(e))
 
 
-class _ImageLoader(QThread):
-    """Асинхронно загружает изображение по URL."""
-    loaded = pyqtSignal(str, QPixmap)   # url, pixmap
+class _LoaderSignals(QObject):
+    loaded   = pyqtSignal(str, QPixmap)   # url, pixmap
+    finished = pyqtSignal()
 
-    def __init__(self, url: str, parent=None):
-        super().__init__(parent)
-        self._url  = url
-        self._stop = False
+
+class _ImageLoader(QRunnable):
+    """Асинхронно загружает изображение по URL через _loader_pool (макс. 4 потока)."""
+
+    def __init__(self, url: str):
+        super().__init__()
+        self.setAutoDelete(True)
+        self._url    = url
+        self._stop   = False
+        self.signals = _LoaderSignals()
 
     def stop(self):
         self._stop = True
 
+    @pyqtSlot()
     def run(self):
-        if not self._url or self._stop:
-            return
         try:
+            if not self._url or self._stop:
+                return
             r = requests.get(self._url, timeout=15)
             r.raise_for_status()
             px = QPixmap()
             px.loadFromData(r.content)
             if not self._stop and not px.isNull():
-                self.loaded.emit(self._url, px)
+                self.signals.loaded.emit(self._url, px)
         except Exception:
             pass
+        finally:
+            self.signals.finished.emit()
 
 
 # ─────────────────────────── widgets ────────────────────────────────────────
@@ -435,14 +451,14 @@ class _AvatarLabel(QLabel):
     def _start_load(self, url: str):
         if self._loader:
             self._loader.stop()
+            _running_loaders.discard(self._loader.signals)
             self._loader = None
-        loader = _ImageLoader(url)  # без parent — не будет уничтожен вместе с виджетом
+        loader = _ImageLoader(url)
         self._loader = loader
-        _running_loaders.add(loader)
-        loader.loaded.connect(self._on_loaded)
-        loader.finished.connect(loader.deleteLater)
-        loader.finished.connect(lambda: _running_loaders.discard(loader))
-        loader.start()
+        _running_loaders.add(loader.signals)
+        loader.signals.loaded.connect(self._on_loaded)
+        loader.signals.finished.connect(lambda: _running_loaders.discard(loader.signals))
+        _loader_pool.start(loader)
 
     def _on_loaded(self, _url: str, px: QPixmap):
         self._pixmap_raw = px
@@ -670,13 +686,12 @@ class _AttachmentWidget(QWidget):
             lay.addWidget(lbl)
 
     def _start_load(self, url: str):
-        loader = _ImageLoader(url)  # без parent
+        loader = _ImageLoader(url)
         self._loader = loader
-        _running_loaders.add(loader)
-        loader.loaded.connect(self._on_photo)
-        loader.finished.connect(loader.deleteLater)
-        loader.finished.connect(lambda: _running_loaders.discard(loader))
-        loader.start()
+        _running_loaders.add(loader.signals)
+        loader.signals.loaded.connect(self._on_photo)
+        loader.signals.finished.connect(lambda: _running_loaders.discard(loader.signals))
+        _loader_pool.start(loader)
 
     def _on_photo(self, _url: str, px: QPixmap):
         scaled = px.scaled(240, 160,

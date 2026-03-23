@@ -79,7 +79,7 @@ class _StreamWorker(QThread):
     def run(self):
         try:
             import openai
-            client = openai.OpenAI(api_key=self._api_key, base_url=_BASE_URL)
+            client = openai.OpenAI(api_key=self._api_key, base_url=_BASE_URL, timeout=30.0)
             stream = client.chat.completions.create(
                 model=_MODEL,
                 max_tokens=1024,
@@ -464,6 +464,9 @@ class ClaudePanel(QWidget):
         self._status_lbl.setText("")
         self._add_bubble(text, is_user=True)
         self._messages.append({"role": "user", "content": text})
+        # Скользящее окно истории — не более 40 сообщений (20 пар)
+        if len(self._messages) > 40:
+            self._messages = self._messages[-40:]
 
         # Пузырь для ответа (пустой, заполняется по мере стриминга)
         self._current_bubble = self._add_bubble("", is_user=False)
