@@ -126,6 +126,9 @@ PyQt6 desktop-приложение для отправки объявлений 
 - `_excel_watch_timer` останавливается в `closeEvent`
 - Защита `.env` через `icacls`: в `MAX POST.iss` (`SecureEnvFile()` вызывается после `MergeEnvToAppData()`) и в `build_MAX POST.bat` (после копирования `.env` в dist) — права только для текущего пользователя `/inheritance:r /grant:r "%USERNAME%:R"`
 - `claude_panel.py` — панель чата с DeepSeek AI (индекс 4 в стеке `shell_window.py`); `btn_claude` (`chat.ico`) в `_SideBar`; модель `deepseek-chat`, base_url `https://api.deepseek.com`; `DEEPSEEK_API_KEY` в `.env`; SDK `openai>=1.30.0` с кастомным base_url; `openai` в hiddenimports PyInstaller
+- `PyQt6-WebEngine` удалён из `.venv` и `MAX POST.spec` (excludes) — dist 194 МБ, установщик 70 МБ; **не устанавливать обратно**
+- `_load_image(url, on_loaded, prev=None)` в `vk_messages_panel.py` — хелпер запуска `_ImageLoader` через пул; использовать вместо дублирования кода в виджетах
+- `_SpellMixin.contextMenuEvent` в `ui/widgets.py` — русское ПКМ меню (не `createStandardContextMenu()`)
 
 ### QR Генератор (`app/my_qr_app/main.py`) — сделано в 1.2.57
 - Галочка «Показывать наименование на карточке» под `inp_org` — `chk_show_org`, состояние в QSettings (`show_org`)
