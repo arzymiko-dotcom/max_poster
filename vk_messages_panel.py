@@ -398,7 +398,6 @@ class _ImageLoader(QRunnable):
     def stop(self):
         self._stop = True
 
-    @pyqtSlot()
     def run(self):
         try:
             if not self._url or self._stop:
@@ -413,6 +412,20 @@ class _ImageLoader(QRunnable):
             pass
         finally:
             self.signals.finished.emit()
+
+
+def _load_image(url: str, on_loaded, prev: "_ImageLoader | None" = None) -> "_ImageLoader":
+    """Запускает загрузку изображения через пул, возвращает loader.
+    Если передан prev — останавливает его и убирает из _running_loaders."""
+    if prev:
+        prev.stop()
+        _running_loaders.discard(prev.signals)
+    loader = _ImageLoader(url)
+    _running_loaders.add(loader.signals)
+    loader.signals.loaded.connect(on_loaded)
+    loader.signals.finished.connect(lambda: _running_loaders.discard(loader.signals))
+    _loader_pool.start(loader)
+    return loader
 
 
 # ─────────────────────────── widgets ────────────────────────────────────────
@@ -449,16 +462,7 @@ class _AvatarLabel(QLabel):
             self._start_load(url)
 
     def _start_load(self, url: str):
-        if self._loader:
-            self._loader.stop()
-            _running_loaders.discard(self._loader.signals)
-            self._loader = None
-        loader = _ImageLoader(url)
-        self._loader = loader
-        _running_loaders.add(loader.signals)
-        loader.signals.loaded.connect(self._on_loaded)
-        loader.signals.finished.connect(lambda: _running_loaders.discard(loader.signals))
-        _loader_pool.start(loader)
+        self._loader = _load_image(url, self._on_loaded, self._loader)
 
     def _on_loaded(self, _url: str, px: QPixmap):
         self._pixmap_raw = px
@@ -686,12 +690,7 @@ class _AttachmentWidget(QWidget):
             lay.addWidget(lbl)
 
     def _start_load(self, url: str):
-        loader = _ImageLoader(url)
-        self._loader = loader
-        _running_loaders.add(loader.signals)
-        loader.signals.loaded.connect(self._on_photo)
-        loader.signals.finished.connect(lambda: _running_loaders.discard(loader.signals))
-        _loader_pool.start(loader)
+        self._loader = _load_image(url, self._on_photo)
 
     def _on_photo(self, _url: str, px: QPixmap):
         scaled = px.scaled(240, 160,
