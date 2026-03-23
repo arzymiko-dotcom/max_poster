@@ -7,7 +7,7 @@ from PyQt6.QtGui import (
     QColor, QPainter,
     QSyntaxHighlighter, QTextCharFormat,
 )
-from PyQt6.QtWidgets import QPlainTextEdit, QStyledItemDelegate, QTextEdit
+from PyQt6.QtWidgets import QMenu, QPlainTextEdit, QStyledItemDelegate, QTextEdit
 
 
 # ── Проверка орфографии через pymorphy2 (lazy singleton) ──────
@@ -81,7 +81,41 @@ class _SpellMixin:
         self._spell_hl = _CombinedHighlighter(self.document())
 
     def contextMenuEvent(self, event) -> None:
-        menu = self.createStandardContextMenu()
+        menu = QMenu(self)
+        cursor = self.textCursor()
+        has_sel = cursor.hasSelection()
+
+        undo = menu.addAction("Отменить")
+        undo.setEnabled(self.document().isUndoAvailable())
+        undo.triggered.connect(self.undo)
+
+        redo = menu.addAction("Повторить")
+        redo.setEnabled(self.document().isRedoAvailable())
+        redo.triggered.connect(self.redo)
+
+        menu.addSeparator()
+
+        cut = menu.addAction("Вырезать")
+        cut.setEnabled(has_sel)
+        cut.triggered.connect(self.cut)
+
+        copy = menu.addAction("Копировать")
+        copy.setEnabled(has_sel)
+        copy.triggered.connect(self.copy)
+
+        paste = menu.addAction("Вставить")
+        paste.setEnabled(self.canPaste())
+        paste.triggered.connect(self.paste)
+
+        delete = menu.addAction("Удалить")
+        delete.setEnabled(has_sel)
+        delete.triggered.connect(lambda: cursor.removeSelectedText())
+
+        menu.addSeparator()
+
+        select_all = menu.addAction("Выделить всё")
+        select_all.triggered.connect(self.selectAll)
+
         menu.exec(event.globalPos())
 
 
