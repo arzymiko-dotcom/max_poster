@@ -451,8 +451,9 @@ class _SideBar(QFrame):
         self.btn_max    = _SideButton(_assets("post.ico"),  "MAX POST — отправка сообщений",    "MP")
         self.btn_qr     = _SideButton(_assets("qr.ico"),   "QR Generator — генератор карточек", "QR")
         self.btn_stats  = _SideButton(_assets("state.ico"),"Статистика групп",                  "📊")
-        self.btn_mkd    = _SideButton(_assets("mkd.ico"),  "СУПЕР МКД+ — в разработке",         "МКД+")
+        self.btn_mkd    = _SideButton(_assets("mkd.ico"),   "СУПЕР МКД+ — в разработке",         "МКД+")
         self.btn_claude = _SideButton(_assets("chat.ico"), "Claude AI — помощник",              "✨")
+        self.btn_shared = _SideButton(_assets("dwnld.ico"), "Общие файлы — фото и документы",  "📁")
 
         # ВКонтакте — кнопка с бейджем непрочитанных
         self.btn_vk = _SideButton(_assets("vk_2.ico"), "Сообщения ВКонтакте", "VK")
@@ -474,6 +475,8 @@ class _SideBar(QFrame):
         layout.addWidget(self.btn_vk)
         layout.addSpacing(8)
         layout.addWidget(self.btn_claude)
+        layout.addSpacing(8)
+        layout.addWidget(self.btn_shared)
         layout.addSpacing(8)
         layout.addWidget(self.btn_mkd)
 
@@ -528,6 +531,7 @@ class _SideBar(QFrame):
         self._group.addButton(self.btn_stats, 2)
         self._group.addButton(self.btn_vk,    3)
         self._group.addButton(self.btn_claude, 4)
+        self._group.addButton(self.btn_shared, 5)
         self.btn_max.setChecked(True)
 
     def set_vk_badge(self, count: int) -> None:
@@ -614,6 +618,17 @@ class ShellWindow(QMainWindow):
             self._claude_panel.setStyleSheet("color:#888; font-size:14px; background:#1e1e2e;")  # type: ignore[union-attr]
             self._claude_available = False
 
+        # ── Инициализируем панель Общих файлов ─────────────────
+        try:
+            from shared_files_panel import SharedFilesPanel
+            self._shared_panel = SharedFilesPanel()
+            self._shared_available = True
+        except Exception as e:
+            self._shared_panel = QLabel(f"Общие файлы недоступны:\n{e}")
+            self._shared_panel.setAlignment(Qt.AlignmentFlag.AlignCenter)  # type: ignore[union-attr]
+            self._shared_panel.setStyleSheet("color:#888; font-size:14px; background:#1e1e2e;")  # type: ignore[union-attr]
+            self._shared_available = False
+
         # ── FadeStack ───────────────────────────────────────────
         self._stack = _FadeStack()
 
@@ -627,6 +642,7 @@ class ShellWindow(QMainWindow):
         self._stack.addWidget(self._stats_panel)    # index 2
         self._stack.addWidget(self._vk_panel)       # index 3
         self._stack.addWidget(self._claude_panel)   # index 4
+        self._stack.addWidget(self._shared_panel)   # index 5
 
         # ── Компоновка ──────────────────────────────────────────
         self._sidebar = _SideBar()
@@ -647,6 +663,9 @@ class ShellWindow(QMainWindow):
         self._sidebar.btn_stats.clicked.connect(self._on_stats_clicked)
         self._sidebar.btn_vk.clicked.connect(self._on_vk_clicked)
         self._sidebar.btn_claude.clicked.connect(self._on_claude_clicked)
+        self._sidebar.btn_shared.clicked.connect(self._on_shared_clicked)
+        if self._shared_available:
+            self._shared_panel.photo_for_post.connect(self._on_shared_photo_for_post)  # type: ignore[union-attr]
         if self._vk_available:
             self._vk_panel.unread_changed.connect(self._sidebar.set_vk_badge)  # type: ignore[union-attr]
         if self._claude_available:
@@ -744,6 +763,8 @@ class ShellWindow(QMainWindow):
             self._vk_panel.set_dark(dark)
         if hasattr(self._claude_panel, "set_dark"):
             self._claude_panel.set_dark(dark)
+        if hasattr(self._shared_panel, "set_dark"):
+            self._shared_panel.set_dark(dark)
         self._sidebar.btn_upd.set_dark(dark)
         self._sidebar.set_dark(dark)
 
@@ -761,6 +782,18 @@ class ShellWindow(QMainWindow):
     def _on_claude_clicked(self) -> None:
         """Переключает на панель Claude AI."""
         self._stack.switch_to(4)
+
+    # ──────────────────────────────────────────────────────────
+    def _on_shared_clicked(self) -> None:
+        """Переключает на панель Общих файлов."""
+        self._stack.switch_to(5)
+
+    # ──────────────────────────────────────────────────────────
+    def _on_shared_photo_for_post(self, path: str) -> None:
+        """Вставляет фото из Общих файлов в пост и переключает на панель MAX POST."""
+        self._max_win.set_photo_from_external(path)
+        self._stack.switch_to(0)
+        self._sidebar._group.button(0).setChecked(True)
 
     # ──────────────────────────────────────────────────────────
     def _show_mkd_coming_soon(self) -> None:

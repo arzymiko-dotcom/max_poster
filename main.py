@@ -1566,6 +1566,16 @@ class MainWindow(QMainWindow):
         self._update_checklist()
         self.save_state()
 
+    def set_photo_from_external(self, path: str) -> None:
+        """Вставляет фото из внешнего источника (например, Общие файлы)."""
+        self.image_path = Path(path)
+        self.preview.set_image(str(self.image_path))
+        self._set_photo_button_name(self.image_path.name)
+        self._update_photo_thumb()
+        self._add_to_recent_photos(str(self.image_path))
+        self._update_checklist()
+        self.save_state()
+
     def _set_photo_button_name(self, name: str) -> None:
         short = name if len(name) <= 22 else name[:19] + "…"
         self.photo_button.setText(f"✓  {short}")
@@ -3090,15 +3100,6 @@ def main() -> None:
     tg_notify.install_excepthook()
     tg_notify.send_startup()
 
-    try:
-        from PyQt6.QtWebEngineQuick import QtWebEngineQuick
-        QtWebEngineQuick.initialize()
-    except Exception:
-        pass
-    try:
-        import PyQt6.QtWebEngineWidgets  # noqa: F401 — должен быть до QApplication
-    except Exception:
-        pass
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)  # не выходить при hide() в трей
