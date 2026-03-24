@@ -14,8 +14,8 @@ from pathlib import Path
 
 _log = logging.getLogger(__name__)
 
-from PyQt6.QtCore import QPoint, QRect, QSize, Qt, QTimer
-from PyQt6.QtGui import QCursor, QFont, QIcon
+from PyQt6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QRect, QSize, Qt, QTimer, pyqtProperty
+from PyQt6.QtGui import QCursor, QIcon
 from PyQt6.QtWidgets import (
     QApplication, QButtonGroup, QDialog, QDialogButtonBox, QFormLayout,
     QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox,
@@ -68,7 +68,22 @@ QPushButton#sideBtn {
     min-width: 0px;
     min-height: 0px;
     color: #888aaa;
-    font-size: 9px;
+    font-size: 12px;
+    text-align: left;
+    padding-left: 14px;
+}
+QPushButton#expandBtn {
+    border: none;
+    background: transparent;
+    color: #555577;
+    min-width: 0px;
+    min-height: 0px;
+    text-align: center;
+    padding: 0px;
+}
+QPushButton#expandBtn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #9999bb;
 }
 QPushButton#sideBtn:checked {
     background: rgba(74, 108, 247, 0.18);
@@ -81,12 +96,18 @@ QPushButton#sideBtn:hover:!checked {
 }
 QPushButton#settingsBtn {
     border: none;
+    border-left: 3px solid transparent;
     background: transparent;
     min-width: 0px;
     min-height: 0px;
+    color: #888aaa;
+    font-size: 12px;
+    text-align: left;
+    padding-left: 14px;
 }
 QPushButton#settingsBtn:hover {
     background: rgba(255,255,255,0.07);
+    color: #cccccc;
 }
 QPushButton#sideBtn:disabled {
     color: #444455;
@@ -95,12 +116,18 @@ QPushButton#sideBtn:disabled {
 }
 QPushButton#updBtn {
     border: none;
+    border-left: 3px solid transparent;
     background: transparent;
     min-width: 0px;
     min-height: 0px;
+    color: #888aaa;
+    font-size: 12px;
+    text-align: left;
+    padding-left: 14px;
 }
 QPushButton#updBtn:hover {
     background: rgba(255,255,255,0.07);
+    color: #cccccc;
 }
 """
 
@@ -383,15 +410,21 @@ class _UpdBtn(QPushButton):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("updBtn")
-        self.setFixedSize(60, 50)
+        self.setFixedHeight(50)
         _icon = QIcon(_assets("upd.ico"))
         if not _icon.isNull():
+            self._has_icon = True
             self.setIcon(_icon)
             self.setIconSize(QSize(28, 28))
         else:
+            self._has_icon = False
             self.setText("🔄")
 
         self._popup = _ChangelogPopup()
+
+    def set_expanded(self, expanded: bool) -> None:
+        if self._has_icon:
+            self.setText("Обновления" if expanded else "")
 
     def set_dark(self, dark: bool) -> None:
         self._popup.set_dark(dark)
@@ -404,28 +437,78 @@ class _UpdBtn(QPushButton):
 
 # ──────────────────────────────────────────────────────────────
 class _SideButton(QPushButton):
-    def __init__(self, icon_path: str, tooltip: str, fallback: str):
+    def __init__(self, icon_path: str, tooltip: str, fallback: str, label: str = ""):
         super().__init__()
         self.setObjectName("sideBtn")
         self.setCheckable(True)
-        self.setFixedSize(60, 60)
+        self.setFixedHeight(60)
         self.setToolTip(tooltip)
+        self._label = label
         icon = QIcon(icon_path)
         if not icon.isNull():
+            self._has_icon = True
             self.setIcon(icon)
             self.setIconSize(QSize(28, 28))
         else:
+            self._has_icon = False
             self.setText(fallback)
+
+    def set_expanded(self, expanded: bool) -> None:
+        if self._has_icon:
+            self.setText(self._label if expanded else "")
+
+
+class _ExpandBtn(QPushButton):
+    """Кнопка нижнего сайдбара с поддержкой текстовой метки при раскрытии."""
+    def __init__(self, icon_path: str, fallback: str, label: str, obj_name: str, height: int = 50):
+        super().__init__()
+        self.setObjectName(obj_name)
+        self.setFixedHeight(height)
+        self._label = label
+        icon = QIcon(icon_path)
+        if not icon.isNull():
+            self._has_icon = True
+            self.setIcon(icon)
+            self.setIconSize(QSize(28, 28))
+        else:
+            self._has_icon = False
+            self.setText(fallback)
+
+    def set_expanded(self, expanded: bool) -> None:
+        if self._has_icon:
+            self.setText(self._label if expanded else "")
 
 
 # ──────────────────────────────────────────────────────────────
 #  Сайдбар
 # ──────────────────────────────────────────────────────────────
+_SIDEBAR_COLLAPSED_W = 60
+_SIDEBAR_EXPANDED_W  = 210
+_SIDEBAR_ANIM_MS     = 220
+
+
 class _SideBar(QFrame):
+
+    # Qt-свойство для анимации ширины
+    def _get_sidebar_w(self) -> int:
+        return self.width()
+
+    def _set_sidebar_w(self, w: int) -> None:
+        self.setFixedWidth(int(w))
+
+    sidebar_w = pyqtProperty(int, _get_sidebar_w, _set_sidebar_w)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("sidebar")
-        self.setFixedWidth(60)
+        self.setFixedWidth(_SIDEBAR_COLLAPSED_W)
+        self._sb_expanded = False
+        self._dark = False
+
+        # Анимация ширины
+        self._width_anim = QPropertyAnimation(self, b"sidebar_w", self)
+        self._width_anim.setDuration(_SIDEBAR_ANIM_MS)
+        self._width_anim.setEasingCurve(QEasingCurve.Type.InOutQuart)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 10, 0, 10)
@@ -447,15 +530,15 @@ class _SideBar(QFrame):
         layout.addSpacing(10)
 
         # Кнопки модулей
-        self.btn_max    = _SideButton(_assets("post.ico"),  "MAX POST — отправка сообщений",    "MP")
-        self.btn_qr     = _SideButton(_assets("qr.ico"),   "QR Generator — генератор карточек", "QR")
-        self.btn_stats  = _SideButton(_assets("state.ico"),"Статистика групп",                  "📊")
-        self.btn_mkd    = _SideButton(_assets("mkd.ico"),   "СУПЕР МКД+ — в разработке",         "МКД+")
-        self.btn_claude = _SideButton(_assets("chat.ico"), "Claude AI — помощник",              "✨")
-        self.btn_shared = _SideButton(_assets("dwnld.ico"), "Общие файлы — фото и документы",  "📁")
+        self.btn_max    = _SideButton(_assets("post.ico"),  "MAX POST — отправка сообщений",    "MP",   "MAX POST")
+        self.btn_qr     = _SideButton(_assets("qr.ico"),   "QR Generator — генератор карточек", "QR",   "QR")
+        self.btn_stats  = _SideButton(_assets("state.ico"),"Статистика групп",                  "📊",  "Статистика")
+        self.btn_mkd    = _SideButton(_assets("mkd.ico"),   "СУПЕР МКД+ — в разработке",        "МКД+", "МКД+")
+        self.btn_claude = _SideButton(_assets("chat.ico"), "AI Чат — помощник",                 "✨",  "AI Чат")
+        self.btn_shared = _SideButton(_assets("dwnld.ico"), "Общие файлы — фото и документы",  "📁",  "Файлы")
 
         # ВКонтакте — кнопка с бейджем непрочитанных
-        self.btn_vk = _SideButton(_assets("vk_2.ico"), "Сообщения ВКонтакте", "VK")
+        self.btn_vk = _SideButton(_assets("vk_2.ico"), "Сообщения ВКонтакте", "VK", "ВКонтакте")
         self._vk_badge = QLabel("", self.btn_vk)
         self._vk_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._vk_badge.setFixedSize(18, 18)
@@ -478,10 +561,22 @@ class _SideBar(QFrame):
         layout.addWidget(self.btn_shared)
         layout.addSpacing(8)
         layout.addWidget(self.btn_mkd)
+        layout.addSpacing(6)
 
-        layout.addStretch()
+        # Кнопка развернуть/свернуть — по центру между навигацией и нижними кнопками
+        self.btn_expand = QPushButton()
+        self.btn_expand.setObjectName("expandBtn")
+        self.btn_expand.setFixedHeight(32)
+        self._exp_icon  = QIcon(_assets("right.ico"))
+        self._coll_icon = QIcon(_assets("left.ico"))
+        self._apply_expand_icon(expanded=False)
+        self.btn_expand.setToolTip("Развернуть панель")
+        self.btn_expand.clicked.connect(self._toggle_expand)
+        layout.addStretch(1)
+        layout.addWidget(self.btn_expand)
+        layout.addStretch(1)
 
-        # Кнопка changelog (история обновлений)
+        # Кнопка changelog
         self.btn_upd = _UpdBtn(self)
         layout.addWidget(self.btn_upd)
         layout.addSpacing(2)
@@ -489,37 +584,20 @@ class _SideBar(QFrame):
         # Кнопка переключения темы
         self.btn_theme = QPushButton("🌙")
         self.btn_theme.setObjectName("updBtn")
-        self.btn_theme.setFixedSize(60, 36)
+        self.btn_theme.setFixedHeight(40)
         self.btn_theme.setToolTip("Переключить тему (тёмная / светлая)")
-        self.btn_theme.setFont(QFont("Segoe UI Emoji", 16))
         layout.addWidget(self.btn_theme)
         layout.addSpacing(2)
 
         # Кнопка авторизации (токены)
-        self.btn_auth = QPushButton()
-        self.btn_auth.setObjectName("settingsBtn")
-        self.btn_auth.setFixedSize(60, 50)
+        self.btn_auth = _ExpandBtn(_assets("authorization.ico"), "🔑", "Токены",    "settingsBtn", 50)
         self.btn_auth.setToolTip("Настройки подключений")
-        _auth_icon = QIcon(_assets("authorization.ico"))
-        if not _auth_icon.isNull():
-            self.btn_auth.setIcon(_auth_icon)
-            self.btn_auth.setIconSize(QSize(28, 28))
-        else:
-            self.btn_auth.setText("🔑")
         layout.addWidget(self.btn_auth)
         layout.addSpacing(6)
 
-        # Кнопка настроек внизу — иконка settings.ico
-        self.btn_settings = QPushButton()
-        self.btn_settings.setObjectName("settingsBtn")
-        self.btn_settings.setFixedSize(60, 50)
+        # Кнопка настроек внизу
+        self.btn_settings = _ExpandBtn(_assets("settings.ico"), "⚙", "Настройки", "settingsBtn", 50)
         self.btn_settings.setToolTip("Настройки")
-        _settings_icon = QIcon(_assets("settings.ico"))
-        if not _settings_icon.isNull():
-            self.btn_settings.setIcon(_settings_icon)
-            self.btn_settings.setIconSize(QSize(28, 28))
-        else:
-            self.btn_settings.setText("⚙")
         layout.addWidget(self.btn_settings)
 
         # Группа — только одна кнопка активна
@@ -533,6 +611,55 @@ class _SideBar(QFrame):
         self._group.addButton(self.btn_shared, 5)
         self.btn_max.setChecked(True)
 
+    # ── Иконка кнопки expand/collapse ──────────────────────────
+    def _apply_expand_icon(self, expanded: bool) -> None:
+        icon = self._coll_icon if expanded else self._exp_icon
+        if not icon.isNull():
+            self.btn_expand.setIcon(icon)
+            self.btn_expand.setIconSize(QSize(20, 20))
+            self.btn_expand.setText("")
+        else:
+            self.btn_expand.setText("‹" if expanded else "›")
+
+    # ── Переключить expand/collapse по клику ───────────────────
+    def _toggle_expand(self) -> None:
+        if self._sb_expanded:
+            self._do_collapse()
+        else:
+            self._do_expand()
+
+    # ── Раскрыть ────────────────────────────────────────────────
+    def _do_expand(self) -> None:
+        self._sb_expanded = True
+        self._set_btn_labels(True)
+        self._apply_expand_icon(expanded=True)
+        self.btn_expand.setToolTip("Свернуть панель")
+        self._width_anim.stop()
+        self._width_anim.setStartValue(self.width())
+        self._width_anim.setEndValue(_SIDEBAR_EXPANDED_W)
+        self._width_anim.start()
+
+    # ── Свернуть ────────────────────────────────────────────────
+    def _do_collapse(self) -> None:
+        self._sb_expanded = False
+        self._set_btn_labels(False)
+        self._apply_expand_icon(expanded=False)
+        self.btn_expand.setToolTip("Развернуть панель")
+        self._width_anim.stop()
+        self._width_anim.setStartValue(self.width())
+        self._width_anim.setEndValue(_SIDEBAR_COLLAPSED_W)
+        self._width_anim.start()
+
+    # ── Обновить текстовые метки всех кнопок ───────────────────
+    def _set_btn_labels(self, show: bool) -> None:
+        for btn in (self.btn_max, self.btn_qr, self.btn_stats, self.btn_vk,
+                    self.btn_claude, self.btn_shared, self.btn_mkd,
+                    self.btn_upd, self.btn_auth, self.btn_settings):
+            btn.set_expanded(show)
+        emoji = "☀️" if self._dark else "🌙"
+        self.btn_theme.setText(f"{emoji}  Тема" if show else emoji)
+
+    # ── Бейдж ВК ────────────────────────────────────────────────
     def set_vk_badge(self, count: int) -> None:
         if count > 0:
             self._vk_badge.setText(str(min(count, 99)))
@@ -540,9 +667,14 @@ class _SideBar(QFrame):
         else:
             self._vk_badge.setVisible(False)
 
+    # ── Тема ─────────────────────────────────────────────────────
     def set_dark(self, dark: bool) -> None:
-        self.btn_theme.setText("☀️" if dark else "🌙")
+        self._dark = dark
+        emoji = "☀️" if dark else "🌙"
+        suffix = "  Тема" if self._sb_expanded else ""
+        self.btn_theme.setText(emoji + suffix)
         self.btn_theme.setToolTip("Переключить на светлую тему" if dark else "Переключить на тёмную тему")
+        self.btn_upd.set_dark(dark)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -872,6 +1004,7 @@ class ShellWindow(QMainWindow):
             return
 
         # Полное закрытие
+        self._sidebar._width_anim.stop()
         self._max_win.close()
         for panel in (self._qr_win, self._stats_panel, self._vk_panel, self._claude_panel):
             if panel is not None:

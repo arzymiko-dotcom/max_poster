@@ -129,6 +129,13 @@ PyQt6 desktop-приложение для отправки объявлений 
 - `PyQt6-WebEngine` удалён из `.venv` и `MAX POST.spec` (excludes) — dist 194 МБ, установщик 70 МБ; **не устанавливать обратно**
 - `_load_image(url, on_loaded, prev=None)` в `vk_messages_panel.py` — хелпер запуска `_ImageLoader` через пул; использовать вместо дублирования кода в виджетах
 - `_SpellMixin.contextMenuEvent` в `ui/widgets.py` — русское ПКМ меню (не `createStandardContextMenu()`)
+- `shared_files_panel.py` — панель «Общие файлы» (индекс 5 в стеке `shell_window.py`); `btn_shared` (`dwnld.ico`) в `_SideBar`; фото через ВК-альбом + документы через docs группы; `SHARED_VK_GROUP_ID` + `SHARED_VK_ALBUM_ID` в `.env`
+- `SharedFilesPanel.photo_for_post = pyqtSignal(str)` — temp-путь; ShellWindow подключает к `_max_win.set_photo_from_external(path)` и переключает на индекс 0
+- `main.py.set_photo_from_external(path)` — вставляет фото из внешнего источника (как select_image но без диалога)
+- `_ProgressButton` в `shared_files_panel.py` — кнопка с зелёной полосой прогресса 0–100% (paintEvent); `set_progress(float)`, `reset_progress()`
+- VK API 5.199: `photos.getUploadServer` + upload → **photos.save НЕ нужен** (сохраняется автоматически); `photos.move` тоже не работает для wall photos
+- Удаление фото/документов: `photos.delete(owner_id=-GROUP_ID, photo_id)` / `docs.delete(owner_id=-GROUP_ID, doc_id)` — user token
+- `}}` в конце non-f-строк конкатенированных с f-строками = **двойная скобка** (CSS ошибка) — использовать только `}` в обычных строках
 
 ### QR Генератор (`app/my_qr_app/main.py`) — сделано в 1.2.57
 - Галочка «Показывать наименование на карточке» под `inp_org` — `chk_show_org`, состояние в QSettings (`show_org`)
