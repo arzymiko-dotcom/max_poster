@@ -104,56 +104,6 @@ QPushButton#updBtn:hover {
 }
 """
 
-_SIDEBAR_STYLE_LIGHT = """
-QFrame#sidebar {
-    background: #f0f0f8;
-    border-right: 1px solid #d0d0e8;
-}
-QFrame#sidebarSep { background: #d0d0e8; max-height: 1px; border: none; }
-QPushButton#sideBtn {
-    border: none;
-    border-left: 3px solid transparent;
-    background: transparent;
-    border-radius: 0px;
-    min-width: 0px;
-    min-height: 0px;
-    color: #60608a;
-    font-size: 9px;
-}
-QPushButton#sideBtn:checked {
-    background: rgba(74, 108, 247, 0.12);
-    border-left: 3px solid #4a6cf7;
-    color: #2563eb;
-}
-QPushButton#sideBtn:hover:!checked {
-    background: rgba(0, 0, 0, 0.05);
-    color: #2d2d5a;
-}
-QPushButton#settingsBtn {
-    border: none;
-    background: transparent;
-    min-width: 0px;
-    min-height: 0px;
-}
-QPushButton#settingsBtn:hover {
-    background: rgba(0,0,0,0.06);
-}
-QPushButton#sideBtn:disabled {
-    color: #b0b0c8;
-    background: transparent;
-    border-left: 3px solid transparent;
-}
-QPushButton#updBtn {
-    border: none;
-    background: transparent;
-    min-width: 0px;
-    min-height: 0px;
-}
-QPushButton#updBtn:hover {
-    background: rgba(0,0,0,0.06);
-}
-"""
-
 _CHANGELOG_POPUP_DARK = """
 QFrame#changelogPopup {
     background: #252535;
@@ -179,7 +129,7 @@ QLabel#changelogSep    { color: #c7d0db; font-size: 10px; }
 """
 
 _SHELL_STYLE       = "QMainWindow { background: #1e1e2e; }"
-_SHELL_STYLE_LIGHT = "QMainWindow { background: #f3f4f6; }"
+_SHELL_STYLE_LIGHT = "QMainWindow { background: #f3f4f6; } QWidget#shellBody { background: #f3f4f6; }"
 
 
 def _assets(name: str) -> str:
@@ -792,9 +742,7 @@ class ShellWindow(QMainWindow):
 
     def _apply_dark_mode(self, dark: bool) -> None:
         from ui.styles import get_stylesheet, get_dark_stylesheet
-        self.setStyleSheet(
-            _SIDEBAR_STYLE + _SHELL_STYLE if dark else _SIDEBAR_STYLE_LIGHT + _SHELL_STYLE_LIGHT
-        )
+        self.setStyleSheet(_SIDEBAR_STYLE + (_SHELL_STYLE if dark else _SHELL_STYLE_LIGHT))
         ss = get_dark_stylesheet() if dark else get_stylesheet()
         max_widget = self._stack.widget(0)
         if max_widget:
