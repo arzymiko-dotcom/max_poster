@@ -43,6 +43,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QSplitterHandle,
     QSpinBox,
     QStyledItemDelegate,
     QSlider,
@@ -400,6 +401,30 @@ class SendResultDialog(QDialog):
         layout.addWidget(btn_box)
 
 
+class _GripHandle(QSplitterHandle):
+    """Ручка сплиттера с тремя точками — подсказывает что можно тянуть."""
+    _DOT_R   = 2
+    _SPACING = 7
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(150, 150, 170, 160))
+        cx = self.width() // 2
+        cy = self.height() // 2
+        for i in (-1, 0, 1):
+            p.drawEllipse(cx - self._DOT_R, cy + i * self._SPACING - self._DOT_R,
+                          self._DOT_R * 2, self._DOT_R * 2)
+        p.end()
+
+
+class _GripSplitter(QSplitter):
+    def createHandle(self) -> QSplitterHandle:
+        return _GripHandle(self.orientation(), self)
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -625,8 +650,8 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(0)
 
-        self._main_splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._main_splitter.setHandleWidth(6)
+        self._main_splitter = _GripSplitter(Qt.Orientation.Horizontal)
+        self._main_splitter.setHandleWidth(8)
         self._main_splitter.setChildrenCollapsible(False)
         root.addWidget(self._main_splitter)
 
