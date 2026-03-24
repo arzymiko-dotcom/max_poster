@@ -1,4 +1,4 @@
-"""Базовые виджеты: LineNumberedEdit, SpellCheckTextEdit, _NumberedItemDelegate."""
+"""Базовые виджеты: LineNumberedEdit, SpellCheckTextEdit, _NumberedItemDelegate, _GripSplitter."""
 
 import re
 
@@ -7,7 +7,7 @@ from PyQt6.QtGui import (
     QColor, QPainter,
     QSyntaxHighlighter, QTextCharFormat,
 )
-from PyQt6.QtWidgets import QMenu, QPlainTextEdit, QStyledItemDelegate, QTextEdit
+from PyQt6.QtWidgets import QMenu, QPlainTextEdit, QSplitter, QSplitterHandle, QStyledItemDelegate, QTextEdit
 
 
 # ── Проверка орфографии через pymorphy2 (lazy singleton) ──────
@@ -202,3 +202,30 @@ class _NumberedItemDelegate(QStyledItemDelegate):
             str(index.row() + 1),
         )
         painter.restore()
+
+
+# ── Сплиттер с точками-грипом ─────────────────────────────────
+
+class _GripHandle(QSplitterHandle):
+    """Ручка сплиттера с тремя точками — подсказывает что можно тянуть."""
+    _DOT_R   = 2
+    _SPACING = 7
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(150, 150, 170, 160))
+        cx = self.width() // 2
+        cy = self.height() // 2
+        for i in (-1, 0, 1):
+            p.drawEllipse(cx - self._DOT_R, cy + i * self._SPACING - self._DOT_R,
+                          self._DOT_R * 2, self._DOT_R * 2)
+        p.end()
+
+
+class _GripSplitter(QSplitter):
+    """QSplitter с кастомной ручкой (_GripHandle)."""
+    def createHandle(self) -> QSplitterHandle:
+        return _GripHandle(self.orientation(), self)

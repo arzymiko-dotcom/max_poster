@@ -10,11 +10,12 @@ from PyQt6.QtCore import QEvent, QObject, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QKeyEvent
 from PyQt6.QtWidgets import (
     QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
-    QScrollArea, QSizePolicy, QSplitter, QTextEdit,
+    QScrollArea, QSizePolicy, QTextEdit,
     QVBoxLayout, QWidget,
 )
 
 from env_utils import get_env_path, load_env_safe
+from ui.widgets import _GripSplitter
 
 _log = logging.getLogger(__name__)
 
@@ -345,18 +346,16 @@ class ClaudePanel(QWidget):
         in_lay.addLayout(btn_row)
 
         # Сплиттер между сообщениями и полем ввода
-        self._splitter = QSplitter(Qt.Orientation.Vertical)
-        self._splitter.setHandleWidth(5)
+        self._splitter = _GripSplitter(Qt.Orientation.Vertical)
+        self._splitter.setHandleWidth(8)
         self._splitter.addWidget(self._scroll)
         self._splitter.addWidget(self._input_box)
         self._splitter.setStretchFactor(0, 3)
         self._splitter.setStretchFactor(1, 1)
         self._splitter.setSizes([400, 120])
-        self._splitter.setStyleSheet(f"""
-            QSplitter::handle {{
-                background: {c['border']};
-            }}
-        """)
+        self._splitter.setStyleSheet(
+            f"QSplitter::handle {{ background: {c['border']}; }}"
+        )
         root.addWidget(self._splitter, 1)
 
         # Приветственное сообщение

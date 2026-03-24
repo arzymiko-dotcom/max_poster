@@ -37,7 +37,7 @@ from PyQt6.QtWidgets import (
 from constants import VK_MAX_ATTACHMENTS
 from vk_utils import vk_api_call
 from env_utils import get_env_path, load_env_safe
-from ui.widgets import SpellCheckTextEdit
+from ui.widgets import SpellCheckTextEdit, _GripSplitter
 
 _log = logging.getLogger(__name__)
 
@@ -1025,7 +1025,6 @@ class _ChatView(QWidget):
         self._msg_lay.addStretch()
 
         self._scroll.setWidget(self._msg_widget)
-        root.addWidget(self._scroll, 1)
 
         # ── Панель ожидающих вложений ──
         self._att_panel = QWidget()
@@ -1055,7 +1054,7 @@ class _ChatView(QWidget):
         # ── Область ввода ──
         self._input_container = QWidget()
         self._input_container.setStyleSheet(
-            f"background: {c['bg_main']}; border-top: 1px solid {c['border']};"
+            f"background: {c['bg_main']};"
         )
         input_lay = QVBoxLayout(self._input_container)
         input_lay.setContentsMargins(12, 8, 12, 8)
@@ -1063,7 +1062,7 @@ class _ChatView(QWidget):
 
         self._input = SpellCheckTextEdit()
         self._input.setPlaceholderText("Написать сообщение… (Ctrl+Enter — отправить)")
-        self._input.setFixedHeight(70)
+        self._input.setMinimumHeight(60)
         self._input.setStyleSheet(f"""
             QTextEdit {{
                 background: {c['bg_input']};
@@ -1108,7 +1107,26 @@ class _ChatView(QWidget):
         btn_row.addWidget(self._send_btn)
 
         input_lay.addLayout(btn_row)
-        root.addWidget(self._input_container)
+
+        # Обёртка: панель вложений + поле ввода (единый нижний элемент сплиттера)
+        _input_wrapper = QWidget()
+        _iw_lay = QVBoxLayout(_input_wrapper)
+        _iw_lay.setContentsMargins(0, 0, 0, 0)
+        _iw_lay.setSpacing(0)
+        _iw_lay.addWidget(self._att_panel)
+        _iw_lay.addWidget(self._input_container)
+
+        self._splitter = _GripSplitter(Qt.Orientation.Vertical)
+        self._splitter.setHandleWidth(8)
+        self._splitter.setChildrenCollapsible(False)
+        self._splitter.addWidget(self._scroll)
+        self._splitter.addWidget(_input_wrapper)
+        self._splitter.setStretchFactor(0, 1)
+        self._splitter.setSizes([9999, 120])
+        self._splitter.setStyleSheet(
+            f"QSplitter::handle {{ background: {c['border']}; }}"
+        )
+        root.addWidget(self._splitter, 1)
 
         self._set_input_enabled(False)
 
@@ -1157,7 +1175,7 @@ class _ChatView(QWidget):
             QPushButton:hover {{ background:{c['att_btn_hover']}; }}
         """)
         self._input_container.setStyleSheet(
-            f"background: {c['bg_main']}; border-top: 1px solid {c['border']};"
+            f"background: {c['bg_main']};"
         )
         self._input.setStyleSheet(f"""
             QTextEdit {{
@@ -1189,6 +1207,9 @@ class _ChatView(QWidget):
         """
         self._photo_btn.setStyleSheet(btn_ss)
         self._doc_btn.setStyleSheet(btn_ss)
+        self._splitter.setStyleSheet(
+            f"QSplitter::handle {{ background: {c['border']}; }}"
+        )
 
     def _set_input_enabled(self, enabled: bool):
         self._input.setEnabled(enabled)

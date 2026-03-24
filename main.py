@@ -43,7 +43,6 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSplitter,
-    QSplitterHandle,
     QSpinBox,
     QStyledItemDelegate,
     QSlider,
@@ -71,7 +70,7 @@ from updater import check_for_updates
 from vk_sender import VkSender
 
 from ui.paths import _assets_dir, _fonts_dir
-from ui.widgets import LineNumberedEdit, _NumberedItemDelegate
+from ui.widgets import LineNumberedEdit, _GripSplitter, _NumberedItemDelegate
 from ui.emoji_picker import EmojiPicker
 from ui.background import _BgWidget
 from ui.animations import SuccessOverlay
@@ -399,30 +398,6 @@ class SendResultDialog(QDialog):
         btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
         btn_box.accepted.connect(self.accept)
         layout.addWidget(btn_box)
-
-
-class _GripHandle(QSplitterHandle):
-    """Ручка сплиттера с тремя точками — подсказывает что можно тянуть."""
-    _DOT_R   = 2
-    _SPACING = 7
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(150, 150, 170, 160))
-        cx = self.width() // 2
-        cy = self.height() // 2
-        for i in (-1, 0, 1):
-            p.drawEllipse(cx - self._DOT_R, cy + i * self._SPACING - self._DOT_R,
-                          self._DOT_R * 2, self._DOT_R * 2)
-        p.end()
-
-
-class _GripSplitter(QSplitter):
-    def createHandle(self) -> QSplitterHandle:
-        return _GripHandle(self.orientation(), self)
 
 
 class MainWindow(QMainWindow):
