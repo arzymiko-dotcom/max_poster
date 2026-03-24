@@ -525,8 +525,8 @@ class SharedFilesPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._pool = QThreadPool.globalInstance()
-        self._dark = True
-        self._c = dict(_DARK)
+        self._dark = False
+        self._c = dict(_LIGHT)
 
         self._token    = os.getenv("VK_USER_TOKEN", "")
         self._group_id = os.getenv("SHARED_VK_GROUP_ID", "")
@@ -562,7 +562,7 @@ class SharedFilesPanel(QWidget):
         # Header
         header = QFrame()
         header.setObjectName("sfHeader")
-        header.setFixedHeight(50)
+        header.setFixedHeight(54)
         hl = QHBoxLayout(header)
         hl.setContentsMargins(14, 0, 14, 0)
         hl.setSpacing(8)
@@ -1012,7 +1012,7 @@ class SharedFilesPanel(QWidget):
         c = self._c
         self.setStyleSheet(f"""
             SharedFilesPanel, QWidget {{ background:{c['bg']}; }}
-            QFrame#sfHeader {{ background:{c['header_bg']}; }}
+            QFrame#sfHeader {{ background:{c['header_bg']}; border-bottom:1px solid {c['border']}; }}
             QFrame#sfBottom {{ background:{c['header_bg']}; }}
             QFrame#sfSep {{ background:{c['sep']}; border:none; }}
             QLabel {{ color:{c['text']}; }}

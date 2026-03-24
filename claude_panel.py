@@ -231,7 +231,7 @@ class ClaudePanel(QWidget):
 
         # Заголовок
         self._header = QWidget()
-        self._header.setFixedHeight(52)
+        self._header.setFixedHeight(54)
         self._header.setStyleSheet(
             f"background: {c['bg_header']}; border-bottom: 1px solid {c['border']};"
         )
