@@ -13,6 +13,8 @@ from constants import VK_API_URL, VK_API_VERSION, VK_RETRY_DELAYS
 
 _log = logging.getLogger(__name__)
 
+_RETRY_SEQUENCE = VK_RETRY_DELAYS + (None,)  # pre-computed once at import
+
 
 def vk_api_call(method: str, token: str, post: bool = False, **params) -> dict | list:
     """Выполняет запрос к VK API с автоматическим retry при сетевых ошибках.
@@ -27,7 +29,7 @@ def vk_api_call(method: str, token: str, post: bool = False, **params) -> dict |
     params["v"] = VK_API_VERSION
     url = f"{VK_API_URL}/{method}"
     last_exc: Exception | None = None
-    for attempt, delay in enumerate(VK_RETRY_DELAYS + (None,)):
+    for attempt, delay in enumerate(_RETRY_SEQUENCE):
         try:
             if post:
                 r = requests.post(url, data=params, timeout=30)

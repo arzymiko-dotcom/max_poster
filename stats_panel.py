@@ -336,6 +336,13 @@ class _WebFetchWorker(QThread):
     failed   = pyqtSignal(str)
     progress = pyqtSignal(str)
 
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._stop = False
+
+    def stop(self) -> None:
+        self._stop = True
+
     def run(self) -> None:
         self.progress.emit("Загрузка отчёта с сервера…")
         try:

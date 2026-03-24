@@ -45,8 +45,6 @@ def _fmt_date(ts: int) -> str:
 
 # ── VK API ────────────────────────────────────────────────────────
 
-def _vk_call(method: str, token: str, **params) -> dict | list:
-    return vk_api_call(method, token, post=True, **params)
 
 
 def _best_thumb_url(sizes: list[dict], target: int = 130) -> str:
@@ -85,9 +83,9 @@ class _FetchPhotosWorker(QRunnable):
 
     def run(self):
         try:
-            resp = _vk_call(
+            resp = vk_api_call(
                 "photos.get",
-                token=self._token,
+                self._token, post=True,
                 owner_id=f"-{self._group_id}",
                 album_id=self._album_id,
                 count=200,
@@ -109,9 +107,9 @@ class _FetchDocsWorker(QRunnable):
 
     def run(self):
         try:
-            resp = _vk_call(
+            resp = vk_api_call(
                 "docs.get",
-                token=self._token,
+                self._token, post=True,
                 owner_id=f"-{self._group_id}",
                 count=200,
             )
@@ -135,9 +133,9 @@ class _UploadPhotoWorker(QRunnable):
         try:
             # 1. Получаем URL для загрузки в альбом группы
             self.signals.progress.emit("Получение адреса загрузки…")
-            srv = _vk_call(
+            srv = vk_api_call(
                 "photos.getUploadServer",
-                token=self._token,
+                self._token, post=True,
                 album_id=self._album_id,
                 group_id=self._group_id,
             )
@@ -187,9 +185,9 @@ class _UploadDocWorker(QRunnable):
     def run(self):
         try:
             self.signals.progress.emit("Получение адреса загрузки…")
-            srv = _vk_call(
+            srv = vk_api_call(
                 "docs.getUploadServer",
-                token=self._token,
+                self._token, post=True,
                 group_id=self._group_id,
             )
             upload_url = srv["upload_url"]
@@ -202,9 +200,9 @@ class _UploadDocWorker(QRunnable):
             uploaded = resp.json()
 
             self.signals.progress.emit("Сохранение…")
-            saved = _vk_call(
+            saved = vk_api_call(
                 "docs.save",
-                token=self._token,
+                self._token, post=True,
                 file=uploaded.get("file", ""),
                 title=fname,
             )
@@ -243,9 +241,9 @@ class _DeletePhotoWorker(QRunnable):
 
     def run(self):
         try:
-            _vk_call(
+            vk_api_call(
                 "photos.delete",
-                token=self._token,
+                self._token, post=True,
                 owner_id=f"-{self._group_id}",
                 photo_id=self._photo_id,
             )
@@ -263,9 +261,9 @@ class _DeleteDocWorker(QRunnable):
 
     def run(self):
         try:
-            _vk_call(
+            vk_api_call(
                 "docs.delete",
-                token=self._token,
+                self._token, post=True,
                 owner_id=f"-{self._group_id}",
                 doc_id=self._doc_id,
             )
@@ -1074,3 +1072,11 @@ class SharedFilesPanel(QWidget):
         super().showEvent(event)
         if not self._photos and self._tab_stack.currentIndex() == 0:
             self._refresh_photos()
+
+    def closeEvent(self, event) -> None:
+        if self._post_tmp_path:
+            try:
+                Path(self._post_tmp_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+        super().closeEvent(event)
