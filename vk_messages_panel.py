@@ -34,7 +34,8 @@ from PyQt6.QtWidgets import (
     QSpacerItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
-from constants import VK_API_URL, VK_API_VERSION, VK_MAX_ATTACHMENTS, VK_RETRY_DELAYS
+from constants import VK_MAX_ATTACHMENTS
+from vk_utils import vk_api_call
 from env_utils import get_env_path, load_env_safe
 from ui.widgets import SpellCheckTextEdit
 
@@ -80,31 +81,7 @@ _vk_colors: dict = dict(_VK_DARK)  # текущая тема (мутабельн
 
 # ─────────────────────────── helpers ────────────────────────────────────────
 
-def _api(method: str, token: str, post: bool = False, **params) -> dict:
-    """Обёртка над VK API с retry при сетевых ошибках."""
-    params.update({"access_token": token, "v": VK_API_VERSION})
-    url = f"{VK_API_URL}/{method}"
-    last_exc: Exception | None = None
-    for attempt, delay in enumerate(VK_RETRY_DELAYS + (None,)):
-        try:
-            if post:
-                r = requests.post(url, data=params, timeout=30)
-            else:
-                r = requests.get(url, params=params, timeout=30)
-            r.raise_for_status()
-            data = r.json()
-            break
-        except requests.RequestException as e:
-            last_exc = e
-            _log.warning("VK API %s: сетевая ошибка (попытка %d): %s", method, attempt + 1, e)
-            if delay is not None:
-                time.sleep(delay)
-    else:
-        raise RuntimeError(f"Сеть: {last_exc}")
-    if "error" in data:
-        err = data["error"]
-        raise RuntimeError(f"VK {err.get('error_code','?')}: {err.get('error_msg','')}")
-    return data.get("response", data)
+_api = vk_api_call  # обратная совместимость внутри модуля
 
 
 def _fmt_time(ts: int) -> str:

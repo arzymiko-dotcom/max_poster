@@ -8,7 +8,8 @@ from pathlib import Path
 
 import requests
 from env_utils import get_env_path, load_env_safe
-from constants import VK_API_URL, VK_API_VERSION, VK_MAX_PHOTO_MB, VK_RETRY_DELAYS
+from constants import VK_MAX_PHOTO_MB
+from vk_utils import vk_api_call
 
 _log = logging.getLogger(__name__)
 
@@ -41,32 +42,7 @@ class VkSender:
         return None
 
     def _call(self, method: str, token: str, **params) -> dict:
-        params["access_token"] = token
-        params["v"] = VK_API_VERSION
-        url = f"{VK_API_URL}/{method}"
-        last_exc: Exception | None = None
-        for attempt, delay in enumerate(VK_RETRY_DELAYS + (None,)):
-            try:
-                resp = requests.post(url, data=params, timeout=30)
-                resp.raise_for_status()
-                data = resp.json()
-                break
-            except requests.RequestException as e:
-                last_exc = e
-                _log.warning("VK API %s: сетевая ошибка (попытка %d): %s", method, attempt + 1, e)
-                if delay is not None:
-                    time.sleep(delay)
-        else:
-            raise RuntimeError(f"Сеть: {last_exc}")
-        if not isinstance(data, dict):
-            raise RuntimeError(f"Неожиданный формат ответа ВК: {data!r}")
-        if "error" in data:
-            error = data["error"]
-            msg = error.get("error_msg", str(error)) if isinstance(error, dict) else str(error)
-            raise RuntimeError(msg)
-        if "response" not in data:
-            raise RuntimeError(f"Ответ ВК не содержит 'response': {data!r}")
-        return data["response"]
+        return vk_api_call(method, token, post=True, **params)
 
     def _upload_photo(self, image_path: str, progress: Callable[[str], None] | None = None) -> str:
         """Загружает фото на стену группы и возвращает строку вложения photo{owner_id}_{id}.

@@ -122,6 +122,9 @@ class _FetchWorker(QThread):
         super().__init__(parent)
         self._stop = False
 
+    def stop(self) -> None:
+        self._stop = True
+
     def run(self) -> None:
         load_env_safe(get_env_path())
         api_url   = os.getenv("MAX_API_URL", "https://api.green-api.com")
@@ -685,9 +688,13 @@ class StatsPanel(QWidget):
         _w.progress.connect(self._on_progress)
         _w.done.connect(_w.deleteLater)
         _w.failed.connect(_w.deleteLater)
-        _w.done.connect(lambda *_, w=_w: self._worker is w and setattr(self, "_worker", None))
-        _w.failed.connect(lambda *_, w=_w: self._worker is w and setattr(self, "_worker", None))
+        _w.done.connect(lambda *_, w=_w: self._clear_fetch_worker(w))
+        _w.failed.connect(lambda *_, w=_w: self._clear_fetch_worker(w))
         _w.start()
+
+    def _clear_fetch_worker(self, w: QThread) -> None:
+        if self._worker is w:
+            self._worker = None
 
     def _on_progress(self, text: str) -> None:
         self._status_lbl.setText(text)
@@ -1460,7 +1467,7 @@ class StatsPanel(QWidget):
     def _shutdown(self) -> None:
         self._auto_timer.stop()
         if self._worker and self._worker.isRunning():
-            self._worker._stop = True
+            self._worker.stop()
             self._worker.quit()
             self._worker.wait(15000)
         if self._bot_worker and self._bot_worker.isRunning():

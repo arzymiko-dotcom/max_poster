@@ -12,11 +12,11 @@ import logging
 import os
 import sys
 import tempfile
-import time
 from datetime import datetime
 from pathlib import Path
 
 import requests
+from vk_utils import vk_api_call
 from PyQt6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPixmap
 from PyQt6.QtWidgets import (
@@ -26,7 +26,6 @@ from PyQt6.QtWidgets import (
 )
 
 from env_utils import get_env_path, load_env_safe
-from constants import VK_API_URL, VK_API_VERSION, VK_RETRY_DELAYS
 
 _log = logging.getLogger(__name__)
 load_env_safe(get_env_path())
@@ -47,31 +46,7 @@ def _fmt_date(ts: int) -> str:
 # ── VK API ────────────────────────────────────────────────────────
 
 def _vk_call(method: str, token: str, **params) -> dict | list:
-    params["access_token"] = token
-    params["v"] = VK_API_VERSION
-    url = f"{VK_API_URL}/{method}"
-    last_exc: Exception | None = None
-    for attempt, delay in enumerate(VK_RETRY_DELAYS + (None,)):
-        try:
-            resp = requests.post(url, data=params, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            break
-        except requests.RequestException as e:
-            last_exc = e
-            _log.warning("VK %s попытка %d: %s", method, attempt + 1, e)
-            if delay is not None:
-                time.sleep(delay)
-    else:
-        raise RuntimeError(f"Сеть: {last_exc}")
-    if not isinstance(data, dict):
-        raise RuntimeError(f"Неожиданный ответ ВК: {data!r}")
-    if "error" in data:
-        err = data["error"]
-        raise RuntimeError(err.get("error_msg", str(err)) if isinstance(err, dict) else str(err))
-    if "response" not in data:
-        raise RuntimeError(f"Нет 'response': {data!r}")
-    return data["response"]
+    return vk_api_call(method, token, post=True, **params)
 
 
 def _best_thumb_url(sizes: list[dict], target: int = 130) -> str:
@@ -562,6 +537,7 @@ class SharedFilesPanel(QWidget):
         self._photos: list[dict] = []
         self._photo_cards: dict[int, _PhotoCard] = {}
         self._worker_signals: list[_Signals] = []   # держим ссылки чтобы GC не удалил
+        self._post_tmp_path: str | None = None       # последний temp-файл фото для поста
 
         self._spin_frame = 0
         self._spin_msg = ""
@@ -812,7 +788,15 @@ class SharedFilesPanel(QWidget):
         url = _max_photo_url(sizes)
         if not url:
             return
-        tmp = tempfile.mktemp(suffix=".jpg", prefix="maxpost_shared_")
+        # Удаляем предыдущий temp-файл перед созданием нового
+        if self._post_tmp_path:
+            try:
+                Path(self._post_tmp_path).unlink(missing_ok=True)
+            except OSError:
+                pass
+        with tempfile.NamedTemporaryFile(suffix=".jpg", prefix="maxpost_shared_", delete=False) as f:
+            tmp = f.name
+        self._post_tmp_path = tmp
         self._set_status("Загрузка фото для поста…")
         w = _DownloadWorker(url, tmp)
         self._worker_signals.append(w.signals)

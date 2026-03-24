@@ -29,7 +29,7 @@ a = Analysis(
         'html', 'html.parser',       # парсер отчёта в stats_panel
         'bs4', 'bs4.builder', 'bs4.builder._htmlparser',
         'soupsieve',
-        'log_setup', 'constants', 'crash_dialog', 'template_manager',
+        'log_setup', 'constants', 'crash_dialog', 'template_manager', 'vk_utils',
         # ui-пакет — импортируются внутри try/except, PyInstaller может пропустить
         'ui', 'ui.paths', 'ui.widgets', 'ui.emoji_picker',
         'ui.background', 'ui.animations', 'ui.preview_card',
