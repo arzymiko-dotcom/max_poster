@@ -139,11 +139,25 @@ begin
          '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
+procedure SecureExcelFile();
+var
+  ExcelPath, UserName: String;
+  ResultCode: Integer;
+begin
+  ExcelPath := ExpandConstant('{app}\max_address.xlsx');
+  UserName := ExpandConstant('{username}');
+  if FileExists(ExcelPath) then
+    Exec(ExpandConstant('{sys}\icacls.exe'),
+         '"' + ExcelPath + '" /inheritance:r /grant:r "' + UserName + ':R"',
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
   begin
     MergeEnvToAppData();
     SecureEnvFile();
+    SecureExcelFile();
   end;
 end;

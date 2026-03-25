@@ -51,6 +51,8 @@ if exist version.txt (
 )
 
 copy *.xlsx "dist\MAX POST\" 2>NUL
+icacls "dist\MAX POST\max_address.xlsx" /inheritance:r /grant:r "%USERNAME%:R" >nul 2>&1
+echo Права на max_address.xlsx ограничены (только чтение для %USERNAME%)
 
 if exist changelog.json (
     copy changelog.json "dist\MAX POST\changelog.json"
