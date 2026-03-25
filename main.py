@@ -591,46 +591,58 @@ class _SmartBlock:
     not_found: list = dc_field(default_factory=list)  # list[str] — не найдены в реестре
 
 
-def _parse_smart_blocks(text: str, matcher) -> "tuple[list[_SmartBlock], str]":
+def _parse_smart_blocks(text: str, matcher) -> "tuple[list[_SmartBlock], str, str]":
     """Разбивает text на блоки по пустой строке.
 
-    Возвращает (blocks_with_addresses, footer_text).
+    Возвращает (blocks_with_addresses, header_text, footer_text).
+    header — текст до первого адресного блока, footer — после последнего.
     """
     raw_blocks = re.split(r"\n\s*\n", text.strip())
     address_blocks: list[_SmartBlock] = []
-    footer_parts: list[str] = []
+    # Индексы raw_blocks которые содержат адреса
+    addr_indices: list[int] = []
+    parsed_cache: list[list] = []
 
-    for raw in raw_blocks:
+    for i, raw in enumerate(raw_blocks):
         raw = raw.strip()
+        raw_blocks[i] = raw
         if not raw:
+            parsed_cache.append([])
             continue
         try:
             parsed_list = extract_all_addresses(raw)
         except Exception:
             parsed_list = []
+        parsed_cache.append(parsed_list)
+        if parsed_list:
+            addr_indices.append(i)
 
-        if not parsed_list:
-            footer_parts.append(raw)
-            continue
+    if not addr_indices:
+        return [], "", ""
 
+    first_addr = addr_indices[0]
+    last_addr = addr_indices[-1]
+
+    header = "\n\n".join(raw_blocks[i] for i in range(first_addr) if raw_blocks[i])
+    footer = "\n\n".join(raw_blocks[i] for i in range(last_addr + 1, len(raw_blocks)) if raw_blocks[i])
+
+    for i in addr_indices:
+        raw = raw_blocks[i]
         block = _SmartBlock(text=raw)
-        for parsed in parsed_list:
+        for parsed in parsed_cache[i]:
             try:
                 results = matcher.find_matches(parsed)
             except Exception:
                 results = []
             if results:
                 for r in results:
-                    # Не дублировать один chat_id
                     if not any(m.chat_id == r.chat_id for m in block.matches):
                         block.matches.append(r)
             else:
                 block.not_found.append(getattr(parsed, "original", str(parsed)))
-
         address_blocks.append(block)
 
-    footer = "\n\n".join(footer_parts)
-    return address_blocks, footer
+    return address_blocks, header, footer
 
 
 class _SmartSendPreviewDialog(QDialog):
@@ -3718,7 +3730,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Умная рассылка", "Реестр адресов не загружен.")
             return
 
-        blocks, footer = _parse_smart_blocks(text, self._matcher)
+        blocks, header, footer = _parse_smart_blocks(text, self._matcher)
         if not blocks:
             QMessageBox.warning(
                 self,
@@ -3728,8 +3740,10 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if footer:
-            for b in blocks:
+        for b in blocks:
+            if header:
+                b.text = header + "\n\n" + b.text
+            if footer:
                 b.text = b.text + "\n\n" + footer
 
         dlg = _SmartSendPreviewDialog(blocks, parent=self)
