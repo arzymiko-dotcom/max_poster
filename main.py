@@ -692,6 +692,16 @@ class _SmartSendPreviewDialog(QDialog):
             fl.addWidget(chk)
             self._checks.append((chk, block))
 
+            # Превью полного текста (первые 300 символов)
+            preview_text = block.text if len(block.text) <= 300 else block.text[:300] + "…"
+            preview_lbl = QLabel(preview_text)
+            preview_lbl.setWordWrap(True)
+            preview_lbl.setStyleSheet(
+                "color: #374151; font-size: 11px; padding: 4px 16px;"
+                "background: rgba(0,0,0,0.04); border-radius: 4px;"
+            )
+            fl.addWidget(preview_lbl)
+
             # Найденные адреса — зелёным
             for m in block.matches:
                 lbl = QLabel(f"  ✓  {m.address}")
