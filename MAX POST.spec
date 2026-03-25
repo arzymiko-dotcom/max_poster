@@ -1,10 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
+from PyInstaller.utils.hooks import collect_all
 
+bs4_datas, bs4_binaries, bs4_hiddenimports = collect_all('bs4')
 
 a = Analysis(
     ['app.py'],
     pathex=[],
-    binaries=[],
     datas=[
         ('twemoji', 'twemoji'),
         ('assets', 'assets'),
@@ -17,8 +18,13 @@ a = Analysis(
         ('.venv/Lib/site-packages/pymorphy3_dicts_ru/data', 'pymorphy3_dicts_ru/data'),
         # История изменений
         ('changelog.json', '.'),
+        *bs4_datas,
+    ],
+    binaries=[
+        *bs4_binaries,
     ],
     hiddenimports=[
+        *bs4_hiddenimports,
         'dotenv', 'dotenv.main',
         'qrcode', 'qrcode.image.pil',
         'PIL', 'PIL.Image', 'PIL.ImageDraw',

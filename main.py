@@ -347,6 +347,239 @@ class VkLoadTextWorker(QThread):
         self.done.emit(text)
 
 
+_VK_POPUP_DARK = """
+QFrame#vkPostsPopup {
+    background: #252535;
+    border: 1px solid #3a3a55;
+    border-radius: 10px;
+}
+QLabel#vkPopupTitle {
+    color: #4a6cf7;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+QPushButton#vkPostCard {
+    background: #1e1e2e;
+    border: 1px solid #3a3a55;
+    border-radius: 7px;
+    color: #d0d0e8;
+    font-size: 12px;
+    text-align: left;
+    padding: 8px 10px;
+}
+QPushButton#vkPostCard:hover {
+    background: #2a2a45;
+    border-color: #4a6cf7;
+    color: #ffffff;
+}
+QLabel#vkPostDate {
+    color: #6b6b99;
+    font-size: 10px;
+}
+QScrollArea { background: transparent; border: none; }
+QScrollBar:vertical { width: 4px; background: transparent; }
+QScrollBar::handle:vertical { background: #3a3a55; border-radius: 2px; }
+"""
+
+_VK_POPUP_LIGHT = """
+QFrame#vkPostsPopup {
+    background: #ffffff;
+    border: 1px solid #c7d0db;
+    border-radius: 10px;
+}
+QLabel#vkPopupTitle {
+    color: #2563eb;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+QPushButton#vkPostCard {
+    background: #f8fafc;
+    border: 1px solid #dde3ea;
+    border-radius: 7px;
+    color: #1a1a2e;
+    font-size: 12px;
+    text-align: left;
+    padding: 8px 10px;
+}
+QPushButton#vkPostCard:hover {
+    background: #eff6ff;
+    border-color: #2563eb;
+    color: #1e3a8a;
+}
+QLabel#vkPostDate {
+    color: #9ca3af;
+    font-size: 10px;
+}
+QScrollArea { background: transparent; border: none; }
+QScrollBar:vertical { width: 4px; background: transparent; }
+QScrollBar::handle:vertical { background: #c7d0db; border-radius: 2px; }
+"""
+
+
+class _VkPostsPopup(QFrame):
+    """Красивый попап-карточки с последними постами ВК."""
+    post_selected = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self.setObjectName("vkPostsPopup")
+        self.setFixedWidth(400)
+        self.setStyleSheet(_VK_POPUP_DARK)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setMaximumHeight(460)
+        outer.addWidget(scroll)
+
+        self._content = QWidget()
+        self._content.setFixedWidth(400)
+        scroll.setWidget(self._content)
+
+        self._layout = QVBoxLayout(self._content)
+        self._layout.setContentsMargins(12, 12, 12, 12)
+        self._layout.setSpacing(6)
+
+    def set_dark(self, dark: bool) -> None:
+        self.setStyleSheet(_VK_POPUP_DARK if dark else _VK_POPUP_LIGHT)
+
+    def populate(self, posts: list) -> None:
+        # очистить старые карточки
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        title = QLabel("ПОСЛЕДНИЕ ПОСТЫ ВКонтакте")
+        title.setObjectName("vkPopupTitle")
+        self._layout.addWidget(title)
+
+        from datetime import datetime as _dt
+        for post in posts:
+            text = (post.get("text") or "").strip()
+            if not text:
+                continue
+            date_str = _dt.fromtimestamp(post.get("date", 0)).strftime("%d.%m.%Y  %H:%M")
+            preview = text[:80].replace("\n", " ")
+            if len(text) > 80:
+                preview += "…"
+
+            card = QPushButton()
+            card.setObjectName("vkPostCard")
+            card.setFlat(False)
+            card.setText(f"{date_str}\n{preview}")
+            card.setMinimumHeight(54)
+            card.setCursor(Qt.CursorShape.PointingHandCursor)
+            card.setToolTip(text[:400])
+            card.clicked.connect(lambda checked, t=text: self._pick(t))
+            self._layout.addWidget(card)
+
+        self._layout.addStretch()
+        self.adjustSize()
+
+    def _pick(self, text: str) -> None:
+        self.post_selected.emit(text)
+        self.hide()
+
+    def show_below(self, btn: "QPushButton") -> None:
+        self.adjustSize()
+        pos = btn.mapToGlobal(btn.rect().bottomLeft())
+        self.move(pos.x(), pos.y() + 4)
+        self.show()
+
+
+class _VkWallFetchWorker(QThread):
+    """Загружает последние посты со стены ВК-группы."""
+    done  = pyqtSignal(list)   # list[dict] — элементы wall.get
+    error = pyqtSignal(str)
+
+    def __init__(self, token: str, group_id: str, count: int = 10, parent=None) -> None:
+        super().__init__(parent)
+        self._token    = token
+        self._group_id = group_id
+        self._count    = count
+
+    def run(self) -> None:
+        try:
+            from vk_utils import vk_api_call
+            resp = vk_api_call(
+                "wall.get", self._token,
+                owner_id=f"-{self._group_id}",
+                count=self._count,
+                filter="owner",
+            )
+            items = resp.get("items", []) if isinstance(resp, dict) else []
+            self.done.emit(items)
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+class _PasteConfirmDialog(QDialog):
+    """Показывает результаты поиска вставленных адресов в Excel перед добавлением."""
+
+    def __init__(self, results: list, parent=None) -> None:
+        # results: list[tuple[str, MatchResult | None]]
+        super().__init__(parent)
+        self.setWindowTitle("Результаты поиска адресов")
+        self.setMinimumWidth(520)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setSpacing(10)
+
+        found_count  = sum(1 for _, m in results if m and m.chat_id)
+        missed_count = len(results) - found_count
+
+        summary = QLabel(
+            f"Найдено в реестре: <b>{found_count}</b>    "
+            f"Не найдено: <b style='color:#dc2626;'>{missed_count}</b>"
+        )
+        summary.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(summary)
+
+        self._checks: list[tuple[QCheckBox, "MatchResult"]] = []
+
+        for original, match in results:
+            row = QHBoxLayout()
+            if match and match.chat_id:
+                chk = QCheckBox()
+                chk.setChecked(True)
+                label = QLabel(f"✓  <b>{match.address}</b>")
+                label.setTextFormat(Qt.TextFormat.RichText)
+                label.setStyleSheet("color: #16a34a;")
+                row.addWidget(chk)
+                row.addWidget(label, 1)
+                self._checks.append((chk, match))
+            else:
+                icon = QLabel("✗")
+                icon.setFixedWidth(20)
+                icon.setStyleSheet("color: #dc2626; font-weight: bold;")
+                label = QLabel(f"{original}  <span style='color:#9ca3af;'>(не найден в реестре)</span>")
+                label.setTextFormat(Qt.TextFormat.RichText)
+                row.addWidget(icon)
+                row.addWidget(label, 1)
+            layout.addLayout(row)
+
+        layout.addSpacing(4)
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.button(QDialogButtonBox.StandardButton.Ok).setText("Добавить отмеченные")
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+    def accepted_matches(self) -> list:
+        return [m for chk, m in self._checks if chk.isChecked()]
+
+
 class SendResultDialog(QDialog):
     """Диалог с детальными результатами отправки."""
 
@@ -648,6 +881,14 @@ class MainWindow(QMainWindow):
         lh_title.setObjectName("checklistTitle")
         lh_layout.addWidget(lh_title)
         lh_layout.addStretch()
+        self._vk_posts_btn = QPushButton("📰 ВК посты")
+        self._vk_posts_btn.setObjectName("tplMiniBtn")
+        self._vk_posts_btn.setFixedHeight(28)
+        self._vk_posts_btn.setMinimumWidth(85)
+        self._vk_posts_btn.setToolTip("Вставить текст из последних постов группы ВКонтакте")
+        self._vk_posts_btn.clicked.connect(self._open_vk_posts_picker)
+        lh_layout.addWidget(self._vk_posts_btn)
+
         self._tpl_btn = QPushButton("📋")
         self._tpl_btn.setObjectName("tplMiniBtn")
         self._tpl_btn.setFixedSize(28, 28)
@@ -739,6 +980,7 @@ class MainWindow(QMainWindow):
         self._addr_list.setItemDelegate(_NumberedItemDelegate(self._addr_list))
         self._addr_list.itemChanged.connect(self._on_addr_item_changed)
         self._addr_list.itemDoubleClicked.connect(self._toggle_addr_item)
+        self._addr_list.installEventFilter(self)
         self._insert_pinned_group()
 
         addr_header_frame = QFrame()
@@ -747,6 +989,11 @@ class MainWindow(QMainWindow):
         ah_layout.setContentsMargins(14, 10, 14, 10)
         self._addr_count_lbl = QLabel("Адреса для рассылки MAX")
         self._addr_count_lbl.setObjectName("checklistTitle")
+        self._del_addr_btn = QPushButton("🗑")
+        self._del_addr_btn.setObjectName("tplMiniBtn")
+        self._del_addr_btn.setFixedSize(28, 28)
+        self._del_addr_btn.setToolTip("Удалить выбранный адрес")
+        self._del_addr_btn.clicked.connect(self._delete_selected_address)
         self._add_addr_btn = QPushButton("+")
         self._add_addr_btn.setObjectName("addAddrBtn")
         self._add_addr_btn.setFixedSize(24, 24)
@@ -773,6 +1020,7 @@ class MainWindow(QMainWindow):
         ah_layout.addWidget(self._hist_btn)
         ah_layout.addWidget(self._select_all_btn)
         ah_layout.addWidget(self._paste_addr_btn)
+        ah_layout.addWidget(self._del_addr_btn)
         ah_layout.addWidget(self._add_addr_btn)
         ctrl_layout.addWidget(addr_header_frame)
 
@@ -1871,11 +2119,51 @@ class MainWindow(QMainWindow):
                 return item.checkState() == Qt.CheckState.Checked
         return True
 
+    def eventFilter(self, obj, event) -> bool:
+        from PyQt6.QtCore import QEvent
+        if obj is self._addr_list and event.type() == QEvent.Type.KeyPress:
+            if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+                self._delete_selected_address()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _delete_selected_address(self) -> None:
+        """Удаляет выбранный адрес из списка. Закреплённую группу не трогает."""
+        items = self._addr_list.selectedItems()
+        if not items:
+            item = self._addr_list.currentItem()
+            if item:
+                items = [item]
+        for item in items:
+            if item.data(_PINNED_ROLE):
+                continue
+            self._addr_list.takeItem(self._addr_list.row(item))
+        self._update_checklist()
+        self.save_state()
+
     def _add_address_manually(self) -> None:
         dlg = AddAddressDialog(parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         match = dlg.result_match()
+        # Если chat_id не введён вручную — ищем адрес в Excel
+        if not match.chat_id:
+            if self._matcher is None and self.excel_path.exists():
+                self._matcher = ExcelMatcher(self.excel_path)
+            if self._matcher is not None:
+                resolved = None
+                parsed_list = extract_all_addresses(match.address)
+                if parsed_list:
+                    try:
+                        hits = self._matcher.find_matches(parsed_list[0])
+                        resolved = hits[0] if hits else None
+                    except Exception:
+                        pass
+                if resolved is None:
+                    hits = self._matcher.search(match.address, limit=1)
+                    resolved = hits[0] if hits else None
+                if resolved:
+                    match = resolved
         item = QListWidgetItem(match.address)
         item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
         item.setCheckState(Qt.CheckState.Checked)
@@ -1886,12 +2174,48 @@ class MainWindow(QMainWindow):
         self.save_state()
 
     def _paste_addresses(self) -> None:
-        """Вставка нескольких адресов сразу через диалог."""
+        """Вставка нескольких адресов сразу через диалог с подтверждением."""
         dlg = PasteAddressesDialog(parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        matches = dlg.result_matches()
-        # Собираем уже существующие адреса/chat_id для проверки дублей
+        raw_matches = dlg.result_matches()
+
+        # Для каждого адреса без chat_id — ищем в Excel
+        if self._matcher is None and self.excel_path.exists():
+            self._matcher = ExcelMatcher(self.excel_path)
+
+        # Строим список (исходный текст, resolved MatchResult | None)
+        results: list[tuple[str, "MatchResult | None"]] = []
+        for m in raw_matches:
+            original = m.address
+            if m.chat_id:
+                results.append((original, m))
+            elif self._matcher is not None:
+                # Используем extract_all_addresses + find_matches — тот же путь что «Проверить адрес»
+                parsed_list = extract_all_addresses(original)
+                resolved = None
+                if parsed_list:
+                    try:
+                        hits = self._matcher.find_matches(parsed_list[0])
+                        resolved = hits[0] if hits else None
+                    except Exception:
+                        pass
+                # Fallback: простой поиск по тексту
+                if resolved is None:
+                    hits = self._matcher.search(original, limit=1)
+                    resolved = hits[0] if hits else None
+                results.append((original, resolved))
+            else:
+                results.append((original, None))
+
+        # Показываем диалог с результатами поиска
+        confirm = _PasteConfirmDialog(results, parent=self)
+        if confirm.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        to_add = confirm.accepted_matches()
+
+        # Собираем уже существующие для проверки дублей
         existing_addrs: set[str] = set()
         existing_ids: set[str] = set()
         for i in range(self._addr_list.count()):
@@ -1903,8 +2227,9 @@ class MainWindow(QMainWindow):
                 existing_addrs.add(ex_m.address)
                 if ex_m.chat_id:
                     existing_ids.add(ex_m.chat_id)
+
         added = 0
-        for match in matches:
+        for match in to_add:
             if match.address in existing_addrs:
                 continue
             if match.chat_id and match.chat_id in existing_ids:
@@ -2562,6 +2887,7 @@ class MainWindow(QMainWindow):
                          else Qt.CheckState.Checked)
                 item.setCheckState(state)
                 item.setData(Qt.ItemDataRole.UserRole, best)
+                item.setData(_MANUAL_ROLE, True)  # сразу закрепляем — не удалять при редактировании текста
                 self._addr_list.addItem(item)
             for m, state in manual_entries:
                 if m.chat_id in new_ids:
@@ -2625,6 +2951,47 @@ class MainWindow(QMainWindow):
         self._insert_pinned_group(pinned_checked)
 
     # ── Шаблоны текста ──────────────────────────────────────────────────────
+
+    def _open_vk_posts_picker(self) -> None:
+        """Загружает последние посты ВК-группы и показывает красивый попап."""
+        token    = self.vk_sender.user_token or self.vk_sender.group_token
+        group_id = self.vk_sender.group_id
+        if not token or not group_id:
+            QMessageBox.warning(self, "ВК посты", "Не заданы VK_USER_TOKEN и VK_GROUP_ID в .env.")
+            return
+        self._vk_posts_btn.setEnabled(False)
+        self._vk_posts_btn.setText("⏳ Загрузка…")
+        worker = _VkWallFetchWorker(token, group_id, count=15, parent=self)
+        worker.done.connect(self._on_vk_wall_fetched)
+        worker.error.connect(self._on_vk_wall_error)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+        self._vk_fetch_worker = worker
+
+    def _on_vk_wall_fetched(self, posts: list) -> None:
+        self._vk_posts_btn.setEnabled(True)
+        self._vk_posts_btn.setText("📰 ВК посты")
+        posts_with_text = [p for p in posts if (p.get("text") or "").strip()]
+        if not posts_with_text:
+            QMessageBox.information(self, "ВК посты", "Постов с текстом не найдено.")
+            return
+        if not hasattr(self, "_vk_popup"):
+            self._vk_popup = _VkPostsPopup(self)
+            self._vk_popup.post_selected.connect(self._apply_vk_post)
+        dark = getattr(getattr(self, "_shell_window", None), "_dark_mode", True)
+        self._vk_popup.set_dark(dark)
+        self._vk_popup.populate(posts_with_text)
+        self._vk_popup.show_below(self._vk_posts_btn)
+
+    def _apply_vk_post(self, text: str) -> None:
+        self.text_input.setPlainText(text)
+        self.text_input.moveCursor(self.text_input.textCursor().MoveOperation.End)
+        self.text_input.setFocus()
+
+    def _on_vk_wall_error(self, msg: str) -> None:
+        self._vk_posts_btn.setEnabled(True)
+        self._vk_posts_btn.setText("📰 ВК посты")
+        QMessageBox.warning(self, "ВК посты", f"Ошибка загрузки постов:\n{msg}")
 
     def _open_templates_menu(self) -> None:
         """Показывает меню шаблонов под кнопкой 📋."""

@@ -36,6 +36,9 @@ Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
 [Tasks]
 Name: "desktopicon"; Description: "Создать ярлык на рабочем столе"; GroupDescription: "Дополнительно:"
 
+[InstallDelete]
+Type: filesandordirs; Name: "{app}"
+
 [Files]
 Source: "dist\MAX POST\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: ".env"
 Source: "dist\MAX POST\.env"; DestDir: "{app}"; Flags: ignoreversion

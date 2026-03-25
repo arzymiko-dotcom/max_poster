@@ -766,13 +766,13 @@ class StatsPanel(QWidget):
             pass
 
         if members == "—":
-            row_bg = QColor("#fff0f0")   # красный — нет доступа
+            row_bg = QColor("#fecaca")   # красный — нет доступа
         elif members == "~":
-            row_bg = QColor("#fffbee")   # жёлтый — ошибка сети/таймаут
+            row_bg = QColor("#fde68a")   # жёлтый — ошибка сети/таймаут
         elif fresh_today:
-            row_bg = QColor("#f0faf2")   # зелёный — активна сегодня
+            row_bg = QColor("#bbf7d0")   # зелёный — активна сегодня
         elif fresh_week:
-            row_bg = QColor("#f0f7ff")   # голубой — активна на этой неделе
+            row_bg = QColor("#bfdbfe")   # голубой — активна на этой неделе
         else:
             row_bg = None
 
@@ -1014,7 +1014,7 @@ class StatsPanel(QWidget):
         self._table.setSortingEnabled(False)
         self._table.setRowCount(len(rows))
 
-        dead_bg = QColor("#fff0f0")
+        dead_bg = QColor("#fecaca")
 
         for row_idx, r in enumerate(rows):
             name    = r["name"]
@@ -1025,7 +1025,7 @@ class StatsPanel(QWidget):
             if dead_mode:
                 row_bg = dead_bg
             elif members == "~":
-                row_bg = QColor("#fffbee")   # жёлтый — ошибка сети
+                row_bg = QColor("#fde68a")   # жёлтый — ошибка сети
             else:
                 fresh_today = False
                 fresh_week  = False
@@ -1036,9 +1036,9 @@ class StatsPanel(QWidget):
                 except ValueError:
                     pass
                 if fresh_today:
-                    row_bg = QColor("#f0faf2")
+                    row_bg = QColor("#bbf7d0")
                 elif fresh_week:
-                    row_bg = QColor("#f0f7ff")
+                    row_bg = QColor("#bfdbfe")
                 else:
                     row_bg = None
 

@@ -284,9 +284,8 @@ class _LoadThumbWorker(QRunnable):
         try:
             resp = requests.get(self._url, timeout=20)
             resp.raise_for_status()
-            px = QPixmap()
-            px.loadFromData(resp.content)
-            self.signals.done.emit((self._photo_id, px))
+            # QPixmap нельзя создавать вне главного потока — передаём bytes
+            self.signals.done.emit((self._photo_id, resp.content))
         except Exception as e:
             _log.debug("Thumb load failed: %s", e)
             self.signals.error.emit(str(e))
@@ -727,6 +726,7 @@ class SharedFilesPanel(QWidget):
             if item.widget():
                 item.widget().deleteLater()
         self._photo_cards.clear()
+        self._worker_signals.clear()
 
         if not photos:
             lbl = QLabel("Нет фото\nНажмите ⬆ Загрузить чтобы добавить")
@@ -755,9 +755,13 @@ class SharedFilesPanel(QWidget):
     def _on_thumb_loaded(self, data: object) -> None:
         if not isinstance(data, tuple):
             return
-        photo_id, pixmap = data
-        if photo_id in self._photo_cards and not pixmap.isNull():
-            self._photo_cards[photo_id].set_thumb(pixmap)
+        photo_id, raw = data
+        if photo_id not in self._photo_cards:
+            return
+        px = QPixmap()
+        px.loadFromData(raw)
+        if not px.isNull():
+            self._photo_cards[photo_id].set_thumb(px)
 
     # ── Render docs ──────────────────────────────────────────────
 
@@ -960,6 +964,10 @@ class SharedFilesPanel(QWidget):
     # ── Config check ─────────────────────────────────────────────
 
     def _check_config(self, need_album: bool = False) -> bool:
+        load_env_safe(get_env_path())
+        self._token    = os.getenv("VK_USER_TOKEN", "")
+        self._group_id = os.getenv("SHARED_VK_GROUP_ID", "")
+        self._album_id = os.getenv("SHARED_VK_ALBUM_ID", "")
         if not self._token:
             self._set_status("VK_USER_TOKEN не задан в .env", error=True)
             return False
@@ -1074,6 +1082,8 @@ class SharedFilesPanel(QWidget):
             self._refresh_photos()
 
     def closeEvent(self, event) -> None:
+        self._spinner_timer.stop()
+        self._upload_timer.stop()
         if self._post_tmp_path:
             try:
                 Path(self._post_tmp_path).unlink(missing_ok=True)

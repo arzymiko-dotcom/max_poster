@@ -113,7 +113,7 @@ class ExcelMatcher:
 
         # Используем инвертированный индекс: берём пересечение строк по всем словам улицы.
         # Вместо O(N) полного скана получаем только строки, где все слова улицы есть.
-        street_words = parsed_address.street.split()
+        street_words = parsed_address.street.lower().split()
         candidate_idx: set[int] | None = None
         for word in street_words:
             rows = set(self._word_index.get(word, []))
