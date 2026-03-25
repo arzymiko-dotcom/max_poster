@@ -3,6 +3,8 @@ import csv
 import json
 import logging
 import os
+import re
+from dataclasses import dataclass, field as dc_field
 import random
 import sys
 import time
@@ -56,8 +58,6 @@ from PyQt6.QtWidgets import (
 _MANUAL_ROLE: int = Qt.ItemDataRole.UserRole + 1
 
 _TOKEN_ROTATION_DAYS = 10  # напоминание сменить токены раз в N дней
-# Роль для закреплённой основной группы МАХ
-_PINNED_ROLE: int = Qt.ItemDataRole.UserRole + 2
 
 import tg_notify
 from address_parser import extract_all_addresses
@@ -580,6 +580,217 @@ class _PasteConfirmDialog(QDialog):
         return [m for chk, m in self._checks if chk.isChecked()]
 
 
+# ---------------------------------------------------------------------------
+# Умная рассылка — dataclass, парсинг блоков, диалог предпросмотра, воркер
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _SmartBlock:
+    text: str
+    matches: list = dc_field(default_factory=list)   # list[MatchResult]
+    not_found: list = dc_field(default_factory=list)  # list[str] — не найдены в реестре
+
+
+def _parse_smart_blocks(text: str, matcher) -> "tuple[list[_SmartBlock], str]":
+    """Разбивает text на блоки по пустой строке.
+
+    Возвращает (blocks_with_addresses, footer_text).
+    """
+    raw_blocks = re.split(r"\n\s*\n", text.strip())
+    address_blocks: list[_SmartBlock] = []
+    footer_parts: list[str] = []
+
+    for raw in raw_blocks:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            parsed_list = extract_all_addresses(raw)
+        except Exception:
+            parsed_list = []
+
+        if not parsed_list:
+            footer_parts.append(raw)
+            continue
+
+        block = _SmartBlock(text=raw)
+        for parsed in parsed_list:
+            try:
+                results = matcher.find_matches(parsed)
+            except Exception:
+                results = []
+            if results:
+                for r in results:
+                    # Не дублировать один chat_id
+                    if not any(m.chat_id == r.chat_id for m in block.matches):
+                        block.matches.append(r)
+            else:
+                block.not_found.append(getattr(parsed, "original", str(parsed)))
+
+        address_blocks.append(block)
+
+    footer = "\n\n".join(footer_parts)
+    return address_blocks, footer
+
+
+class _SmartSendPreviewDialog(QDialog):
+    """Диалог предпросмотра умной рассылки — показывает разбивку до отправки."""
+
+    def __init__(self, blocks: "list[_SmartBlock]", parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Умная рассылка — предпросмотр")
+        self.setMinimumWidth(520)
+        self.setMinimumHeight(400)
+        self._blocks = blocks
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 10)
+        root.setSpacing(8)
+
+        # Заголовок
+        title = QLabel(f"Найдено блоков с адресами: <b>{len(blocks)}</b>")
+        title.setTextFormat(Qt.TextFormat.RichText)
+        root.addWidget(title)
+
+        # Список блоков в скролле
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        container = QWidget()
+        scroll.setWidget(container)
+        vbox = QVBoxLayout(container)
+        vbox.setContentsMargins(4, 4, 4, 4)
+        vbox.setSpacing(10)
+        container.setFixedWidth(480)
+
+        self._checks: list[tuple["QCheckBox", "_SmartBlock"]] = []
+
+        for idx, block in enumerate(blocks, 1):
+            frame = QFrame()
+            frame.setFrameShape(QFrame.Shape.StyledPanel)
+            fl = QVBoxLayout(frame)
+            fl.setContentsMargins(8, 6, 8, 6)
+            fl.setSpacing(4)
+
+            # Превью первой строки
+            first_line = block.text.splitlines()[0][:80]
+            chk = QCheckBox(f"Блок {idx}: {first_line}")
+            chk.setChecked(True)
+            chk.setStyleSheet("font-weight: 600;")
+            fl.addWidget(chk)
+            self._checks.append((chk, block))
+
+            # Найденные адреса — зелёным
+            for m in block.matches:
+                lbl = QLabel(f"  ✓  {m.address}")
+                lbl.setStyleSheet("color: #16a34a; padding-left: 16px;")
+                fl.addWidget(lbl)
+
+            # Не найденные — красным
+            for addr in block.not_found:
+                lbl = QLabel(f"  ✗  {addr}  (не найден в реестре)")
+                lbl.setStyleSheet("color: #dc2626; padding-left: 16px;")
+                fl.addWidget(lbl)
+
+            # Кол-во получателей
+            cnt = len(block.matches)
+            info = QLabel(f"  Получателей: {cnt}")
+            info.setStyleSheet("color: #6b7280; font-size: 11px; padding-left: 16px;")
+            fl.addWidget(info)
+
+            vbox.addWidget(frame)
+
+        vbox.addStretch()
+        root.addWidget(scroll, 1)
+
+        # Кнопки
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        btns.button(QDialogButtonBox.StandardButton.Ok).setText("Отправить")
+        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("Отмена")
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        root.addWidget(btns)
+
+    def accepted_blocks(self) -> "list[_SmartBlock]":
+        return [b for chk, b in self._checks if chk.isChecked() and b.matches]
+
+
+class _SmartSendWorker(QThread):
+    """Рассылает блоки умной рассылки по своим адресам."""
+
+    progress = pyqtSignal(str)
+    block_done = pyqtSignal(int, bool, str)   # (block_idx, success, message)
+    all_done = pyqtSignal(bool, str)          # (overall_success, summary)
+
+    def __init__(
+        self,
+        max_sender,
+        chat_ids_per_block: "list[tuple[str, list[str]]]",
+        image_path: "str | None",
+        send_max: bool,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._sender = max_sender
+        self._blocks = chat_ids_per_block
+        self._image_path = image_path
+        self._send_max = send_max
+
+    def run(self) -> None:
+        if not self._send_max:
+            self.all_done.emit(False, "Умная рассылка работает только для MAX.")
+            return
+
+        total_blocks = len(self._blocks)
+        ok_count = 0
+        fail_count = 0
+        send_num = 0  # счётчик отправленных сообщений (для паузы)
+
+        for b_idx, (text, chat_ids) in enumerate(self._blocks):
+            block_ok = True
+            block_msgs: list[str] = []
+            for chat_id in chat_ids:
+                if send_num > 0:
+                    delay = random.randint(5, 12)
+                    for sec in range(delay):
+                        self.progress.emit(
+                            f"Блок {b_idx + 1}/{total_blocks} · пауза {delay - sec}с…"
+                        )
+                        time.sleep(1)
+                self.progress.emit(f"Блок {b_idx + 1}/{total_blocks}: отправка в {chat_id}…")
+                try:
+                    r = self._sender.send_post(
+                        chat_link=chat_id,
+                        text=text,
+                        image_path=self._image_path,
+                    )
+                    send_num += 1
+                    if r.success:
+                        ok_count += 1
+                        block_msgs.append(f"✓ {chat_id}")
+                    else:
+                        fail_count += 1
+                        block_ok = False
+                        block_msgs.append(f"✗ {chat_id}: {r.message}")
+                except Exception as exc:
+                    fail_count += 1
+                    block_ok = False
+                    block_msgs.append(f"✗ {chat_id}: {exc}")
+                    send_num += 1
+
+            msg = "; ".join(block_msgs)
+            self.block_done.emit(b_idx, block_ok, msg)
+            if not block_ok:
+                pass  # продолжаем остальные блоки
+
+        summary = f"Блоков: {total_blocks} | Отправлено: {ok_count} | Ошибок: {fail_count}"
+        self.all_done.emit(fail_count == 0, summary)
+
+
+# ---------------------------------------------------------------------------
+
 class SendResultDialog(QDialog):
     """Диалог с детальными результатами отправки."""
 
@@ -981,7 +1192,12 @@ class MainWindow(QMainWindow):
         self._addr_list.itemChanged.connect(self._on_addr_item_changed)
         self._addr_list.itemDoubleClicked.connect(self._toggle_addr_item)
         self._addr_list.installEventFilter(self)
-        self._insert_pinned_group()
+        self._addr_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._addr_list.customContextMenuRequested.connect(self._addr_list_context_menu)
+        self._addr_list.currentItemChanged.connect(
+            lambda cur, _: setattr(self, "_last_addr_row", self._addr_list.row(cur) if cur else self._last_addr_row)
+        )
+        self._last_addr_row = -1
 
         addr_header_frame = QFrame()
         addr_header_frame.setObjectName("checklistFrame")
@@ -992,7 +1208,8 @@ class MainWindow(QMainWindow):
         self._del_addr_btn = QPushButton("🗑")
         self._del_addr_btn.setObjectName("tplMiniBtn")
         self._del_addr_btn.setFixedSize(28, 28)
-        self._del_addr_btn.setToolTip("Удалить выбранный адрес")
+        self._del_addr_btn.setToolTip("Удалить выбранный адрес (или ПКМ на адрес)")
+        self._del_addr_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._del_addr_btn.clicked.connect(self._delete_selected_address)
         self._add_addr_btn = QPushButton("+")
         self._add_addr_btn.setObjectName("addAddrBtn")
@@ -1229,12 +1446,20 @@ class MainWindow(QMainWindow):
         self._dry_run_btn.setToolTip("Пробный прогон — сообщения не отправляются")
         self._dry_run_btn.clicked.connect(self._send_dry_run)
 
+        self._smart_send_btn = QPushButton("🔀 Умная")
+        self._smart_send_btn.setObjectName("testButton")
+        self._smart_send_btn.setToolTip(
+            "Умная рассылка — разбить текст на блоки и отправить каждый по своим адресам"
+        )
+        self._smart_send_btn.clicked.connect(self._start_smart_send)
+
         send_row_w = QWidget()
         send_row_l = QHBoxLayout(send_row_w)
         send_row_l.setContentsMargins(0, 0, 0, 0)
         send_row_l.setSpacing(6)
         send_row_l.addWidget(self.send_button, 1)
         send_row_l.addWidget(self._dry_run_btn)
+        send_row_l.addWidget(self._smart_send_btn)
 
         send_area = QFrame()
         sa_layout = QVBoxLayout(send_area)
@@ -1593,11 +1818,11 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(get_stylesheet())
 
     def _has_unchecked_items(self) -> bool:
-        """True если есть хотя бы один непомеченный не-pinned адрес."""
+        """True если есть хотя бы один непомеченный адрес."""
         return any(
             self._addr_list.item(i).checkState() != Qt.CheckState.Checked
             for i in range(self._addr_list.count())
-            if self._addr_list.item(i) and not self._addr_list.item(i).data(_PINNED_ROLE)
+            if self._addr_list.item(i)
         )
 
     def _on_addr_item_changed(self) -> None:
@@ -1609,14 +1834,14 @@ class MainWindow(QMainWindow):
         )
 
     def _toggle_select_all(self) -> None:
-        """Выбирает все адреса или снимает все (кроме закреплённой группы)."""
+        """Выбирает все адреса или снимает все."""
         has_unchecked = self._has_unchecked_items()
         new_state = Qt.CheckState.Checked if has_unchecked else Qt.CheckState.Unchecked
         try:
             self._addr_list.blockSignals(True)
             for i in range(self._addr_list.count()):
                 item = self._addr_list.item(i)
-                if item and not item.data(_PINNED_ROLE):
+                if item:
                     item.setCheckState(new_state)
         finally:
             self._addr_list.blockSignals(False)
@@ -1931,7 +2156,6 @@ class MainWindow(QMainWindow):
         self.text_input.clear()
         self._addr_search.clear()
         self._addr_list.clear()
-        self._insert_pinned_group(checked=True)
         self.preview.set_preview_text("")
         if not self._photo_pinned:
             self.preview.set_image(None)
@@ -1943,18 +2167,28 @@ class MainWindow(QMainWindow):
         self._update_checklist()
         self.save_state()
 
+    def _check_post_reset_btn(self) -> None:
+        self.check_button.setEnabled(True)
+        self.check_button.setText("Проверить адрес")
+
     def check_post(self) -> None:
+        self.check_button.setEnabled(False)
+        self.check_button.setText("⏳ Поиск…")
+        QApplication.processEvents()
         text = self.text_input.toPlainText().strip()
         if not text:
+            self._check_post_reset_btn()
             QMessageBox.warning(self, "Проверка", "Введите текст публикации.")
             return
 
         if not self.excel_path.exists():
+            self._check_post_reset_btn()
             QMessageBox.critical(self, "Ошибка", f"Файл не найден: {self.excel_path}")
             return
 
         parsed_list = extract_all_addresses(text)
         if not parsed_list:
+            self._check_post_reset_btn()
             QMessageBox.warning(self, "Проверка", "Не удалось извлечь адреса из текста.")
             return
 
@@ -1962,7 +2196,15 @@ class MainWindow(QMainWindow):
             self._matcher = ExcelMatcher(self.excel_path)
         matcher = self._matcher
 
-        pinned_checked = self._get_pinned_state()
+        # Сохраняем вручную добавленные адреса — check_post только добавляет из текста
+        manual_entries: list[tuple[MatchResult, Qt.CheckState]] = []
+        for i in range(self._addr_list.count()):
+            itm = self._addr_list.item(i)
+            if itm and itm.data(_MANUAL_ROLE):
+                m = itm.data(Qt.ItemDataRole.UserRole)
+                if m:
+                    manual_entries.append((m, itm.checkState()))
+
         self._addr_list.blockSignals(True)
         seen_ids: set[str] = set()
         found = 0
@@ -1985,13 +2227,23 @@ class MainWindow(QMainWindow):
                 item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
                 item.setCheckState(Qt.CheckState.Checked)
                 item.setData(Qt.ItemDataRole.UserRole, best)
+                item.setData(_MANUAL_ROLE, True)
                 self._addr_list.addItem(item)
                 found += 1
+            for m, state in manual_entries:
+                if m.chat_id in seen_ids:
+                    continue
+                item = QListWidgetItem(m.address)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(state)
+                item.setData(Qt.ItemDataRole.UserRole, m)
+                item.setData(_MANUAL_ROLE, True)
+                self._addr_list.addItem(item)
         finally:
             self._addr_list.blockSignals(False)
-        self._insert_pinned_group(pinned_checked)
         self._update_checklist()
         self.save_state()
+        self._check_post_reset_btn()
 
         if found == 0:
             QMessageBox.warning(self, "Проверка", "Адреса из текста не найдены в Excel.")
@@ -2008,8 +2260,6 @@ class MainWindow(QMainWindow):
 
     def _toggle_addr_item(self, item: "QListWidgetItem") -> None:
         """Двойной клик — переключает галочку адреса."""
-        if item.data(_PINNED_ROLE):
-            return  # закреплённая группа — не трогаем двойным кликом
         new_state = (Qt.CheckState.Unchecked
                      if item.checkState() == Qt.CheckState.Checked
                      else Qt.CheckState.Checked)
@@ -2089,35 +2339,18 @@ class MainWindow(QMainWindow):
         else:
             self.preview.set_platform_avatar("max", _assets_dir())
 
-    # ── Закреплённая основная группа МАХ ──────────────────────────────────
-
-    def _insert_pinned_group(self, checked: bool = True) -> None:
-        """Вставляет закреплённую основную группу МАХ в начало списка адресов."""
-        chat_id = os.getenv("MAX_MAIN_GROUP_ID", "-68787567064560")
-        if not chat_id:
+    def _addr_list_context_menu(self, pos) -> None:
+        """ПКМ на адресе — меню с кнопкой Удалить."""
+        item = self._addr_list.itemAt(pos)
+        if not item:
             return
-        name     = os.getenv("MAX_MAIN_GROUP_NAME", "ЖКС №2 Выборгского")
-        link     = os.getenv("MAX_MAIN_GROUP_LINK", "https://max.ru/gks2vyb")
-        match    = MatchResult(address=name, score=0, chat_link=link, chat_id=chat_id)
-        item     = QListWidgetItem(f"📌  {name}")
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
-        item.setData(Qt.ItemDataRole.UserRole, match)
-        item.setData(_PINNED_ROLE, True)
-        item.setForeground(QColor("#4a6cf7"))
-        self._addr_list.blockSignals(True)
-        try:
-            self._addr_list.insertItem(0, item)
-        finally:
-            self._addr_list.blockSignals(False)
-
-    def _get_pinned_state(self) -> bool:
-        """Возвращает текущее состояние галочки закреплённой группы (по умолчанию True)."""
-        for i in range(self._addr_list.count()):
-            item = self._addr_list.item(i)
-            if item and item.data(_PINNED_ROLE):
-                return item.checkState() == Qt.CheckState.Checked
-        return True
+        self._addr_list.setCurrentItem(item)
+        self._last_addr_row = self._addr_list.row(item)
+        menu = QMenu(self)
+        del_act = QAction("🗑  Удалить адрес", self)
+        del_act.triggered.connect(self._delete_selected_address)
+        menu.addAction(del_act)
+        menu.exec(self._addr_list.mapToGlobal(pos))
 
     def eventFilter(self, obj, event) -> bool:
         from PyQt6.QtCore import QEvent
@@ -2128,16 +2361,18 @@ class MainWindow(QMainWindow):
         return super().eventFilter(obj, event)
 
     def _delete_selected_address(self) -> None:
-        """Удаляет выбранный адрес из списка. Закреплённую группу не трогает."""
-        items = self._addr_list.selectedItems()
-        if not items:
-            item = self._addr_list.currentItem()
-            if item:
-                items = [item]
-        for item in items:
-            if item.data(_PINNED_ROLE):
-                continue
-            self._addr_list.takeItem(self._addr_list.row(item))
+        """Удаляет выбранный адрес из списка."""
+        row = self._last_addr_row
+        cur = self._addr_list.currentItem()
+        if cur is not None:
+            row = self._addr_list.row(cur)
+        if row < 0 or row >= self._addr_list.count():
+            return
+        item = self._addr_list.item(row)
+        if item is None:
+            return
+        self._addr_list.takeItem(row)
+        self._last_addr_row = -1
         self._update_checklist()
         self.save_state()
 
@@ -2774,13 +3009,10 @@ class MainWindow(QMainWindow):
         """Удаляет из списка все автоматически найденные адреса, оставляя ручные."""
         self.text_input.set_address_marks({})
         self._addr_notfound_hint.hide()
-        pinned_checked = self._get_pinned_state()
         manual_entries = []
         for i in range(self._addr_list.count()):
             itm = self._addr_list.item(i)
             if not itm:
-                continue
-            if itm.data(_PINNED_ROLE):
                 continue
             if itm.data(_MANUAL_ROLE):
                 m = itm.data(Qt.ItemDataRole.UserRole)
@@ -2798,7 +3030,6 @@ class MainWindow(QMainWindow):
                     self._addr_list.addItem(item)
             finally:
                 self._addr_list.blockSignals(False)
-            self._insert_pinned_group(pinned_checked)
             self._update_checklist()
             self.save_state()
 
@@ -2851,7 +3082,6 @@ class MainWindow(QMainWindow):
             return
 
         # Собираем вручную добавленные адреса — они НЕ перезаписываются автопарсингом
-        pinned_checked = self._get_pinned_state()
         manual_entries: list[tuple[MatchResult, Qt.CheckState]] = []
         checked_ids: set[str] = set()
         existing_auto_ids: set[str] = set()
@@ -2861,8 +3091,6 @@ class MainWindow(QMainWindow):
                 continue
             m = itm.data(Qt.ItemDataRole.UserRole)
             if not m:
-                continue
-            if itm.data(_PINNED_ROLE):
                 continue
             if itm.data(_MANUAL_ROLE):
                 manual_entries.append((m, itm.checkState()))
@@ -2900,7 +3128,6 @@ class MainWindow(QMainWindow):
                 self._addr_list.addItem(item)
         finally:
             self._addr_list.blockSignals(False)
-        self._insert_pinned_group(pinned_checked)
         self._update_checklist()
         self.save_state()
 
@@ -2937,18 +3164,6 @@ class MainWindow(QMainWindow):
         """Пересоздаёт sender-объекты после обновления токенов в .env."""
         self.max_sender = MaxSender()
         self.vk_sender = VkSender()
-        # Обновляем закреплённую группу, если её настройки изменились
-        pinned_checked = self._get_pinned_state()
-        self._addr_list.blockSignals(True)
-        try:
-            for i in range(self._addr_list.count()):
-                item = self._addr_list.item(i)
-                if item and item.data(_PINNED_ROLE):
-                    self._addr_list.takeItem(i)
-                    break
-        finally:
-            self._addr_list.blockSignals(False)
-        self._insert_pinned_group(pinned_checked)
 
     # ── Шаблоны текста ──────────────────────────────────────────────────────
 
@@ -3103,14 +3318,11 @@ class MainWindow(QMainWindow):
         except RuntimeError:
             return  # Qt уже уничтожил объекты (вызов через atexit при завершении)
         checked_ids = {m.chat_id for m in self._get_checked_matches()}
-        pinned_checked = self._get_pinned_state()
         addresses = []
         for i in range(self._addr_list.count()):
             item = self._addr_list.item(i)
             if not item:
                 continue
-            if item.data(_PINNED_ROLE):
-                continue  # pinned сохраняется отдельно в pinned_checked
             m = item.data(Qt.ItemDataRole.UserRole)
             if m:
                 addresses.append({
@@ -3129,7 +3341,6 @@ class MainWindow(QMainWindow):
             "bg_opacity": self._bg_opacity,
             "addresses": addresses,
             "checked_ids": list(checked_ids),
-            "pinned_checked": pinned_checked,
             "ui_font_family": self._ui_font_family,
             "ui_font_size": self._ui_font_size,
             "last_token_rotation": self._last_token_rotation,
@@ -3181,7 +3392,6 @@ class MainWindow(QMainWindow):
             self.preview.set_image(str(self.image_path))
             self._set_photo_button_name(self.image_path.name)
 
-        pinned_checked = bool(data.get("pinned_checked", True))
         addresses = data.get("addresses", [])
         checked_ids = set(data.get("checked_ids", []))
         self._addr_list.blockSignals(True)
@@ -3204,7 +3414,6 @@ class MainWindow(QMainWindow):
                 self._addr_list.addItem(item)
         finally:
             self._addr_list.blockSignals(False)
-        self._insert_pinned_group(pinned_checked)
 
         self.sync_preview()
         self.text_input.setFocus()
@@ -3490,6 +3699,76 @@ class MainWindow(QMainWindow):
             f"Дата сохранена: {self._last_token_rotation}\n"
             f"Следующее напоминание через {_TOKEN_ROTATION_DAYS} дней."
         )
+
+    # ------------------------------------------------------------------
+    # Умная рассылка
+    # ------------------------------------------------------------------
+
+    def _start_smart_send(self) -> None:
+        text = self.text_input.toPlainText().strip()
+        if not text:
+            QMessageBox.warning(self, "Умная рассылка", "Поле текста пустое.")
+            return
+        if not self.chk_max.isChecked():
+            QMessageBox.warning(self, "Умная рассылка", "Умная рассылка работает только для MAX.")
+            return
+        if self._matcher is None and self.excel_path.exists():
+            self._matcher = ExcelMatcher(self.excel_path)
+        if self._matcher is None:
+            QMessageBox.warning(self, "Умная рассылка", "Реестр адресов не загружен.")
+            return
+
+        blocks, footer = _parse_smart_blocks(text, self._matcher)
+        if not blocks:
+            QMessageBox.warning(
+                self,
+                "Умная рассылка",
+                "Не удалось найти блоки с адресами.\n"
+                "Проверьте что блоки разделены пустой строкой.",
+            )
+            return
+
+        if footer:
+            for b in blocks:
+                b.text = b.text + "\n\n" + footer
+
+        dlg = _SmartSendPreviewDialog(blocks, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        confirmed_blocks = dlg.accepted_blocks()
+        if not confirmed_blocks:
+            return
+
+        chat_ids_per_block = [
+            (b.text, [m.chat_id for m in b.matches if m.chat_id])
+            for b in confirmed_blocks
+        ]
+
+        worker = _SmartSendWorker(
+            self.max_sender,
+            chat_ids_per_block,
+            self.image_path,
+            send_max=True,
+            parent=self,
+        )
+        worker.progress.connect(
+            lambda msg: self._progress_label.setText(msg)
+            if hasattr(self, "_progress_label")
+            else None
+        )
+        worker.all_done.connect(self._on_smart_send_done)
+        worker.finished.connect(worker.deleteLater)
+        self._smart_send_btn.setEnabled(False)
+        self._smart_send_btn.setText("⏳ Рассылка…")
+        worker.start()
+        self._smart_worker = worker
+
+    def _on_smart_send_done(self, success: bool, summary: str) -> None:
+        self._smart_send_btn.setEnabled(True)
+        self._smart_send_btn.setText("🔀 Умная")
+        icon = "✅" if success else "⚠️"
+        QMessageBox.information(self, "Умная рассылка завершена", f"{icon} {summary}")
 
 
 def _backup_address_file() -> None:
