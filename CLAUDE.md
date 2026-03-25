@@ -156,6 +156,20 @@ PyQt6 desktop-приложение для отправки объявлений 
 - VK API 5.199: `photos.getUploadServer` + upload → **photos.save НЕ нужен** (сохраняется автоматически); `photos.move` тоже не работает для wall photos
 - Удаление фото/документов: `photos.delete(owner_id=-GROUP_ID, photo_id)` / `docs.delete(owner_id=-GROUP_ID, doc_id)` — user token
 - `}}` в конце non-f-строк конкатенированных с f-строками = **двойная скобка** (CSS ошибка) — использовать только `}` в обычных строках
+- `_VkWallFetchWorker` + `_VkPostsPopup` — кнопка «📰 ВК посты» в заголовке «Ввод данных»; попап-карточки с `Qt.WindowType.Popup`; `set_dark(dark)` обновляет тему
+- `_PasteConfirmDialog` — диалог подтверждения после вставки адресов: ✓/✗ с чекбоксами, кнопка «Добавить отмеченные»
+- `_delete_selected_address` + `eventFilter` на `_addr_list` — кнопка 🗑 и Delete/Backspace удаляют выбранный адрес (pinned нельзя)
+- `_paste_addresses` и `_add_address_manually`: если `chat_id` пустой — сначала `extract_all_addresses` + `find_matches`, fallback на `search`
+- `_on_addr_check_done`: авто-найденные адреса сразу `_MANUAL_ROLE=True` — остаются в списке при редактировании текста
+- `excel_matcher.find_matches`: `street_words = parsed_address.street.lower().split()` — фикс регистра (street приходит с заглавной, индекс строчный)
+- `address_parser.py`: «аллея» добавлена как тип улицы (`"аллея": "ал"` в `normalize_text`, `ал` в `_STREET_TYPES`) — «Придорожная аллея» теперь распознаётся
+- `_SmartBlock` + `_parse_smart_blocks(text, matcher)` → `(blocks, header, footer)` — разбивает текст по пустым строкам; текст до первого адресного блока = header, после последнего = footer; оба добавляются к каждому блоку
+- `_SmartSendPreviewDialog` — диалог предпросмотра умной рассылки с чекбоксами блоков и превью текста (300 символов)
+- `_SmartSendWorker` — фоновая отправка блоков по chat_id; кнопка «🔀 Умная» в строке отправки
+- Защита `max_address.xlsx` через `icacls`: `SecureExcelFile()` в `MAX POST.iss` + строка в `build_MAX POST.bat` — файл доступен только на чтение
+- `_last_addr_row: int` вместо `_last_addr_item` — хранит индекс строки, а не ссылку на Qt-объект (избегает RuntimeError при пересборке списка)
+- `_addr_list_context_menu()` — ПКМ на адресе показывает «Удалить адрес»; `setContextMenuPolicy(CustomContextMenu)`
+- Закреплённый адрес «ЖКС №2 Выборгского» полностью удалён из `main.py` (вся система `_PINNED_ROLE` / `_insert_pinned_group`)
 
 ### QR Генератор (`app/my_qr_app/main.py`) — сделано в 1.2.57
 - Галочка «Показывать наименование на карточке» под `inp_org` — `chk_show_org`, состояние в QSettings (`show_org`)
