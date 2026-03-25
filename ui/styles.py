@@ -2,8 +2,8 @@
 
 
 _DARK_STYLESHEET = """
-            QSplitter::handle { background: #2d2d42; }
-            QSplitter::handle:hover { background: #4a6cf7; }
+            QSplitter::handle { background: #6d3aad; }
+            QSplitter::handle:hover { background: #8b5cf6; }
             #maxPosterContent { background: #1e1e2e; }
             QGroupBox {
                 font-size: 15px;
@@ -127,6 +127,14 @@ _DARK_STYLESHEET = """
                 color: #a07830;
                 background: #2a2010;
                 border: 1px solid #5a4010;
+                border-radius: 5px;
+                padding: 3px 10px;
+            }
+            #addrNotFoundHint {
+                font-size: 11px;
+                color: #c49a3a;
+                background: #2a1e08;
+                border: 1px solid #6b4a10;
                 border-radius: 5px;
                 padding: 3px 10px;
             }
@@ -502,8 +510,8 @@ def get_dark_stylesheet() -> str:
 
 
 _LIGHT_STYLESHEET = """
-            QSplitter::handle { background: #dde1e7; }
-            QSplitter::handle:hover { background: #2563eb; }
+            QSplitter::handle { background: #7c3aed; }
+            QSplitter::handle:hover { background: #a855f7; }
             #maxPosterContent { background: #f3f4f6; }
             QGroupBox {
                 font-size: 15px;
@@ -622,6 +630,14 @@ _LIGHT_STYLESHEET = """
                 color: #92600a;
                 background: #fef9ec;
                 border: 1px solid #fcd34d;
+                border-radius: 5px;
+                padding: 3px 10px;
+            }
+            #addrNotFoundHint {
+                font-size: 11px;
+                color: #92600a;
+                background: #fff8e6;
+                border: 1px solid #f59e0b;
                 border-radius: 5px;
                 padding: 3px 10px;
             }

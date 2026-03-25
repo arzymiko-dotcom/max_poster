@@ -37,7 +37,7 @@ from PyQt6.QtWidgets import (
 from constants import VK_MAX_ATTACHMENTS
 from vk_utils import vk_api_call
 from env_utils import get_env_path, load_env_safe
-from ui.widgets import SpellCheckTextEdit, _GripSplitter
+from ui.widgets import SpellCheckTextEdit, _GripSplitter, _RuLabel
 
 _log = logging.getLogger(__name__)
 
@@ -730,7 +730,7 @@ class _MsgBubble(QWidget):
         # Текст
         text = msg.get("text", "").strip()
         if text:
-            txt_lbl = QLabel(text)
+            txt_lbl = _RuLabel(text)
             txt_lbl.setWordWrap(True)
             txt_lbl.setTextInteractionFlags(
                 Qt.TextInteractionFlag.TextSelectableByMouse

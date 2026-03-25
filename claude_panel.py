@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 from env_utils import get_env_path, load_env_safe
-from ui.widgets import _GripSplitter
+from ui.widgets import _GripSplitter, _RuLabel
 
 _log = logging.getLogger(__name__)
 
@@ -122,7 +122,7 @@ class _Bubble(QWidget):
         outer.setContentsMargins(10, 3, 10, 3)
         outer.setSpacing(6)
 
-        self._lbl = QLabel(text)
+        self._lbl = _RuLabel(text)
         self._lbl.setWordWrap(True)
         self._lbl.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse

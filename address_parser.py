@@ -81,6 +81,9 @@ _PATTERN_NO_TYPE = re.compile(
     flags=re.IGNORECASE | re.UNICODE,
 )
 
+# Паттерн для извлечения номера дома из «голого» числа в конце строки
+_PATTERN_HOUSE_ONLY = re.compile(r"^[\da-zA-Zа-яА-ЯёЁ/]+")
+
 # Стоп-слова — не могут быть названием улицы
 _STOP_WORDS = {
     "с", "до", "по", "от", "на", "в", "из", "за", "при", "под", "над",
@@ -179,7 +182,7 @@ def extract_all_addresses(text: str) -> list[ParsedAddress]:
                     results.append(addr)
             elif first_street and re.match(r"^\d", part):
                 # Только номер дома после первого адреса на этой строке
-                m = re.match(r"^[\da-zA-Zа-яА-ЯёЁ/]+", part)
+                m = _PATTERN_HOUSE_ONLY.match(part)
                 if m:
                     addr = ParsedAddress(
                         street=first_street,

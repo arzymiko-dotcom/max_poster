@@ -73,17 +73,18 @@ QPushButton#sideBtn {
     padding-left: 14px;
 }
 QPushButton#expandBtn {
-    border: none;
     background: transparent;
-    color: #555577;
-    min-width: 0px;
-    min-height: 0px;
+    border: none;
+    color: #888aaa;
+    min-width: 20px;
+    max-width: 20px;
+    min-height: 36px;
+    max-height: 36px;
     text-align: center;
     padding: 0px;
 }
 QPushButton#expandBtn:hover {
-    background: rgba(255, 255, 255, 0.06);
-    color: #9999bb;
+    color: #ccccee;
 }
 QPushButton#sideBtn:checked {
     background: rgba(74, 108, 247, 0.18);
@@ -566,14 +567,10 @@ class _SideBar(QFrame):
         # Кнопка развернуть/свернуть — по центру между навигацией и нижними кнопками
         self.btn_expand = QPushButton()
         self.btn_expand.setObjectName("expandBtn")
-        self.btn_expand.setFixedHeight(32)
-        self._exp_icon  = QIcon(_assets("right.ico"))
-        self._coll_icon = QIcon(_assets("left.ico"))
         self._apply_expand_icon(expanded=False)
         self.btn_expand.setToolTip("Развернуть панель")
         self.btn_expand.clicked.connect(self._toggle_expand)
-        layout.addStretch(1)
-        layout.addWidget(self.btn_expand)
+        # btn_expand не добавляется в layout — его позиционирует _BodyWidget
         layout.addStretch(1)
 
         # Кнопка changelog
@@ -613,13 +610,20 @@ class _SideBar(QFrame):
 
     # ── Иконка кнопки expand/collapse ──────────────────────────
     def _apply_expand_icon(self, expanded: bool) -> None:
-        icon = self._coll_icon if expanded else self._exp_icon
-        if not icon.isNull():
-            self.btn_expand.setIcon(icon)
-            self.btn_expand.setIconSize(QSize(20, 20))
-            self.btn_expand.setText("")
-        else:
-            self.btn_expand.setText("‹" if expanded else "›")
+        from PyQt6.QtGui import QPixmap, QPainter, QFont, QColor, QTransform
+        from PyQt6.QtCore import Qt
+        px = QPixmap(20, 24)
+        px.fill(Qt.GlobalColor.transparent)
+        p = QPainter(px)
+        p.setFont(QFont("Segoe UI Symbol", 15))
+        p.setPen(QColor("#a855f7"))
+        p.drawText(px.rect(), Qt.AlignmentFlag.AlignCenter, "\u27a7")
+        p.end()
+        if expanded:
+            px = px.transformed(QTransform().scale(-1, 1))
+        self.btn_expand.setIcon(QIcon(px))
+        self.btn_expand.setIconSize(QSize(20, 24))
+        self.btn_expand.setText("")
 
     # ── Переключить expand/collapse по клику ───────────────────
     def _toggle_expand(self) -> None:
@@ -687,6 +691,39 @@ class _FadeStack(QStackedWidget):
         if index == self.currentIndex():
             return
         self.setCurrentIndex(index)
+
+
+# ──────────────────────────────────────────────────────────────
+#  Контейнер сайдбар+стек; позиционирует кнопку expand на границе
+# ──────────────────────────────────────────────────────────────
+class _BodyWidget(QWidget):
+    """shellBody: кнопка expand плавает на правом краю сайдбара, по центру высоты."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._eb: QPushButton | None = None
+        self._sb: QFrame | None = None
+
+    def init_expand(self, sidebar: QFrame, btn: QPushButton) -> None:
+        self._sb = sidebar
+        self._eb = btn
+        btn.setParent(self)
+        btn.show()
+        btn.raise_()
+        self._repos()
+
+    def resizeEvent(self, ev) -> None:  # type: ignore[override]
+        super().resizeEvent(ev)
+        self._repos()
+
+    def _repos(self) -> None:
+        if not self._eb or not self._sb:
+            return
+        bw = self._eb.width() or 20
+        bh = self._eb.height() or 36
+        sw = self._sb.width()
+        self._eb.move(sw - bw // 2, (self.height() - bh) // 2)
+        self._eb.raise_()
 
 
 # ──────────────────────────────────────────────────────────────
@@ -776,13 +813,15 @@ class ShellWindow(QMainWindow):
 
         # ── Компоновка ──────────────────────────────────────────
         self._sidebar = _SideBar()
-        body = QWidget()
+        body = _BodyWidget()
         body.setObjectName("shellBody")
         bl = QHBoxLayout(body)
         bl.setContentsMargins(0, 0, 0, 0)
         bl.setSpacing(0)
         bl.addWidget(self._sidebar)
         bl.addWidget(self._stack)
+        body.init_expand(self._sidebar, self._sidebar.btn_expand)
+        self._sidebar._width_anim.valueChanged.connect(lambda _: body._repos())
         self.setCentralWidget(body)
 
         # ── Сигналы ─────────────────────────────────────────────

@@ -82,6 +82,7 @@ from constants import (
     SAVE_DEBOUNCE_MS,
     UPDATE_CHECK_DELAY_MS,
     TEXT_CHAR_LIMIT,
+    VK_WALL_TEXT_LIMIT,
 )
 
 _log = logging.getLogger(__name__)
@@ -282,7 +283,7 @@ class SendWorker(QThread):
             lines.append(f"ВК: {r.message}")
             if not r.success:
                 success = False
-            elif r.post_id:
+            elif getattr(r, "post_id", None):
                 self.vk_post_id = r.post_id
 
         self.result_ready.emit(success, "\n".join(lines))
@@ -670,12 +671,17 @@ class MainWindow(QMainWindow):
         self._char_counter = QLabel("0/4000")
         self._char_counter.setObjectName("charCounter")
 
+        self._vk_char_counter = QLabel()
+        self._vk_char_counter.setObjectName("charCounter")
+        self._vk_char_counter.hide()
+
         right_bar = QWidget()
         rb_layout = QVBoxLayout(right_bar)
         rb_layout.setContentsMargins(0, 2, 2, 2)
         rb_layout.setSpacing(2)
         rb_layout.addWidget(self._emoji_btn, alignment=Qt.AlignmentFlag.AlignRight)
         rb_layout.addWidget(self._char_counter, alignment=Qt.AlignmentFlag.AlignRight)
+        rb_layout.addWidget(self._vk_char_counter, alignment=Qt.AlignmentFlag.AlignRight)
 
         bottom_bar = QWidget()
         bb_layout = QHBoxLayout(bottom_bar)
@@ -693,6 +699,12 @@ class MainWindow(QMainWindow):
         tc_layout.addWidget(bottom_bar)
 
         text_layout.addWidget(text_container, 1)
+
+        self._addr_notfound_hint = QLabel("⚠ Строки с оранжевым фоном — адрес не найден в базе")
+        self._addr_notfound_hint.setObjectName("addrNotFoundHint")
+        self._addr_notfound_hint.setWordWrap(True)
+        self._addr_notfound_hint.hide()
+        text_layout.addWidget(self._addr_notfound_hint)
 
         self._photo_thumb = QLabel()
         self._photo_thumb.setObjectName("photoThumb")
@@ -777,6 +789,7 @@ class MainWindow(QMainWindow):
         self._addr_search.setObjectName("addrSearch")
         self._addr_search.setFixedHeight(26)
         self._addr_search.textChanged.connect(self._on_addr_search_changed)
+        self._addr_search.returnPressed.connect(self._addr_search_accept_first)
         if self._matcher is not None:
             self._addr_search.show()
         else:
@@ -788,6 +801,7 @@ class MainWindow(QMainWindow):
         self._addr_search_results.setMaximumHeight(180)
         self._addr_search_results.hide()
         self._addr_search_results.itemClicked.connect(self._on_addr_search_item_clicked)
+        self._addr_search_results.itemActivated.connect(self._on_addr_search_item_clicked)
         ctrl_layout.addWidget(self._addr_search_results)
 
         self._addr_search_timer = QTimer(self)
@@ -1022,6 +1036,7 @@ class MainWindow(QMainWindow):
         self.chk_vk.stateChanged.connect(self._update_checklist)
         self.chk_max.stateChanged.connect(self._sync_preview_avatar)
         self.chk_vk.stateChanged.connect(self._sync_preview_avatar)
+        self.chk_vk.stateChanged.connect(lambda _: self.sync_preview())
         self.chk_max.stateChanged.connect(lambda _: self._update_sched_hint())
         self.chk_vk.stateChanged.connect(lambda _: self._update_sched_hint())
 
@@ -1437,6 +1452,19 @@ class MainWindow(QMainWindow):
             self._char_counter.setStyleSheet("color: #e07800; font-weight: 600;")
         else:
             self._char_counter.setStyleSheet("color: #888;")
+
+        if self.chk_vk.isChecked():
+            self._vk_char_counter.setText(f"ВК {count}/{VK_WALL_TEXT_LIMIT}")
+            if count > VK_WALL_TEXT_LIMIT:
+                self._vk_char_counter.setStyleSheet("color: #cc0000; font-weight: 700;")
+            elif count > VK_WALL_TEXT_LIMIT * 0.9:
+                self._vk_char_counter.setStyleSheet("color: #e07800; font-weight: 600;")
+            else:
+                self._vk_char_counter.setStyleSheet("color: #888;")
+            self._vk_char_counter.show()
+        else:
+            self._vk_char_counter.hide()
+
         self._update_checklist()
         self.save_state()
         self._parse_timer.start()
@@ -1613,6 +1641,11 @@ class MainWindow(QMainWindow):
             item.setData(Qt.ItemDataRole.UserRole, match)
             self._addr_search_results.addItem(item)
         self._addr_search_results.show()
+
+    def _addr_search_accept_first(self) -> None:
+        """Enter в поле поиска — добавляет первый результат без клика мышью."""
+        if self._addr_search_results.count() > 0:
+            self._on_addr_search_item_clicked(self._addr_search_results.item(0))
 
     def _on_addr_search_item_clicked(self, item: QListWidgetItem) -> None:
         """Добавляет выбранный из поиска адрес в список рассылки."""
@@ -2415,6 +2448,7 @@ class MainWindow(QMainWindow):
     def _clear_auto_addr_items(self) -> None:
         """Удаляет из списка все автоматически найденные адреса, оставляя ручные."""
         self.text_input.set_address_marks({})
+        self._addr_notfound_hint.hide()
         pinned_checked = self._get_pinned_state()
         manual_entries = []
         for i in range(self._addr_list.count()):
@@ -2474,6 +2508,18 @@ class MainWindow(QMainWindow):
         self._addr_check_worker = None
 
         self.text_input.set_address_marks(line_marks)
+
+        # Показываем подсказку если есть строки с ненайденными адресами (оранжевый фон)
+        has_notfound = any(not found for found in line_marks.values())
+        if has_notfound:
+            notfound_count = sum(1 for found in line_marks.values() if not found)
+            self._addr_notfound_hint.setText(
+                f"⚠ {notfound_count} {'строка' if notfound_count == 1 else 'строки' if notfound_count < 5 else 'строк'}"
+                " с оранжевым фоном — адрес не найден в базе"
+            )
+            self._addr_notfound_hint.show()
+        else:
+            self._addr_notfound_hint.hide()
 
         if not new_items:
             self._clear_auto_addr_items()

@@ -1,29 +1,36 @@
 """Базовые виджеты: LineNumberedEdit, SpellCheckTextEdit, _NumberedItemDelegate, _GripSplitter."""
 
 import re
+import threading
 
 from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import (
     QColor, QPainter,
     QSyntaxHighlighter, QTextCharFormat,
 )
-from PyQt6.QtWidgets import QMenu, QPlainTextEdit, QSplitter, QSplitterHandle, QStyledItemDelegate, QTextEdit
+from PyQt6.QtWidgets import QLabel, QMenu, QPlainTextEdit, QSplitter, QSplitterHandle, QStyledItemDelegate, QTextEdit
 
 
-# ── Проверка орфографии через pymorphy2 (lazy singleton) ──────
+# ── Проверка орфографии через pymorphy3 (фоновая загрузка) ──────
 _morph_analyzer = None
 
 
 def _get_morph():
-    """Возвращает MorphAnalyzer или None если pymorphy2 не установлен."""
+    """Возвращает MorphAnalyzer или None (None пока фоновая загрузка не завершилась)."""
+    return _morph_analyzer if _morph_analyzer and _morph_analyzer is not False else None
+
+
+def _load_morph_bg():
+    """Загружает pymorphy3 в фоновом потоке — не блокирует главный поток."""
     global _morph_analyzer
-    if _morph_analyzer is None:
-        try:
-            import pymorphy3
-            _morph_analyzer = pymorphy3.MorphAnalyzer()
-        except Exception:
-            _morph_analyzer = False
-    return _morph_analyzer or None
+    try:
+        import pymorphy3
+        _morph_analyzer = pymorphy3.MorphAnalyzer()
+    except Exception:
+        _morph_analyzer = False
+
+
+threading.Thread(target=_load_morph_bg, daemon=True).start()
 
 
 _word_known_cache: dict[str, bool] = {}
@@ -50,7 +57,6 @@ class _CombinedHighlighter(QSyntaxHighlighter):
         self._addr_notfound_fmt = QTextCharFormat()
         self._addr_notfound_fmt.setBackground(QColor("#ffeeba"))  # светло-оранжевый
         self._line_marks: dict[int, bool] = {}  # line_idx → True=найден, False=не найден
-        self._morph = _get_morph()  # кэшируем один раз при создании хайлайтера
 
     def set_line_marks(self, marks: dict[int, bool]) -> None:
         """Обновить подсветку строк. True=найден (зелёный), False=не найден (оранжевый)."""
@@ -64,7 +70,7 @@ class _CombinedHighlighter(QSyntaxHighlighter):
             bg_fmt = self._addr_found_fmt if self._line_marks[line_idx] else self._addr_notfound_fmt
             self.setFormat(0, len(text), bg_fmt)
         # 2. Орфография поверх фона (сохраняем цвет фона)
-        morph = self._morph
+        morph = _get_morph()  # None пока грузится в фоне, быстро после загрузки
         if morph:
             for m in self._WORD_RE.finditer(text):
                 if not _is_known(morph, m.group().lower()):
@@ -216,13 +222,28 @@ class _GripHandle(QSplitterHandle):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(150, 150, 170, 160))
+        p.setBrush(QColor(0, 0, 0, 180))
         cx = self.width() // 2
         cy = self.height() // 2
         for i in (-1, 0, 1):
             p.drawEllipse(cx - self._DOT_R, cy + i * self._SPACING - self._DOT_R,
                           self._DOT_R * 2, self._DOT_R * 2)
         p.end()
+
+
+class _RuLabel(QLabel):
+    """QLabel с русским контекстным меню (для выделяемых текстовых пузырей)."""
+
+    def contextMenuEvent(self, event) -> None:
+        menu = QMenu(self)
+        has_sel = bool(self.selectedText())
+        copy = menu.addAction("Копировать")
+        copy.setEnabled(has_sel)
+        copy.triggered.connect(self.copy)
+        menu.addSeparator()
+        select_all = menu.addAction("Выделить всё")
+        select_all.triggered.connect(lambda: self.setSelection(0, len(self.text())))
+        menu.exec(event.globalPos())
 
 
 class _GripSplitter(QSplitter):

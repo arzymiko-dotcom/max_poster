@@ -8,7 +8,7 @@ app.py — точка входа unified MAX POST shell.
 import signal
 import sys
 
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QLibraryInfo, QLocale, QTimer, QTranslator
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication
 
@@ -63,6 +63,13 @@ def main() -> None:
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+
+    # Переводим стандартные Qt-меню и диалоги на русский (QLineEdit, QFileDialog и т.д.)
+    _tr = QTranslator(app)
+    _tr_path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    if _tr.load(QLocale(QLocale.Language.Russian, QLocale.Country.Russia),
+                "qtbase", "_", _tr_path):
+        app.installTranslator(_tr)
 
     # Проверяем: уже запущен?
     if _try_activate_existing():
