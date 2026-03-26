@@ -13,6 +13,7 @@ import hashlib
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 from urllib.parse import urlparse
@@ -102,6 +103,8 @@ class DownloadWorker(QThread):
         super().__init__()
         self.url = url
         self.expected_sha256 = expected_sha256.strip().lower()
+        self._dest: Path | None = None
+        self._zip_path: Path | None = None
 
     def run(self) -> None:
         dest: Path | None = None
@@ -120,6 +123,7 @@ class DownloadWorker(QThread):
             if not filename.lower().endswith('.exe'):
                 filename += ".exe"
             dest = Path(tempfile.gettempdir()) / filename
+            self._dest = dest
 
             # Скачиваем с прогрессом
             resp = requests.get(download_url, stream=True, timeout=60)
@@ -140,7 +144,8 @@ class DownloadWorker(QThread):
 
             # Проверяем, не является ли скачанный файл ZIP-архивом (Яндекс.Диск иногда отдаёт zip)
             if zipfile.is_zipfile(dest):
-                zip_path = dest  # запомним для очистки в finally
+                zip_path = dest
+                self._zip_path = zip_path
                 with zipfile.ZipFile(dest, 'r') as z:
                     # Ищем внутри архива .exe файл
                     exe_names = [n for n in z.namelist() if n.lower().endswith('.exe')]
@@ -229,6 +234,14 @@ class DownloadDialog(QDialog):
             self._worker.quit()
             if not self._worker.wait(5000):
                 self._worker.terminate()
+                self._worker.wait(1000)
+                # terminate() обрывает поток — чистим temp-файлы вручную
+                dest = getattr(self._worker, "_dest", None)
+                zip_path = getattr(self._worker, "_zip_path", None)
+                if zip_path is not None:
+                    Path(zip_path).unlink(missing_ok=True)
+                if dest is not None:
+                    Path(dest).unlink(missing_ok=True)
         self.reject()
 
     def _on_finished(self, path: str) -> None:
@@ -267,6 +280,168 @@ class _CheckWorker(QThread):
         except Exception:
             return
         self.result_ready.emit(local, remote_ver, remote_sha256 or "")
+
+
+def run_silent_update() -> None:
+    """Тихая проверка и установка обновления без GUI.
+    Запускается Windows Task Scheduler при входе пользователя.
+    Логирует в %APPDATA%\\MAX POST\\update.log."""
+    import logging
+    import logging.handlers
+    import os
+
+    log_dir = Path(os.environ.get("APPDATA", Path.home())) / "MAX POST"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "update.log"
+
+    # Ротация: макс 512 КБ, 2 бэкапа
+    handler = logging.handlers.RotatingFileHandler(
+        str(log_path), maxBytes=512 * 1024, backupCount=2, encoding="utf-8"
+    )
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    log = logging.getLogger("silent_updater")
+    log.setLevel(logging.INFO)
+    if not log.handlers:
+        log.addHandler(handler)
+
+    # Защита от параллельного запуска
+    lock_path = log_dir / "update.lock"
+    try:
+        # Если lock старше 2 часов — предыдущий процесс завис/упал, убираем
+        if lock_path.exists():
+            age = time.time() - lock_path.stat().st_mtime
+            if age > 7200:
+                lock_path.unlink(missing_ok=True)
+                log.info("Lock-файл устарел (%.0f мин) — удалён", age / 60)
+            else:
+                log.info("Уже запущен другой экземпляр silent_updater — выход")
+                return
+        lock_path.touch()
+    except OSError as e:
+        log.warning("Не удалось создать lock-файл: %s", e)
+
+    try:
+        # Проверяем: запущен ли уже MAX POST — если да, откладываем обновление
+        try:
+            check = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq MAX POST.exe", "/NH"],
+                capture_output=True, text=True, timeout=5,
+            )
+            if "MAX POST.exe" in check.stdout:
+                log.info("MAX POST запущен — обновление отложено до следующего входа")
+                return
+        except Exception:
+            pass  # tasklist недоступен — продолжаем
+
+        info = _fetch_remote_info()
+        if info is None:
+            log.info("Нет доступа к GitHub — пропуск")
+            return
+
+        remote_ver, sha256 = info
+        local_ver = _local_version()
+
+        try:
+            if Version(remote_ver) <= Version(local_ver):
+                log.info("Версия актуальна: %s", local_ver)
+                return
+        except Exception:
+            return
+
+        log.info("Доступно обновление: %s → %s", local_ver, remote_ver)
+
+        dest = _download_installer_sync(sha256, log)
+        if dest is None:
+            return
+
+        log.info("Запуск установщика тихо: %s", dest)
+        subprocess.Popen([
+            str(dest),
+            "/verysilent", "/norestart", "/closeapplications",
+        ])
+        log.info("Установщик запущен — обновление применится при следующем запуске программы")
+
+        # Записываем флаг — при следующем запуске покажем balloon
+        try:
+            import json as _json
+            flag_path = log_dir / "update_applied.json"
+            flag_path.write_text(
+                _json.dumps({"from": local_ver, "to": remote_ver}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    except Exception as exc:
+        log.error("Ошибка silent update: %s", exc, exc_info=True)
+    finally:
+        lock_path.unlink(missing_ok=True)
+
+
+def _download_installer_sync(expected_sha256: str | None, log) -> "Path | None":
+    """Скачивает установщик синхронно (без QThread). Возвращает путь или None."""
+    dest: Path | None = None
+    zip_path: Path | None = None
+    try:
+        if "disk.yandex.ru" in YADISK_PUBLIC_URL:
+            download_url = _get_yadisk_direct_link(YADISK_PUBLIC_URL)
+        else:
+            download_url = YADISK_PUBLIC_URL
+
+        parsed = urlparse(download_url)
+        filename = Path(parsed.path).name or "update_setup.exe"
+        if not filename.lower().endswith(".exe"):
+            filename += ".exe"
+        dest = Path(tempfile.gettempdir()) / filename
+
+        log.info("Скачивание: %s", download_url)
+        resp = requests.get(download_url, stream=True, timeout=120)
+        resp.raise_for_status()
+
+        with open(dest, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=65536):
+                if chunk:
+                    f.write(chunk)
+
+        if zipfile.is_zipfile(dest):
+            zip_path = dest
+            with zipfile.ZipFile(dest, "r") as z:
+                exe_names = [n for n in z.namelist() if n.lower().endswith(".exe")]
+                if not exe_names:
+                    raise RuntimeError("ZIP не содержит EXE")
+                exe_path = Path(tempfile.gettempdir()) / Path(exe_names[0]).name
+                with open(exe_path, "wb") as out:
+                    out.write(z.read(exe_names[0]))
+            if exe_path.exists() and exe_path.stat().st_size > 0:
+                zip_path.unlink(missing_ok=True)
+                zip_path = None
+                dest = exe_path
+            else:
+                raise RuntimeError("Извлечённый EXE пустой")
+
+        with open(dest, "rb") as f:
+            if f.read(2) != b"MZ":
+                raise RuntimeError("Скачанный файл не является Windows EXE")
+
+        if expected_sha256:
+            actual = hashlib.sha256(dest.read_bytes()).hexdigest().lower()
+            if actual != expected_sha256:
+                raise RuntimeError(
+                    f"SHA256 не совпадает — файл повреждён.\n"
+                    f"Ожидается: {expected_sha256}\nПолучено: {actual}"
+                )
+        else:
+            log.warning("SHA256 не задан — целостность не проверена")
+
+        return dest
+
+    except Exception as exc:
+        log.error("Ошибка скачивания: %s", exc)
+        if zip_path is not None:
+            zip_path.unlink(missing_ok=True)
+        if dest is not None:
+            dest.unlink(missing_ok=True)
+        return None
 
 
 def check_for_updates(parent=None, silent: bool = True) -> None:

@@ -32,11 +32,21 @@ def normalize_text(value: str) -> str:
         "наб.": "наб",
         "аллея": "ал",
         "ал.": "ал",
+        "площадь": "пл",
+        "пл.": "пл",
+        "линия": "лин",
+        "лин.": "лин",
+        "тупик": "туп",
+        "туп.": "туп",
+        "проезд": "пр-зд",
+        "пр-зд.": "пр-зд",
         "дом": "д",
         "д.": "д",
         "корпус": "корп",
         "корп.": "корп",
         "к.": "корп",
+        "строение": "стр",
+        "стр.": "стр",
         "литера": "лит",
         "литер": "лит",
         "лит.": "лит",
@@ -45,16 +55,28 @@ def normalize_text(value: str) -> str:
     for old, new in replacements.items():
         text = text.replace(old, new)
 
+    # Убираем географические квалификаторы районов СПб: "В.О.", "В. О." и т.п.
+    # Удаляем полностью — "13-я линия В.О., д. 28" → "13я лин д 28" → street="13я"
+    text = re.sub(r"\bв\.?\s*о\.?\b", "", text, flags=re.IGNORECASE)
+
+    # Ординальный суффикс: "1-я", "2-й", "3-е" → "1я", "2й", "3е" (до спецсимволов)
+    text = re.sub(r"(\d)-([а-яa-z])", r"\1\2", text)
+    # Дефис между цифрами → слэш: "32-1" → "32/1" (до удаления спецсимволов)
+    text = re.sub(r"(\d)-(\d)", r"\1/\2", text)
+
     text = re.sub(r"[^а-яёa-z0-9\s/]", " ", text, flags=re.IGNORECASE | re.UNICODE)
+
+    # Слитное написание "корп1", "стр2", "лит3" после удаления точки → добавляем пробел
+    text = re.sub(r"\b(корп|стр|лит)(\d)", r"\1 \2", text)
     text = re.sub(r"\s+", " ", text, flags=re.UNICODE).strip()
     return text
 
 
 # Паттерн с префиксом + номер дома: "ул есенина 22", "пр просвещения д 5"
-_STREET_TYPES = r"(?:ул|пр|пер|бул|ш|наб|ал)"
+_STREET_TYPES = r"(?:ул|пр|пер|бул|ш|наб|ал|пл|лин|туп|пр-зд)"
 
-# Группа номера дома: "4", "32/1", "4 корп 1" (корпус захватывается для различения адресов)
-_HOUSE_GROUP = r"(\d+[а-яa-z]?(?:/\d+[а-яa-z]?)?(?:\s+корп\s+\d+[а-яa-z]?)?)"
+# Группа номера дома: "4", "32/1", "4 корп 1", "5 стр 2", "4 лит а"
+_HOUSE_GROUP = r"(\d+[а-яa-z]?(?:/\d+[а-яa-z]?)?(?:\s+(?:корп|стр|лит)\s+\d*[а-яa-z]*\d*)?)"
 
 _PATTERN_WITH_TYPE = re.compile(
     r"\b(?:" + _STREET_TYPES + r")\s+"
@@ -71,8 +93,9 @@ _PATTERN_WITH_TYPE_NO_NUM = re.compile(
 )
 
 # Паттерн с суффиксом типа + номер: "Сиреневый б-р, 9" → "сиреневый бул 9"
+# Допускает ординальные префиксы: "1я линия", "2й пер"
 _PATTERN_TYPE_SUFFIX = re.compile(
-    r"\b([а-яa-z\-]+(?:\s+[а-яa-z\-]+){0,3}?)\s+(?:" + _STREET_TYPES + r")\s+"
+    r"\b([\dа-яa-z\-]+(?:\s+[а-яa-z\-]+){0,3}?)\s+(?:" + _STREET_TYPES + r")\s+"
     r"(?:д\s+)?" + _HOUSE_GROUP + r"\b",
     flags=re.IGNORECASE | re.UNICODE,
 )
@@ -96,9 +119,19 @@ _STOP_WORDS = {
 }
 
 
+def _all_short(words: list[str]) -> bool:
+    """Возвращает True если все слова ≤ 2 символов И нет ординалов (1я, 2й и т.п.).
+    Ординальные слова короткие, но валидны как часть названия ('1-я линия' → '1я лин')."""
+    if not words:
+        return True
+    if any(w and w[0].isdigit() for w in words):
+        return False
+    return all(len(w) <= 2 for w in words)
+
+
 def _normalize_house(raw: str) -> str:
-    """Нормализует номер дома: '4 корп 1' → '4/1'."""
-    return re.sub(r"\s+корп\s+", "/", raw.strip())
+    """Нормализует номер дома: '4 корп 1' → '4/1', '5 лит а' → '5/а', '5 стр 2' → '5/2'."""
+    return re.sub(r"\s+(?:корп|стр|лит)\s+", "/", raw.strip())
 
 
 def _try_extract(text: str) -> ParsedAddress | None:
@@ -112,7 +145,8 @@ def _try_extract(text: str) -> ParsedAddress | None:
     if match:
         street = match.group(1).strip()
         # Отбрасываем мусорные совпадения вида street="д" (однобуквенные аббревиатуры)
-        if street and not all(len(w) <= 2 for w in street.split()):
+        # Исключение: ординальные слова вида "1я", "2й" — короткие, но валидные
+        if street and not _all_short(street.split()):
             return ParsedAddress(
                 street=street,
                 house=_normalize_house(match.group(2)),
@@ -123,7 +157,7 @@ def _try_extract(text: str) -> ParsedAddress | None:
     match = _PATTERN_TYPE_SUFFIX.search(normalized)
     if match:
         street = match.group(1).strip()
-        if street and not all(len(w) <= 2 for w in street.split()):
+        if street and not _all_short(street.split()):
             return ParsedAddress(
                 street=street,
                 house=_normalize_house(match.group(2)),
@@ -147,7 +181,7 @@ def _try_extract(text: str) -> ParsedAddress | None:
         words = street_name.split()
         if any(w in _STOP_WORDS for w in words):
             continue
-        if all(len(w) <= 2 for w in words):
+        if _all_short(words):
             continue
 
         return ParsedAddress(

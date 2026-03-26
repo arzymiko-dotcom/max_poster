@@ -137,13 +137,19 @@ class ExcelMatcher:
                     score += 100
                     house_matched = True
                 elif "/" in house:
-                    # "32/1" может означать "д. 32, корп. 1"
-                    base, korpus = house.split("/", 1)
-                    if (
-                        re.search(r"\bд\s+" + re.escape(base) + r"\b", normalized_address)
-                        and re.search(r"\bкорп\s+" + re.escape(korpus) + r"\b", normalized_address)
-                    ):
+                    # "32/1" может означать "д. 32, корп. 1" или "д. 32, стр. 1", или "д. 32, лит. а"
+                    base, suffix = house.split("/", 1)
+                    base_ok = re.search(r"\bд\s+" + re.escape(base) + r"\b", normalized_address)
+                    suffix_ok = re.search(
+                        r"\b(?:корп|стр|лит)\s+" + re.escape(suffix) + r"\b",
+                        normalized_address,
+                    )
+                    if base_ok and suffix_ok:
                         score += 90
+                        house_matched = True
+                    elif base_ok:
+                        # Только база совпала — слабый матч (нет инфо о корпусе в реестре)
+                        score += 60
                         house_matched = True
 
             if parsed_address.raw_fragment and parsed_address.raw_fragment in normalized_address:

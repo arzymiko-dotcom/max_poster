@@ -606,6 +606,7 @@ class _AttachmentWidget(QWidget):
     """Отображает одно вложение внутри пузыря сообщения."""
     def __init__(self, att: dict, outgoing: bool, parent=None):
         super().__init__(parent)
+        self._loader: "_ImageLoader | None" = None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 4, 0, 0)
         lay.setSpacing(2)
@@ -667,7 +668,7 @@ class _AttachmentWidget(QWidget):
             lay.addWidget(lbl)
 
     def _start_load(self, url: str):
-        self._loader = _load_image(url, self._on_photo)
+        self._loader = _load_image(url, self._on_photo, self._loader)
 
     def _on_photo(self, _url: str, px: QPixmap):
         scaled = px.scaled(240, 160,

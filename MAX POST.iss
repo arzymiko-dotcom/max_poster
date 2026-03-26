@@ -152,6 +152,27 @@ begin
          '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
+procedure RegisterAutoUpdateTask();
+var
+  ExePath: String;
+  ResultCode: Integer;
+begin
+  ExePath := ExpandConstant('{app}\MAX POST.exe');
+  Exec(ExpandConstant('{sys}\schtasks.exe'),
+       '/create /tn "MAX POST Updater" /tr "\"' + ExePath + '\" --silent-check"' +
+       ' /sc ONLOGON /delay 0002:00 /f',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+procedure UnregisterAutoUpdateTask();
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\schtasks.exe'),
+       '/delete /tn "MAX POST Updater" /f',
+       '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
@@ -159,5 +180,12 @@ begin
     MergeEnvToAppData();
     SecureEnvFile();
     SecureExcelFile();
+    RegisterAutoUpdateTask();
   end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+    UnregisterAutoUpdateTask();
 end;

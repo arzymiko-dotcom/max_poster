@@ -1,4 +1,5 @@
 import atexit
+import collections
 import csv
 import json
 import logging
@@ -665,9 +666,8 @@ class _SmartSendPreviewDialog(QDialog):
         root.addWidget(title)
 
         # Предупреждение о дублирующихся адресах
-        from collections import Counter
         all_ids = [m.chat_id for b in blocks for m in b.matches]
-        dup_ids = {cid for cid, cnt in Counter(all_ids).items() if cnt > 1}
+        dup_ids = {cid for cid, cnt in collections.Counter(all_ids).items() if cnt > 1}
         if dup_ids:
             dup_names = [m.address for b in blocks for m in b.matches if m.chat_id in dup_ids]
             warn = QLabel(f"⚠️ Один адрес встречается в нескольких блоках: {', '.join(dict.fromkeys(dup_names))}")
@@ -1135,6 +1135,16 @@ class MainWindow(QMainWindow):
         self._vk_posts_btn.clicked.connect(self._open_vk_posts_picker)
         lh_layout.addWidget(self._vk_posts_btn)
 
+        self._smart_send_btn = QPushButton("🔀 Умная рассылка")
+        self._smart_send_btn.setObjectName("tplMiniBtn")
+        self._smart_send_btn.setFixedHeight(28)
+        self._smart_send_btn.setMinimumWidth(85)
+        self._smart_send_btn.setToolTip(
+            "Умная рассылка — разбить текст на блоки и отправить каждый по своим адресам"
+        )
+        self._smart_send_btn.clicked.connect(self._start_smart_send)
+        lh_layout.addWidget(self._smart_send_btn)
+
         self._tpl_btn = QPushButton("📋")
         self._tpl_btn.setObjectName("tplMiniBtn")
         self._tpl_btn.setFixedSize(28, 28)
@@ -1476,20 +1486,12 @@ class MainWindow(QMainWindow):
         self._dry_run_btn.setToolTip("Пробный прогон — сообщения не отправляются")
         self._dry_run_btn.clicked.connect(self._send_dry_run)
 
-        self._smart_send_btn = QPushButton("🔀 Умная")
-        self._smart_send_btn.setObjectName("testButton")
-        self._smart_send_btn.setToolTip(
-            "Умная рассылка — разбить текст на блоки и отправить каждый по своим адресам"
-        )
-        self._smart_send_btn.clicked.connect(self._start_smart_send)
-
         send_row_w = QWidget()
         send_row_l = QHBoxLayout(send_row_w)
         send_row_l.setContentsMargins(0, 0, 0, 0)
         send_row_l.setSpacing(6)
         send_row_l.addWidget(self.send_button, 1)
         send_row_l.addWidget(self._dry_run_btn)
-        send_row_l.addWidget(self._smart_send_btn)
 
         send_area = QFrame()
         sa_layout = QVBoxLayout(send_area)
@@ -1996,9 +1998,10 @@ class MainWindow(QMainWindow):
 
     def _check_excel_changed(self) -> None:
         """Проверяет, изменился ли файл реестра адресов."""
-        if not self.excel_path.exists():
+        try:
+            mtime = self.excel_path.stat().st_mtime
+        except FileNotFoundError:
             return
-        mtime = self.excel_path.stat().st_mtime
         if mtime != self._excel_mtime:
             self._excel_mtime = mtime
             self._excel_changed_bar.show()
@@ -3498,6 +3501,11 @@ class MainWindow(QMainWindow):
             self._worker.quit()
             self._worker.wait(3000)
 
+        if self._smart_worker and self._smart_worker.isRunning():
+            self._smart_worker.cancel()
+            self._smart_worker.quit()
+            self._smart_worker.wait(3000)
+
         if self._addr_check_worker and self._addr_check_worker.isRunning():
             self._addr_check_worker.cancel()
             self._addr_check_worker.quit()
@@ -3699,10 +3707,13 @@ class MainWindow(QMainWindow):
             for b in confirmed_blocks
         ]
 
-        # Лог отправки — показываем вместо списка адресов
+        # Лог отправки — только адреса с chat_id (те, что реально будут отправлены)
+        # Порядок должен совпадать с global_idx в _SmartSendWorker.run()
         self._send_log_list.clear()
         for b in confirmed_blocks:
             for m in b.matches:
+                if not m.chat_id:
+                    continue
                 log_item = QListWidgetItem(f"⏳  {m.address}")
                 log_item.setData(Qt.ItemDataRole.UserRole, m.address)
                 self._send_log_list.addItem(log_item)

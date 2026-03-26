@@ -170,6 +170,25 @@ PyQt6 desktop-приложение для отправки объявлений 
 - `_last_addr_row: int` вместо `_last_addr_item` — хранит индекс строки, а не ссылку на Qt-объект (избегает RuntimeError при пересборке списка)
 - `_addr_list_context_menu()` — ПКМ на адресе показывает «Удалить адрес»; `setContextMenuPolicy(CustomContextMenu)`
 - Закреплённый адрес «ЖКС №2 Выборгского» полностью удалён из `main.py` (вся система `_PINNED_ROLE` / `_insert_pinned_group`)
+- `address_parser.py`: добавлены типы улиц `пл`, `лин`, `туп`, `пр-зд`; ординальный суффикс `"1-я"→"1я"`; дефис между цифрами `"32-1"→"32/1"`; `_all_short()` хелпер; `_normalize_house()` через regex
+- `excel_matcher.find_matches`: при `/` в номере — ищет `корп|стр|лит` отдельно (score +90/+60)
+- `vk_messages_panel._AttachmentWidget`: `self._loader` атрибут + передаётся как `prev=` в `_load_image`
+- `updater.py`: `run_silent_update()` + `_download_installer_sync()` — тихое автообновление без GUI
+- `app.py`: `--silent-check` перехватывается до `QApplication`, вызывает `run_silent_update()`
+- `MAX POST.iss`: `RegisterAutoUpdateTask()` + `UnregisterAutoUpdateTask()` — Windows Task Scheduler ONLOGON 2мин задержка
+- Тихое автообновление: на других ПК достаточно одной переустановки — задача регистрируется автоматически; лог `%APPDATA%\MAX POST\update.log`
+- `_smart_send_btn` перемещена в заголовок рядом с «📰 ВК посты», стиль `tplMiniBtn`, высота 28px
+- `main.py closeEvent`: останавливает `_smart_worker` при закрытии
+- `_check_excel_changed`: TOCTOU фикс через `try/except FileNotFoundError`
+- Smart send лог фильтрует только `chat_id != ""` — синхронизируется с `global_idx` воркера
+- `_ChangelogPopup.__init__` инициализируется с `_CHANGELOG_POPUP_LIGHT` (было DARK) — тема корректируется `set_dark()` из `_apply_dark_mode`
+- `generate_qr` (QR-панель): вынесен в `_QRGenWorker(QThread)` — не блокирует UI; кнопка блокируется на время генерации
+- `app.py`: `_notify_update_applied()` — при старте проверяет флаг `update_applied.json`, показывает balloon «обновлено до vX.X.X», удаляет флаг
+- `updater.run_silent_update()`: проверяет через tasklist — если `MAX POST.exe` запущен, обновление откладывается; после успешного запуска установщика пишет `update_applied.json`
+- `address_parser.normalize_text()`: В.О. удаляется полностью (`→ ""`), не заменяется на "во"; «1-я линия В.О., д. 5» → `"1я лин д 5"` → street=`"1я"`, house=`"5"`; «13-я линия В.О., д. 28» аналогично
+- `updater.run_silent_update()`: lock stale detection — если lock старше 2 часов, удаляется и процесс продолжается (защита от зависших процессов)
+- `app/my_qr_app/main.py`: `generate_qr` отменяет предыдущий `_QRGenWorker` перед запуском нового (двойной клик)
+- `shell_window._ChangelogPopup.show_near()`: popup позиция ограничена `screen.availableGeometry()` — не уходит за край экрана
 
 ### QR Генератор (`app/my_qr_app/main.py`) — сделано в 1.2.57
 - Галочка «Показывать наименование на карточке» под `inp_org` — `chk_show_org`, состояние в QSettings (`show_org`)

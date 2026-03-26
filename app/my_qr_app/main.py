@@ -294,6 +294,25 @@ def crop_transparent(pixmap):
     return result
 
 
+class _QRGenWorker(QThread):
+    """Генерирует QR-код в фоновом потоке."""
+    finished = pyqtSignal(str)   # путь к сгенерированному файлу
+    failed   = pyqtSignal(str)   # сообщение об ошибке
+
+    def __init__(self, url: str, logo_path: str, out_path: str) -> None:
+        super().__init__()
+        self._url = url
+        self._logo_path = logo_path
+        self._out_path = out_path
+
+    def run(self) -> None:
+        try:
+            make_qr_with_logo(self._url, self._logo_path, self._out_path)
+            self.finished.emit(self._out_path)
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
 class TitleTextEdit(QTextEdit):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Return:
@@ -700,13 +719,34 @@ class MainWindow(QMainWindow):
             url = 'https://' + url
 
         self.inp_url.setStyleSheet(self._input_style())  # сброс красной рамки
-        try:
-            logo_path = res('max.targetsize-256.png')
-            make_qr_with_logo(url, logo_path, self.tmp_qr)
-            self.preview.set_qr(self.tmp_qr)
-            self._set_btn_save_state()
-        except Exception as e:
-            QMessageBox.warning(self, "Ошибка", f"Не удалось создать QR-код:\n{e}")
+        self.btn_main.setEnabled(False)
+        self.btn_main.setText("Генерация…")
+
+        # Останавливаем предыдущую генерацию если ещё идёт
+        if hasattr(self, "_qr_worker") and self._qr_worker and self._qr_worker.isRunning():
+            self._qr_worker.finished.disconnect()
+            self._qr_worker.failed.disconnect()
+            self._qr_worker.quit()
+            self._qr_worker.wait(1000)
+
+        logo_path = res('max.targetsize-256.png')
+        self._qr_worker = _QRGenWorker(url, logo_path, self.tmp_qr)
+        self._qr_worker.finished.connect(self._on_qr_done)
+        self._qr_worker.failed.connect(self._on_qr_failed)
+        self._qr_worker.finished.connect(self._qr_worker.deleteLater)
+        self._qr_worker.failed.connect(self._qr_worker.deleteLater)
+        self._qr_worker.start()
+
+    def _on_qr_done(self, path: str) -> None:
+        self.btn_main.setEnabled(True)
+        self.preview.set_qr(path)
+        self._set_btn_save_state()
+
+    def _on_qr_failed(self, error: str) -> None:
+        self.btn_main.setEnabled(True)
+        self._apply_btn_create_style()
+        self._btn_state = 'create'
+        QMessageBox.warning(self, "Ошибка", f"Не удалось создать QR-код:\n{error}")
 
     @staticmethod
     def _get_save_folder() -> str:
@@ -827,6 +867,8 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_update_checker") and self._update_checker.isRunning():
             self._update_checker.quit()
             self._update_checker.wait(2000)
+        if hasattr(self, "_qr_worker") and self._qr_worker and self._qr_worker.isRunning():
+            self._qr_worker.wait(2000)
         event.accept()
 
 

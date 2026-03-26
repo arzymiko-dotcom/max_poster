@@ -310,7 +310,7 @@ class _ChangelogPopup(QFrame):
         self._poll_timer.setInterval(60)
         self._poll_timer.timeout.connect(self._check_cursor)
         self._btn_ref: "QPushButton | None" = None  # задаётся из _UpdBtn
-        self.setStyleSheet(_CHANGELOG_POPUP_DARK)
+        self.setStyleSheet(_CHANGELOG_POPUP_LIGHT)  # корректируется через set_dark()
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -377,9 +377,16 @@ class _ChangelogPopup(QFrame):
         self._btn_ref = btn
         self.adjustSize()
         btn_br = btn.mapToGlobal(btn.rect().bottomRight())
-        # Выровнять низ попапа по низу кнопки
         x = btn_br.x() + 6
         y = btn_br.y() - self.height()
+
+        # Держим попап в пределах доступного экрана
+        screen = QApplication.primaryScreen()
+        if screen:
+            ag = screen.availableGeometry()
+            x = max(ag.left(), min(x, ag.right() - self.width()))
+            y = max(ag.top(), min(y, ag.bottom() - self.height()))
+
         self.move(x, y)
         self.show()
         self._poll_timer.start()

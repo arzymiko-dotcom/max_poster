@@ -57,7 +57,35 @@ def _setup_single_instance_server(window) -> QLocalServer:
     return server
 
 
+def _notify_update_applied(window) -> None:
+    """Показывает balloon если предыдущий тихий апдейт завершился успешно."""
+    import json
+    import os
+    from pathlib import Path
+    flag_path = Path(os.environ.get("APPDATA", Path.home())) / "MAX POST" / "update_applied.json"
+    try:
+        data = json.loads(flag_path.read_text(encoding="utf-8"))
+        to_ver = data.get("to", "")
+        tray = getattr(getattr(window, "_max_win", None), "_tray", None)
+        if tray and tray.isVisible() and to_ver:
+            tray.showMessage(
+                "MAX POST обновлён",
+                f"Программа обновлена до версии {to_ver}",
+                tray.MessageIcon.Information,
+                5000,
+            )
+    except Exception:
+        pass
+    finally:
+        flag_path.unlink(missing_ok=True)
+
+
 def main() -> None:
+    if "--silent-check" in sys.argv:
+        from updater import run_silent_update
+        run_silent_update()
+        return
+
     setup_logging()
     install_crash_hook()
 
@@ -81,6 +109,9 @@ def main() -> None:
     window = ShellWindow()
     _setup_single_instance_server(window)
     window.showMaximized()
+
+    # Balloon если предыдущий тихий апдейт завершился успешно
+    QTimer.singleShot(3000, lambda: _notify_update_applied(window))
 
     # Проверка обновлений через 2 сек после запуска
     QTimer.singleShot(2000, lambda: check_for_updates(window))
