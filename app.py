@@ -57,6 +57,13 @@ def _setup_single_instance_server(window) -> QLocalServer:
     return server
 
 
+def _ensure_update_task_bg() -> None:
+    """Фоновая регистрация задачи автообновления — не блокирует UI."""
+    import threading
+    from updater import ensure_update_task
+    threading.Thread(target=ensure_update_task, daemon=True).start()
+
+
 def _notify_update_applied(window) -> None:
     """Показывает balloon если предыдущий тихий апдейт завершился успешно."""
     import json
@@ -112,6 +119,9 @@ def main() -> None:
 
     # Balloon если предыдущий тихий апдейт завершился успешно
     QTimer.singleShot(3000, lambda: _notify_update_applied(window))
+
+    # Регистрируем задачу автообновления если ещё нет (для старых установок без неё)
+    QTimer.singleShot(5000, _ensure_update_task_bg)
 
     # Проверка обновлений через 2 сек после запуска
     QTimer.singleShot(2000, lambda: check_for_updates(window))

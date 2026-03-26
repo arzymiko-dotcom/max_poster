@@ -432,6 +432,36 @@ def _download_installer_sync(expected_sha256: str | None, log) -> "Path | None":
         return None
 
 
+def ensure_update_task() -> None:
+    """Регистрирует задачу автообновления если её ещё нет.
+    Вызывается при каждом запуске программы — безопасно, работает без прав администратора."""
+    if not getattr(sys, "frozen", False):
+        return  # только в production-сборке
+
+    # Проверяем: задача уже существует?
+    check = subprocess.run(
+        ["schtasks", "/query", "/tn", "MAX POST Updater"],
+        capture_output=True,
+    )
+    if check.returncode == 0:
+        return  # уже зарегистрирована
+
+    # Регистрируем для текущего пользователя без пароля (работает без прав админа)
+    exe = Path(sys.executable)
+    subprocess.run(
+        [
+            "schtasks", "/create",
+            "/tn", "MAX POST Updater",
+            "/tr", f'"{exe}" --silent-check',
+            "/sc", "ONLOGON",
+            "/delay", "0002:00",
+            "/rl", "LIMITED",
+            "/f",
+        ],
+        capture_output=True,
+    )
+
+
 def check_for_updates(parent=None, silent: bool = True) -> None:
     """Проверяет обновления в фоновом потоке.
 
