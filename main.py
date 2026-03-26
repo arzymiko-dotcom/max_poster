@@ -1051,10 +1051,6 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self._quit_app)
         file_menu.addAction(exit_action)
 
-        check_action = QAction("Проверить адрес", self)
-        check_action.triggered.connect(self.check_post)
-        actions_menu.addAction(check_action)
-
         send_action = QAction("Опубликовать", self)
         send_action.setShortcut(QKeySequence("Ctrl+Return"))
         send_action.triggered.connect(self.send_post)
@@ -1388,10 +1384,6 @@ class MainWindow(QMainWindow):
         buttons_row = QGridLayout()
         buttons_row.setSpacing(8)
 
-        self.check_button = QPushButton("Проверить адрес")
-        self.check_button.clicked.connect(self.check_post)
-        self.check_button.setToolTip("Найти адреса из текста в реестре Excel")
-
         self.photo_button = QPushButton("Загрузить фото")
         self.photo_button.clicked.connect(self.select_image)
         self.photo_button.setToolTip("Выбрать фото (Ctrl+L)")
@@ -1415,8 +1407,7 @@ class MainWindow(QMainWindow):
         self.send_button.setObjectName("primaryButton")
         self.send_button.setToolTip("Опубликовать пост (Ctrl+Return)")
 
-        buttons_row.addWidget(self.check_button, 0, 0)
-        buttons_row.addWidget(photo_row_w, 0, 1)
+        buttons_row.addWidget(photo_row_w, 0, 0, 1, 2)
 
         sched_frame = QFrame()
         sched_frame.setObjectName("scheduleRow")
@@ -2206,87 +2197,6 @@ class MainWindow(QMainWindow):
         self._update_checklist()
         self.save_state()
 
-    def _check_post_reset_btn(self) -> None:
-        self.check_button.setEnabled(True)
-        self.check_button.setText("Проверить адрес")
-
-    def check_post(self) -> None:
-        self.check_button.setEnabled(False)
-        self.check_button.setText("⏳ Поиск…")
-        QApplication.processEvents()
-        text = self.text_input.toPlainText().strip()
-        if not text:
-            self._check_post_reset_btn()
-            QMessageBox.warning(self, "Проверка", "Введите текст публикации.")
-            return
-
-        if not self.excel_path.exists():
-            self._check_post_reset_btn()
-            QMessageBox.critical(self, "Ошибка", f"Файл не найден: {self.excel_path}")
-            return
-
-        parsed_list = extract_all_addresses(text)
-        if not parsed_list:
-            self._check_post_reset_btn()
-            QMessageBox.warning(self, "Проверка", "Не удалось извлечь адреса из текста.")
-            return
-
-        if self._matcher is None:
-            self._matcher = ExcelMatcher(self.excel_path)
-        matcher = self._matcher
-
-        # Сохраняем вручную добавленные адреса — check_post только добавляет из текста
-        manual_entries: list[tuple[MatchResult, Qt.CheckState]] = []
-        for i in range(self._addr_list.count()):
-            itm = self._addr_list.item(i)
-            if itm and itm.data(_MANUAL_ROLE):
-                m = itm.data(Qt.ItemDataRole.UserRole)
-                if m:
-                    manual_entries.append((m, itm.checkState()))
-
-        self._addr_list.blockSignals(True)
-        seen_ids: set[str] = set()
-        found = 0
-        try:
-            self._addr_list.clear()
-            for parsed in parsed_list:
-                try:
-                    matches = matcher.find_matches(parsed)
-                except Exception as exc:
-                    _log.warning("find_matches failed for %r: %s", parsed, exc)
-                    continue
-                if not matches:
-                    continue
-                best = matches[0]
-                if best.chat_id and best.chat_id in seen_ids:
-                    continue
-                if best.chat_id:
-                    seen_ids.add(best.chat_id)
-                item = QListWidgetItem(best.address)
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(Qt.CheckState.Checked)
-                item.setData(Qt.ItemDataRole.UserRole, best)
-                item.setData(_MANUAL_ROLE, True)
-                self._addr_list.addItem(item)
-                found += 1
-            for m, state in manual_entries:
-                if m.chat_id in seen_ids:
-                    continue
-                item = QListWidgetItem(m.address)
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                item.setCheckState(state)
-                item.setData(Qt.ItemDataRole.UserRole, m)
-                item.setData(_MANUAL_ROLE, True)
-                self._addr_list.addItem(item)
-        finally:
-            self._addr_list.blockSignals(False)
-        self._update_checklist()
-        self.save_state()
-        self._check_post_reset_btn()
-
-        if found == 0:
-            QMessageBox.warning(self, "Проверка", "Адреса из текста не найдены в Excel.")
-
     def _get_checked_matches(self) -> list[MatchResult]:
         results = []
         for i in range(self._addr_list.count()):
@@ -2465,7 +2375,7 @@ class MainWindow(QMainWindow):
             if m.chat_id:
                 results.append((original, m))
             elif self._matcher is not None:
-                # Используем extract_all_addresses + find_matches — тот же путь что «Проверить адрес»
+                # Используем extract_all_addresses + find_matches для поиска в реестре
                 parsed_list = extract_all_addresses(original)
                 resolved = None
                 if parsed_list:
@@ -2550,7 +2460,7 @@ class MainWindow(QMainWindow):
         chat_ids = list(dict.fromkeys(m.chat_id for m in checked if m.chat_id))
 
         if send_max and not chat_ids:
-            QMessageBox.warning(self, "Отправка", "Нет отмеченных адресов. Нажми «Проверить адрес».")
+            QMessageBox.warning(self, "Отправка", "Нет отмеченных адресов. Добавь адрес через кнопку + или вставь текст с адресом.")
             return
 
         # Проверяем наличие токенов
@@ -2586,7 +2496,6 @@ class MainWindow(QMainWindow):
 
         self.send_button.hide()
         self._dry_run_btn.hide()
-        self.check_button.setEnabled(False)
         self._cancel_button.setEnabled(True)
         self._cancel_button.setText("✕  Отменить отправку")
         self._cancel_button.show()
@@ -2676,7 +2585,6 @@ class MainWindow(QMainWindow):
         self._dry_run_btn.show()
         self.send_button.setEnabled(True)
         self.send_button.setText("Опубликовать")
-        self.check_button.setEnabled(True)
         self._progress_bar.hide()
         self.setWindowTitle("MAX POST")
         # Восстанавливаем список адресов после отправки
@@ -2785,7 +2693,7 @@ class MainWindow(QMainWindow):
         checked = self._get_checked_matches()
         chat_ids = list(dict.fromkeys(m.chat_id for m in checked if m.chat_id))
         if send_max and not chat_ids:
-            QMessageBox.warning(self, "Отправка", "Нет отмеченных адресов. Нажми «Проверить адрес».")
+            QMessageBox.warning(self, "Отправка", "Нет отмеченных адресов. Добавь адрес через кнопку + или вставь текст с адресом.")
             return
 
         if send_max and not (os.getenv("MAX_ID_INSTANCE") and os.getenv("MAX_API_TOKEN")):
@@ -3804,7 +3712,6 @@ class MainWindow(QMainWindow):
         self.send_button.hide()
         self._dry_run_btn.hide()
         self._smart_send_btn.hide()
-        self.check_button.setEnabled(False)
         self._cancel_button.setEnabled(True)
         self._cancel_button.setText("✕  Отменить рассылку")
         self._cancel_button.show()
@@ -3829,7 +3736,6 @@ class MainWindow(QMainWindow):
         self._dry_run_btn.show()
         self._smart_send_btn.show()
         self._smart_send_btn.setEnabled(True)
-        self.check_button.setEnabled(True)
         self.setWindowTitle("MAX POST")
         self._send_log_list.hide()
         self._addr_list.show()
