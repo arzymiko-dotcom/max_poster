@@ -664,6 +664,17 @@ class _SmartSendPreviewDialog(QDialog):
         title.setTextFormat(Qt.TextFormat.RichText)
         root.addWidget(title)
 
+        # Предупреждение о дублирующихся адресах
+        from collections import Counter
+        all_ids = [m.chat_id for b in blocks for m in b.matches]
+        dup_ids = {cid for cid, cnt in Counter(all_ids).items() if cnt > 1}
+        if dup_ids:
+            dup_names = [m.address for b in blocks for m in b.matches if m.chat_id in dup_ids]
+            warn = QLabel(f"⚠️ Один адрес встречается в нескольких блоках: {', '.join(dict.fromkeys(dup_names))}")
+            warn.setWordWrap(True)
+            warn.setStyleSheet("color: #b45309; background: #fef3c7; padding: 6px 8px; border-radius: 4px;")
+            root.addWidget(warn)
+
         # Список блоков в скролле
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -743,8 +754,8 @@ class _SmartSendWorker(QThread):
     """Рассылает блоки умной рассылки по своим адресам."""
 
     progress = pyqtSignal(str)
-    block_done = pyqtSignal(int, bool, str)   # (block_idx, success, message)
-    all_done = pyqtSignal(bool, str)          # (overall_success, summary)
+    address_result = pyqtSignal(int, bool, str)  # (global_idx, success, message)
+    all_done = pyqtSignal(bool, str)             # (overall_success, summary)
 
     def __init__(
         self,
@@ -759,6 +770,10 @@ class _SmartSendWorker(QThread):
         self._blocks = chat_ids_per_block
         self._image_path = image_path
         self._send_max = send_max
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
 
     def run(self) -> None:
         if not self._send_max:
@@ -768,20 +783,27 @@ class _SmartSendWorker(QThread):
         total_blocks = len(self._blocks)
         ok_count = 0
         fail_count = 0
-        send_num = 0  # счётчик отправленных сообщений (для паузы)
+        send_num = 0
+        global_idx = 0
 
         for b_idx, (text, chat_ids) in enumerate(self._blocks):
-            block_ok = True
-            block_msgs: list[str] = []
             for chat_id in chat_ids:
+                if self._cancelled:
+                    self.all_done.emit(False, f"Отменено. Отправлено: {ok_count} | Ошибок: {fail_count}")
+                    return
                 if send_num > 0:
                     delay = random.randint(5, 12)
                     for sec in range(delay):
+                        if self._cancelled:
+                            break
                         self.progress.emit(
                             f"Блок {b_idx + 1}/{total_blocks} · пауза {delay - sec}с…"
                         )
                         time.sleep(1)
-                self.progress.emit(f"Блок {b_idx + 1}/{total_blocks}: отправка в {chat_id}…")
+                if self._cancelled:
+                    self.all_done.emit(False, f"Отменено. Отправлено: {ok_count} | Ошибок: {fail_count}")
+                    return
+                self.progress.emit(f"Блок {b_idx + 1}/{total_blocks}: отправка {send_num + 1}…")
                 try:
                     r = self._sender.send_post(
                         chat_link=chat_id,
@@ -791,19 +813,15 @@ class _SmartSendWorker(QThread):
                     send_num += 1
                     if r.success:
                         ok_count += 1
-                        block_msgs.append(f"✓ {chat_id}")
+                        self.address_result.emit(global_idx, True, r.message)
                     else:
                         fail_count += 1
-                        block_ok = False
-                        block_msgs.append(f"✗ {chat_id}: {r.message}")
+                        self.address_result.emit(global_idx, False, r.message)
                 except Exception as exc:
                     fail_count += 1
-                    block_ok = False
-                    block_msgs.append(f"✗ {chat_id}: {exc}")
+                    self.address_result.emit(global_idx, False, str(exc))
                     send_num += 1
-
-            msg = "; ".join(block_msgs)
-            self.block_done.emit(b_idx, block_ok, msg)
+                global_idx += 1
 
         summary = f"Блоков: {total_blocks} | Отправлено: {ok_count} | Ошибок: {fail_count}"
         self.all_done.emit(fail_count == 0, summary)
@@ -883,6 +901,7 @@ class MainWindow(QMainWindow):
         self._photo_pinned: bool = False
         self._recent_photos: list[str] = []   # до 5 последних путей к фото
         self._worker: "SendWorker | None" = None
+        self._smart_worker: "_SmartSendWorker | None" = None
         self._excel_mtime: float = (
             self.excel_path.stat().st_mtime if self.excel_path.exists() else 0.0
         )
@@ -2644,6 +2663,11 @@ class MainWindow(QMainWindow):
             self._cancel_button.setEnabled(False)
             self._cancel_button.setText("✕  Отменяется…")
             self.setWindowTitle("MAX POST — Отменяется…")
+        if self._smart_worker and self._smart_worker.isRunning():
+            self._smart_worker.cancel()
+            self._cancel_button.setEnabled(False)
+            self._cancel_button.setText("✕  Отменяется…")
+            self.setWindowTitle("MAX POST — Отменяется…")
 
     def _on_send_finished(self, success: bool, message: str) -> None:
         is_dry_run = getattr(self._worker, "dry_run", False) if self._worker else False
@@ -3767,6 +3791,24 @@ class MainWindow(QMainWindow):
             for b in confirmed_blocks
         ]
 
+        # Лог отправки — показываем вместо списка адресов
+        self._send_log_list.clear()
+        for b in confirmed_blocks:
+            for m in b.matches:
+                log_item = QListWidgetItem(f"⏳  {m.address}")
+                log_item.setData(Qt.ItemDataRole.UserRole, m.address)
+                self._send_log_list.addItem(log_item)
+        self._addr_list.hide()
+        self._send_log_list.show()
+
+        self.send_button.hide()
+        self._dry_run_btn.hide()
+        self._smart_send_btn.hide()
+        self.check_button.setEnabled(False)
+        self._cancel_button.setEnabled(True)
+        self._cancel_button.setText("✕  Отменить рассылку")
+        self._cancel_button.show()
+
         worker = _SmartSendWorker(
             self.max_sender,
             chat_ids_per_block,
@@ -3774,16 +3816,25 @@ class MainWindow(QMainWindow):
             send_max=True,
             parent=self,
         )
+        worker.progress.connect(self._on_send_progress)
+        worker.address_result.connect(self._on_address_result)
         worker.all_done.connect(self._on_smart_send_done)
         worker.finished.connect(worker.deleteLater)
-        self._smart_send_btn.setEnabled(False)
-        self._smart_send_btn.setText("⏳ Рассылка…")
         worker.start()
         self._smart_worker = worker
 
     def _on_smart_send_done(self, success: bool, summary: str) -> None:
+        self._cancel_button.hide()
+        self.send_button.show()
+        self._dry_run_btn.show()
+        self._smart_send_btn.show()
         self._smart_send_btn.setEnabled(True)
-        self._smart_send_btn.setText("🔀 Умная")
+        self.check_button.setEnabled(True)
+        self.setWindowTitle("MAX POST")
+        self._send_log_list.hide()
+        self._addr_list.show()
+        if self._smart_worker is not None:
+            self._smart_worker = None
         icon = "✅" if success else "⚠️"
         QMessageBox.information(self, "Умная рассылка завершена", f"{icon} {summary}")
 
