@@ -804,8 +804,6 @@ class _SmartSendWorker(QThread):
 
             msg = "; ".join(block_msgs)
             self.block_done.emit(b_idx, block_ok, msg)
-            if not block_ok:
-                pass  # продолжаем остальные блоки
 
         summary = f"Блоков: {total_blocks} | Отправлено: {ok_count} | Ошибок: {fail_count}"
         self.all_done.emit(fail_count == 0, summary)
@@ -3772,14 +3770,9 @@ class MainWindow(QMainWindow):
         worker = _SmartSendWorker(
             self.max_sender,
             chat_ids_per_block,
-            self.image_path,
+            str(self.image_path) if self.image_path else None,
             send_max=True,
             parent=self,
-        )
-        worker.progress.connect(
-            lambda msg: self._progress_label.setText(msg)
-            if hasattr(self, "_progress_label")
-            else None
         )
         worker.all_done.connect(self._on_smart_send_done)
         worker.finished.connect(worker.deleteLater)
