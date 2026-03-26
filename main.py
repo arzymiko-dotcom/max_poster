@@ -736,15 +736,29 @@ class _SmartSendPreviewDialog(QDialog):
         vbox.addStretch()
         root.addWidget(scroll, 1)
 
-        # Кнопки
-        btns = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
-        )
-        btns.button(QDialogButtonBox.StandardButton.Ok).setText("Отправить")
-        btns.button(QDialogButtonBox.StandardButton.Cancel).setText("Отмена")
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        root.addWidget(btns)
+        # Кнопки: [Тест] слева, [Отмена] [Отправить] справа
+        self.dry_run = False
+        btn_row = QHBoxLayout()
+        btn_test = QPushButton("Тест")
+        btn_test.setObjectName("testButton")
+        btn_test.setToolTip("Пробный прогон — сообщения не отправляются")
+        btn_cancel = QPushButton("Отмена")
+        btn_send = QPushButton("Отправить")
+        btn_send.setDefault(True)
+
+        def _do_test():
+            self.dry_run = True
+            self.accept()
+
+        btn_test.clicked.connect(_do_test)
+        btn_cancel.clicked.connect(self.reject)
+        btn_send.clicked.connect(self.accept)
+
+        btn_row.addWidget(btn_test)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_send)
+        root.addLayout(btn_row)
 
     def accepted_blocks(self) -> "list[_SmartBlock]":
         return [b for chk, b in self._checks if chk.isChecked() and b.matches]
@@ -763,6 +777,7 @@ class _SmartSendWorker(QThread):
         chat_ids_per_block: "list[tuple[str, list[str]]]",
         image_path: "str | None",
         send_max: bool,
+        dry_run: bool = False,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -770,6 +785,7 @@ class _SmartSendWorker(QThread):
         self._blocks = chat_ids_per_block
         self._image_path = image_path
         self._send_max = send_max
+        self.dry_run = dry_run
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -791,7 +807,7 @@ class _SmartSendWorker(QThread):
                 if self._cancelled:
                     self.all_done.emit(False, f"Отменено. Отправлено: {ok_count} | Ошибок: {fail_count}")
                     return
-                if send_num > 0:
+                if send_num > 0 and not self.dry_run:
                     delay = random.randint(5, 12)
                     for sec in range(delay):
                         if self._cancelled:
@@ -804,23 +820,27 @@ class _SmartSendWorker(QThread):
                     self.all_done.emit(False, f"Отменено. Отправлено: {ok_count} | Ошибок: {fail_count}")
                     return
                 self.progress.emit(f"Блок {b_idx + 1}/{total_blocks}: отправка {send_num + 1}…")
-                try:
-                    r = self._sender.send_post(
-                        chat_link=chat_id,
-                        text=text,
-                        image_path=self._image_path,
-                    )
-                    send_num += 1
-                    if r.success:
-                        ok_count += 1
-                        self.address_result.emit(global_idx, True, r.message)
-                    else:
+                if self.dry_run:
+                    time.sleep(0.3)
+                    ok_count += 1
+                    self.address_result.emit(global_idx, True, "[ТЕСТ] симуляция")
+                else:
+                    try:
+                        r = self._sender.send_post(
+                            chat_link=chat_id,
+                            text=text,
+                            image_path=self._image_path,
+                        )
+                        if r.success:
+                            ok_count += 1
+                            self.address_result.emit(global_idx, True, r.message)
+                        else:
+                            fail_count += 1
+                            self.address_result.emit(global_idx, False, r.message)
+                    except Exception as exc:
                         fail_count += 1
-                        self.address_result.emit(global_idx, False, r.message)
-                except Exception as exc:
-                    fail_count += 1
-                    self.address_result.emit(global_idx, False, str(exc))
-                    send_num += 1
+                        self.address_result.emit(global_idx, False, str(exc))
+                send_num += 1
                 global_idx += 1
 
         summary = f"Блоков: {total_blocks} | Отправлено: {ok_count} | Ошибок: {fail_count}"
@@ -902,11 +922,12 @@ class MainWindow(QMainWindow):
         self._recent_photos: list[str] = []   # до 5 последних путей к фото
         self._worker: "SendWorker | None" = None
         self._smart_worker: "_SmartSendWorker | None" = None
+        self._vk_sched_worker: "VkScheduleWorker | None" = None
+        self._vk_fetch_worker: "_VkWallFetchWorker | None" = None
         self._excel_mtime: float = (
             self.excel_path.stat().st_mtime if self.excel_path.exists() else 0.0
         )
         self._send_log_results: list[tuple[str, bool, str]] = []  # (адрес, успех, время)
-        self._pending_dry_run: bool = False
         self._bg_index: "int | None" = None
         self._bg_mode: int = 0  # 0 = фон, 1 = наложение
         self._bg_opacity: int = 50
@@ -1210,15 +1231,13 @@ class MainWindow(QMainWindow):
         self._photo_thumb.hide()
         text_layout.addWidget(self._photo_thumb)
 
-        # Галерея последних фото
+        # Галерея последних фото — встраивается в строку платформ
         self._recent_bar = QFrame()
         self._recent_bar.setObjectName("recentPhotoBar")
         self._recent_bar_layout = QHBoxLayout(self._recent_bar)
-        self._recent_bar_layout.setContentsMargins(0, 2, 0, 2)
+        self._recent_bar_layout.setContentsMargins(4, 0, 4, 0)
         self._recent_bar_layout.setSpacing(4)
-        self._recent_bar_layout.addStretch()
         self._recent_bar.hide()
-        text_layout.addWidget(self._recent_bar)
 
         # ══════════════════════════════════════════════════════════════
         # ПРАВАЯ ПАНЕЛЬ — адреса и управление
@@ -1383,8 +1402,21 @@ class MainWindow(QMainWindow):
         self._save_report_btn.hide()
         self._save_report_btn.clicked.connect(self._export_report_csv)
 
+        self._recent_sep_left = QFrame()
+        self._recent_sep_left.setFrameShape(QFrame.Shape.VLine)
+        self._recent_sep_left.setObjectName("recentPhotoSep")
+        self._recent_sep_left.hide()
+
+        self._recent_sep_right = QFrame()
+        self._recent_sep_right.setFrameShape(QFrame.Shape.VLine)
+        self._recent_sep_right.setObjectName("recentPhotoSep")
+        self._recent_sep_right.hide()
+
         platforms_row.addWidget(chk_max_frame)
         platforms_row.addWidget(chk_vk_frame)
+        platforms_row.addWidget(self._recent_sep_left)
+        platforms_row.addWidget(self._recent_bar)
+        platforms_row.addWidget(self._recent_sep_right)
         platforms_row.addStretch()
         platforms_row.addWidget(self._save_report_btn)
         platforms_row.addWidget(self.clear_button)
@@ -1481,17 +1513,11 @@ class MainWindow(QMainWindow):
         self._cancel_button.hide()
         self._cancel_button.clicked.connect(self._cancel_send)
 
-        self._dry_run_btn = QPushButton("Тест")
-        self._dry_run_btn.setObjectName("testButton")
-        self._dry_run_btn.setToolTip("Пробный прогон — сообщения не отправляются")
-        self._dry_run_btn.clicked.connect(self._send_dry_run)
-
         send_row_w = QWidget()
         send_row_l = QHBoxLayout(send_row_w)
         send_row_l.setContentsMargins(0, 0, 0, 0)
         send_row_l.setSpacing(6)
         send_row_l.addWidget(self.send_button, 1)
-        send_row_l.addWidget(self._dry_run_btn)
 
         send_area = QFrame()
         sa_layout = QVBoxLayout(send_area)
@@ -1899,10 +1925,6 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.warning(self, "Ошибка", f"Не удалось сохранить файл:\n{exc}")
 
-    def _send_dry_run(self) -> None:
-        """Запускает пробный прогон без реальной отправки."""
-        self._pending_dry_run = True
-        self.send_post()
 
     def _update_checklist(self) -> None:
         def row(ok: bool, label: str) -> str:
@@ -2031,8 +2053,7 @@ class MainWindow(QMainWindow):
 
     def _rebuild_recent_bar(self) -> None:
         """Перестраивает галерею миниатюр последних фото."""
-        # Убираем старые кнопки (кроме последнего stretch)
-        while self._recent_bar_layout.count() > 1:
+        while self._recent_bar_layout.count() > 0:
             item = self._recent_bar_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
@@ -2053,9 +2074,12 @@ class MainWindow(QMainWindow):
             btn.setToolTip(Path(path).name)
             btn.setObjectName("recentPhotoBtn")
             btn.clicked.connect(lambda _checked, p=path: self._use_recent_photo(p))
-            self._recent_bar_layout.insertWidget(self._recent_bar_layout.count() - 1, btn)
+            self._recent_bar_layout.addWidget(btn)
 
-        self._recent_bar.setVisible(bool(valid))
+        visible = bool(valid)
+        self._recent_bar.setVisible(visible)
+        self._recent_sep_left.setVisible(visible)
+        self._recent_sep_right.setVisible(visible)
 
     def _use_recent_photo(self, path: str) -> None:
         """Устанавливает выбранное из галереи фото как текущее."""
@@ -2436,9 +2460,6 @@ class MainWindow(QMainWindow):
             self.save_state()
 
     def send_post(self) -> None:
-        # Забираем и сбрасываем флаг dry_run сразу — до любых ранних return
-        dry_run = self._pending_dry_run
-        self._pending_dry_run = False
         if self._worker is not None and self._worker.isRunning():
             return  # отправка уже идёт — игнорируем повторное нажатие
         if self._chk_schedule.isChecked():
@@ -2498,13 +2519,10 @@ class MainWindow(QMainWindow):
                 return
 
         self.send_button.hide()
-        self._dry_run_btn.hide()
         self._cancel_button.setEnabled(True)
         self._cancel_button.setText("✕  Отменить отправку")
         self._cancel_button.show()
         self._progress_bar.show()
-        if dry_run:
-            self.setWindowTitle("MAX POST — ТЕСТ (сообщения не отправляются)")
 
         self._pending_history = {
             "addresses": [m.address for m in checked],
@@ -2522,7 +2540,7 @@ class MainWindow(QMainWindow):
             image_path=str(self.image_path) if self.image_path else None,
             send_max=send_max,
             send_vk=send_vk,
-            dry_run=dry_run,
+            dry_run=False,
             extra_delay=extra_delay,
         )
         self._worker.progress.connect(self._on_send_progress)
@@ -2580,12 +2598,15 @@ class MainWindow(QMainWindow):
             self._cancel_button.setEnabled(False)
             self._cancel_button.setText("✕  Отменяется…")
             self.setWindowTitle("MAX POST — Отменяется…")
+        if self._vk_sched_worker and self._vk_sched_worker.isRunning():
+            self._vk_sched_worker.quit()
+            self._vk_sched_worker = None
+            self.send_button.setEnabled(True)
+            self.send_button.setText("Запланировать" if self._chk_schedule.isChecked() else "Опубликовать")
 
     def _on_send_finished(self, success: bool, message: str) -> None:
-        is_dry_run = getattr(self._worker, "dry_run", False) if self._worker else False
         self._cancel_button.hide()
         self.send_button.show()
-        self._dry_run_btn.show()
         self.send_button.setEnabled(True)
         self.send_button.setText("Опубликовать")
         self._progress_bar.hide()
@@ -2600,12 +2621,6 @@ class MainWindow(QMainWindow):
         if self._worker is not None:
             self._worker.deleteLater()
             self._worker = None
-        if is_dry_run:
-            QMessageBox.information(
-                self, "Тест завершён",
-                "Пробный прогон выполнен.\nРеальных отправок не было."
-            )
-            return
         if success:
             self._success_overlay.show_success()
             h = self._pending_history
@@ -2736,20 +2751,22 @@ class MainWindow(QMainWindow):
         # ── ВК: отправляем API-запрос сразу, ВК сам опубликует в нужное время ──────
         if send_vk:
             image_path_str = str(self.image_path) if self.image_path else None
-            vk_worker = VkScheduleWorker(
+            self._vk_sched_worker = VkScheduleWorker(
                 vk_sender=self.vk_sender,
                 text=text,
                 image_path=image_path_str,
                 publish_date=unix_ts,
                 parent=self,
             )
-            vk_worker.done.connect(
+            self._vk_sched_worker.done.connect(
                 lambda ok, msg, eid=entry_id, s=sched_str: self._on_vk_schedule_done(ok, msg, eid, s)
             )
-            vk_worker.finished.connect(vk_worker.deleteLater)
-            vk_worker.start()
+            self._vk_sched_worker.finished.connect(self._vk_sched_worker.deleteLater)
+            self._vk_sched_worker.start()
             self.send_button.setEnabled(False)
             self.send_button.setText("Регистрация в ВК…")
+            # Таймаут 60 сек — если ВК не ответил, разблокируем UI
+            QTimer.singleShot(60_000, self._on_vk_schedule_timeout)
 
         # ── MAX: локальный таймер, работает только пока программа запущена ──────────
         if send_max:
@@ -2780,8 +2797,24 @@ class MainWindow(QMainWindow):
             self._chk_schedule.setChecked(False)
         # Если VK выбран — подтверждение покажет _on_vk_schedule_done
 
+    def _on_vk_schedule_timeout(self) -> None:
+        """Таймаут 60 сек — ВК не ответил, разблокируем UI и сообщаем об ошибке."""
+        if self._vk_sched_worker is None:
+            return  # уже завершился нормально
+        _log.warning("VkScheduleWorker: таймаут 60 сек")
+        self._vk_sched_worker.quit()
+        self._vk_sched_worker = None
+        self.send_button.setEnabled(True)
+        self.send_button.setText("Запланировать" if self._chk_schedule.isChecked() else "Опубликовать")
+        QMessageBox.warning(
+            self, "Ошибка ВКонтакте",
+            "Сервер ВКонтакте не ответил за 60 секунд.\n"
+            "Пост мог не зарегистрироваться. Проверьте вручную."
+        )
+
     def _on_vk_schedule_done(self, success: bool, message: str, entry_id: str, sched_str: str) -> None:
         """Вызывается когда VkScheduleWorker завершил регистрацию поста в ВКонтакте."""
+        self._vk_sched_worker = None
         self.send_button.setEnabled(True)
         self.send_button.setText("Запланировать" if self._chk_schedule.isChecked() else "Опубликовать")
 
@@ -3496,6 +3529,11 @@ class MainWindow(QMainWindow):
                 w.quit()
                 w.wait(2000)
 
+        if self._vk_sched_worker and self._vk_sched_worker.isRunning():
+            self._vk_sched_worker.quit()
+            self._vk_sched_worker.wait(2000)
+            self._vk_sched_worker = None
+
         if self._worker and self._worker.isRunning():
             self._worker.cancel()
             self._worker.quit()
@@ -3510,6 +3548,11 @@ class MainWindow(QMainWindow):
             self._addr_check_worker.cancel()
             self._addr_check_worker.quit()
             self._addr_check_worker.wait(1000)
+
+        if self._vk_fetch_worker and self._vk_fetch_worker.isRunning():
+            self._vk_fetch_worker.quit()
+            self._vk_fetch_worker.wait(1000)
+            self._vk_fetch_worker = None
 
         conn = getattr(self, "_conn_worker", None)
         if conn and conn.isRunning():
@@ -3721,7 +3764,6 @@ class MainWindow(QMainWindow):
         self._send_log_list.show()
 
         self.send_button.hide()
-        self._dry_run_btn.hide()
         self._smart_send_btn.hide()
         self._cancel_button.setEnabled(True)
         self._cancel_button.setText("✕  Отменить рассылку")
@@ -3732,6 +3774,7 @@ class MainWindow(QMainWindow):
             chat_ids_per_block,
             str(self.image_path) if self.image_path else None,
             send_max=True,
+            dry_run=dlg.dry_run,
             parent=self,
         )
         worker.progress.connect(self._on_send_progress)
@@ -3742,9 +3785,10 @@ class MainWindow(QMainWindow):
         self._smart_worker = worker
 
     def _on_smart_send_done(self, success: bool, summary: str) -> None:
+        is_dry_run = self._smart_worker.dry_run if self._smart_worker else False
         self._cancel_button.hide()
         self.send_button.show()
-        self._dry_run_btn.show()
+        self.send_button.setText("Опубликовать")
         self._smart_send_btn.show()
         self._smart_send_btn.setEnabled(True)
         self.setWindowTitle("MAX POST")
@@ -3752,6 +3796,9 @@ class MainWindow(QMainWindow):
         self._addr_list.show()
         if self._smart_worker is not None:
             self._smart_worker = None
+        if is_dry_run:
+            QMessageBox.information(self, "Тест завершён", "Пробный прогон умной рассылки выполнен.\nРеальных отправок не было.")
+            return
         icon = "✅" if success else "⚠️"
         QMessageBox.information(self, "Умная рассылка завершена", f"{icon} {summary}")
 

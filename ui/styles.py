@@ -352,6 +352,7 @@ _DARK_STYLESHEET = """
                 padding: 0;
             }
             QPushButton#addAddrBtn:hover { background: #1e2a5a; }
+            QFrame#recentPhotoSep { color: #3a3a55; max-width: 1px; }
             QPushButton#recentPhotoBtn {
                 border: 1px solid #3a3a55;
                 border-radius: 6px;
@@ -853,6 +854,7 @@ _LIGHT_STYLESHEET = """
                 padding: 0;
             }
             QPushButton#addAddrBtn:hover { background: #eef4ff; }
+            QFrame#recentPhotoSep { color: #c7d0db; max-width: 1px; }
             QPushButton#recentPhotoBtn {
                 border: 1px solid #c7d0db;
                 border-radius: 6px;

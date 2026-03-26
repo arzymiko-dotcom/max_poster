@@ -321,18 +321,6 @@ def run_silent_update() -> None:
         log.warning("Не удалось создать lock-файл: %s", e)
 
     try:
-        # Проверяем: запущен ли уже MAX POST — если да, откладываем обновление
-        try:
-            check = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq MAX POST.exe", "/NH"],
-                capture_output=True, text=True, timeout=5,
-            )
-            if "MAX POST.exe" in check.stdout:
-                log.info("MAX POST запущен — обновление отложено до следующего входа")
-                return
-        except Exception:
-            pass  # tasklist недоступен — продолжаем
-
         info = _fetch_remote_info()
         if info is None:
             log.info("Нет доступа к GitHub — пропуск")
