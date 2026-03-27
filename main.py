@@ -16,8 +16,8 @@ from pathlib import Path
 
 import requests
 
-from PyQt6.QtCore import QDateTime, QSize, QTime, QTimer, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPen, QPixmap
+from PyQt6.QtCore import QDateTime, QSize, QTime, QTimer, Qt, QThread, QUrl, pyqtSignal
+from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -140,6 +140,24 @@ class _ExcelWarmupWorker(QThread):
             self._matcher.load_dataframe()
         except Exception as exc:
             _log.warning("Excel preload failed: %s", exc)
+
+
+class _AddrSearchWorker(QThread):
+    """Ищет адреса в ExcelMatcher в фоне — не блокирует UI при вводе текста."""
+    results_ready = pyqtSignal(list)  # list[MatchResult]
+
+    def __init__(self, query: str, matcher: "ExcelMatcher", parent=None) -> None:
+        super().__init__(parent)
+        self._query = query
+        self._matcher = matcher
+
+    def run(self) -> None:
+        try:
+            results = self._matcher.search(self._query)
+        except Exception as exc:
+            _log.warning("addr search failed: %s", exc)
+            results = []
+        self.results_ready.emit(results)
 
 
 class _AddressCheckWorker(QThread):
@@ -924,6 +942,7 @@ class MainWindow(QMainWindow):
         self._smart_worker: "_SmartSendWorker | None" = None
         self._vk_sched_worker: "VkScheduleWorker | None" = None
         self._vk_fetch_worker: "_VkWallFetchWorker | None" = None
+        self._addr_search_worker: "_AddrSearchWorker | None" = None
         self._excel_mtime: float = (
             self.excel_path.stat().st_mtime if self.excel_path.exists() else 0.0
         )
@@ -997,7 +1016,7 @@ class MainWindow(QMainWindow):
         if self._matcher is not None:
             _warmup = _ExcelWarmupWorker(self._matcher, self)
             _warmup.finished.connect(_warmup.deleteLater)
-            QTimer.singleShot(200, _warmup.start)
+            _warmup.start()
         # Проверки безопасности — откладываем чтобы не мешать старту
         QTimer.singleShot(4000, self._check_token_reminder)
         QTimer.singleShot(6000, self._check_vk_token)
@@ -1098,6 +1117,13 @@ class MainWindow(QMainWindow):
         font_action.triggered.connect(self._open_font_picker)
         view_menu.addAction(font_action)
 
+        guide_action = QAction("📖 Руководство пользователя", self)
+        guide_action.setShortcut(QKeySequence("F1"))
+        guide_action.triggered.connect(self._open_help)
+        help_menu.addAction(guide_action)
+
+        help_menu.addSeparator()
+
         about_action = QAction("О программе", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
@@ -1165,6 +1191,13 @@ class MainWindow(QMainWindow):
         )
         self._smart_send_btn.clicked.connect(self._start_smart_send)
         lh_layout.addWidget(self._smart_send_btn)
+
+        self._open_file_btn = QPushButton("📄 Файл")
+        self._open_file_btn.setObjectName("tplMiniBtn")
+        self._open_file_btn.setFixedHeight(28)
+        self._open_file_btn.setToolTip("Открыть текстовый файл (.txt, .docx) и вставить текст")
+        self._open_file_btn.clicked.connect(self._open_text_file)
+        lh_layout.addWidget(self._open_file_btn)
 
         self._tpl_btn = QPushButton("📋")
         self._tpl_btn.setObjectName("tplMiniBtn")
@@ -1329,9 +1362,15 @@ class MainWindow(QMainWindow):
         self._addr_search_results.setObjectName("addrSearchResults")
         self._addr_search_results.setMaximumHeight(180)
         self._addr_search_results.hide()
-        self._addr_search_results.itemClicked.connect(self._on_addr_search_item_clicked)
-        self._addr_search_results.itemActivated.connect(self._on_addr_search_item_clicked)
+        self._addr_search_results.itemChanged.connect(self._on_addr_search_check_changed)
         ctrl_layout.addWidget(self._addr_search_results)
+
+        self._addr_search_add_btn = QPushButton("Добавить")
+        self._addr_search_add_btn.setObjectName("tplMiniBtn")
+        self._addr_search_add_btn.setFixedHeight(24)
+        self._addr_search_add_btn.hide()
+        self._addr_search_add_btn.clicked.connect(self._add_checked_search_results)
+        ctrl_layout.addWidget(self._addr_search_add_btn)
 
         self._addr_search_timer = QTimer(self)
         self._addr_search_timer.setSingleShot(True)
@@ -1513,10 +1552,17 @@ class MainWindow(QMainWindow):
         self._cancel_button.hide()
         self._cancel_button.clicked.connect(self._cancel_send)
 
+        self._chk_require_photo = QCheckBox("📷 Фото")
+        self._chk_require_photo.setObjectName("requirePhotoChk")
+        self._chk_require_photo.setChecked(True)
+        self._chk_require_photo.setToolTip("Требовать фото перед публикацией")
+        self._chk_require_photo.toggled.connect(self._on_require_photo_toggled)
+
         send_row_w = QWidget()
         send_row_l = QHBoxLayout(send_row_w)
         send_row_l.setContentsMargins(0, 0, 0, 0)
         send_row_l.setSpacing(6)
+        send_row_l.addWidget(self._chk_require_photo)
         send_row_l.addWidget(self.send_button, 1)
 
         send_area = QFrame()
@@ -1960,6 +2006,11 @@ class MainWindow(QMainWindow):
             self._cl_photo.setText(
                 '<span style="color:#22a35a;">&#10003;</span>  Фото загружено'
             )
+        elif self._chk_require_photo.isChecked():
+            self._cl_photo.setText(
+                '<span style="color:#e07b00;">&#9679;</span>'
+                '  <span style="color:#e07b00;">Фото обязательно</span>'
+            )
         else:
             self._cl_photo.setText(
                 '<span style="color:#c0c8d4;">&#9675;</span>'
@@ -2017,6 +2068,10 @@ class MainWindow(QMainWindow):
             "Фото закреплено — не сбросится при очистке формы" if checked
             else "Закрепить фото — не сбрасывать при очистке формы"
         )
+
+    def _on_require_photo_toggled(self, _checked: bool) -> None:
+        self._update_checklist()
+        self.save_state()
 
     def _check_excel_changed(self) -> None:
         """Проверяет, изменился ли файл реестра адресов."""
@@ -2142,17 +2197,18 @@ class MainWindow(QMainWindow):
 
     def _on_addr_search_changed(self, text: str) -> None:
         """Запускает debounce-таймер при изменении текста в поиске."""
-        self._addr_search_timer.start(300)
+        self._addr_search_timer.start(150)
         if not text.strip():
             self._addr_search_results.hide()
             self._addr_search_results.clear()
+            self._addr_search_add_btn.hide()
 
     def _do_addr_search(self) -> None:
-        """Ищет адреса в Excel и показывает результаты под полем поиска."""
+        """Запускает поиск адресов в фоновом потоке — не блокирует UI."""
         q = self._addr_search.text().strip()
-        self._addr_search_results.clear()
         if not q or len(q) < 2:
             self._addr_search_results.hide()
+            self._addr_search_results.clear()
             return
 
         if self._matcher is None:
@@ -2161,51 +2217,109 @@ class MainWindow(QMainWindow):
             else:
                 return
 
-        results = self._matcher.search(q)
+        # Отменяем предыдущий поиск если ещё идёт
+        if self._addr_search_worker and self._addr_search_worker.isRunning():
+            self._addr_search_worker.quit()
+            self._addr_search_worker.wait(50)
+
+        worker = _AddrSearchWorker(q, self._matcher, self)
+        worker.results_ready.connect(self._on_addr_search_results)
+        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(lambda: setattr(self, '_addr_search_worker', None))
+        self._addr_search_worker = worker
+        worker.start()
+
+    def _on_addr_search_results(self, results: list) -> None:
+        """Показывает результаты поиска с чекбоксами (вызывается из фонового потока)."""
+        self._addr_search_results.blockSignals(True)
+        self._addr_search_results.clear()
         if not results:
             self._addr_search_results.hide()
+            self._addr_search_add_btn.hide()
+            self._addr_search_results.blockSignals(False)
             return
-
         for match in results:
             item = QListWidgetItem(match.address)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Unchecked)
             item.setData(Qt.ItemDataRole.UserRole, match)
             self._addr_search_results.addItem(item)
+        self._addr_search_results.blockSignals(False)
         self._addr_search_results.show()
+        self._update_search_add_btn()
+
+    def _on_addr_search_check_changed(self, item: QListWidgetItem) -> None:
+        self._update_search_add_btn()
+
+    def _update_search_add_btn(self) -> None:
+        """Обновляет текст и видимость кнопки «Добавить»."""
+        total = self._addr_search_results.count()
+        if total == 0:
+            self._addr_search_add_btn.hide()
+            return
+        checked = sum(
+            1 for i in range(total)
+            if self._addr_search_results.item(i).checkState() == Qt.CheckState.Checked
+        )
+        if checked:
+            self._addr_search_add_btn.setText(f"✓ Добавить ({checked})")
+        else:
+            self._addr_search_add_btn.setText(f"Добавить все ({total})")
+        self._addr_search_add_btn.show()
 
     def _addr_search_accept_first(self) -> None:
-        """Enter в поле поиска — добавляет первый результат без клика мышью."""
+        """Enter в поле поиска — добавляет отмеченные (или все если ничего не отмечено)."""
         if self._addr_search_results.count() > 0:
-            self._on_addr_search_item_clicked(self._addr_search_results.item(0))
+            self._add_checked_search_results()
 
-    def _on_addr_search_item_clicked(self, item: QListWidgetItem) -> None:
-        """Добавляет выбранный из поиска адрес в список рассылки."""
-        match: MatchResult | None = item.data(Qt.ItemDataRole.UserRole)
-        if not match:
+    def _add_checked_search_results(self) -> None:
+        """Добавляет все отмеченные адреса (или все если ничего не отмечено)."""
+        total = self._addr_search_results.count()
+        if not total:
             return
 
-        # Проверяем, нет ли уже такого адреса/chat_id в списке
-        for i in range(self._addr_list.count()):
-            existing = self._addr_list.item(i)
-            if not existing:
-                continue
-            ex_m = existing.data(Qt.ItemDataRole.UserRole)
-            if ex_m and (ex_m.address == match.address or
-                         (match.chat_id and ex_m.chat_id == match.chat_id)):
-                self._addr_search.clear()
-                self._addr_search_results.hide()
-                return
+        checked_items = [
+            self._addr_search_results.item(i)
+            for i in range(total)
+            if self._addr_search_results.item(i).checkState() == Qt.CheckState.Checked
+        ]
+        # Если ничего не отмечено — добавляем все
+        if not checked_items:
+            checked_items = [self._addr_search_results.item(i) for i in range(total)]
 
-        new_item = QListWidgetItem(match.address)
-        new_item.setFlags(new_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        new_item.setCheckState(Qt.CheckState.Checked)
-        new_item.setData(Qt.ItemDataRole.UserRole, match)
-        new_item.setData(_MANUAL_ROLE, True)
-        self._addr_list.addItem(new_item)
-        self._update_checklist()
-        self.save_state()
+        added = 0
+        for item in checked_items:
+            match: MatchResult | None = item.data(Qt.ItemDataRole.UserRole)
+            if not match:
+                continue
+            # Проверяем дубликаты
+            duplicate = False
+            for i in range(self._addr_list.count()):
+                ex = self._addr_list.item(i)
+                if not ex:
+                    continue
+                ex_m = ex.data(Qt.ItemDataRole.UserRole)
+                if ex_m and (ex_m.address == match.address or
+                             (match.chat_id and ex_m.chat_id == match.chat_id)):
+                    duplicate = True
+                    break
+            if duplicate:
+                continue
+            new_item = QListWidgetItem(match.address)
+            new_item.setFlags(new_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            new_item.setCheckState(Qt.CheckState.Checked)
+            new_item.setData(Qt.ItemDataRole.UserRole, match)
+            new_item.setData(_MANUAL_ROLE, True)
+            self._addr_list.addItem(new_item)
+            added += 1
+
+        if added:
+            self._update_checklist()
+            self.save_state()
 
         self._addr_search.clear()
         self._addr_search_results.hide()
+        self._addr_search_add_btn.hide()
 
     def clear_form(self) -> None:
         self._save_report_btn.hide()
@@ -2471,6 +2585,10 @@ class MainWindow(QMainWindow):
         text = self.text_input.toPlainText().strip()
         if not text:
             QMessageBox.warning(self, "Отправка", "Нельзя отправить пустой текст.")
+            return
+
+        if self._chk_require_photo.isChecked() and self.image_path is None:
+            QMessageBox.warning(self, "Отправка", "Фото не загружено.\nВыберите фото или снимите галочку «📷 Фото».")
             return
 
         send_max = self.chk_max.isChecked()
@@ -3196,6 +3314,43 @@ class MainWindow(QMainWindow):
         self._vk_posts_btn.setText("📰 ВК посты")
         QMessageBox.warning(self, "ВК посты", f"Ошибка загрузки постов:\n{msg}")
 
+    def _open_text_file(self) -> None:
+        """Открывает .txt или .docx и вставляет текст в поле ввода."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Открыть файл", "",
+            "Текстовые файлы (*.txt *.docx);;Все файлы (*)"
+        )
+        if not path:
+            return
+        p = Path(path)
+        try:
+            if p.suffix.lower() == ".docx":
+                try:
+                    from docx import Document
+                except ImportError:
+                    QMessageBox.warning(
+                        self, "Ошибка",
+                        "Для открытия .docx установите:\npip install python-docx"
+                    )
+                    return
+                doc = Document(str(p))
+                text = "\n".join(para.text for para in doc.paragraphs if para.text.strip())
+            else:
+                raw = p.read_bytes()
+                for enc in ("utf-8-sig", "utf-8", "cp1251"):
+                    try:
+                        text = raw.decode(enc)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                else:
+                    text = raw.decode("utf-8", errors="replace")
+            text = text.strip()
+            if text:
+                self.text_input.setPlainText(text)
+        except Exception as exc:
+            QMessageBox.warning(self, "Ошибка открытия файла", str(exc))
+
     def _open_templates_menu(self) -> None:
         """Показывает меню шаблонов под кнопкой 📋."""
         menu = QMenu(self)
@@ -3335,6 +3490,7 @@ class MainWindow(QMainWindow):
             "last_vk_invalid_warning": self._last_vk_invalid_warning,
             "recent_photos": self._recent_photos,
             "photo_pinned": self._photo_pinned,
+            "require_photo": self._chk_require_photo.isChecked(),
             "splitter_sizes": self._main_splitter.sizes(),
         })
 
@@ -3360,6 +3516,7 @@ class MainWindow(QMainWindow):
         self._rebuild_recent_bar()
         self._photo_pinned = bool(data.get("photo_pinned", False))
         self._pin_photo_btn.setChecked(self._photo_pinned)
+        self._chk_require_photo.setChecked(bool(data.get("require_photo", True)))
         splitter_sizes = data.get("splitter_sizes")
         if splitter_sizes and len(splitter_sizes) == 2:
             self._main_splitter.setSizes(splitter_sizes)
@@ -3518,6 +3675,9 @@ class MainWindow(QMainWindow):
         self._addr_search_timer.stop()
         self._hist_search_timer.stop()
         self._excel_watch_timer.stop()
+        if self._addr_search_worker and self._addr_search_worker.isRunning():
+            self._addr_search_worker.quit()
+            self._addr_search_worker.wait(200)
         self._do_save_state()
 
         for entry in self._scheduled_posts.values():
@@ -3599,6 +3759,15 @@ class MainWindow(QMainWindow):
             "Ctrl + Enter  —  Опубликовать\n"
             "Ctrl + L       —  Загрузить фото\n"
         )
+
+    def _open_help(self) -> None:
+        """Открывает руководство пользователя в браузере."""
+        base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+        help_path = base / "assets" / "help.html"
+        if help_path.exists():
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(help_path)))
+        else:
+            QMessageBox.warning(self, "Справка", f"Файл руководства не найден:\n{help_path}")
 
     def show_about(self) -> None:
         QMessageBox.information(

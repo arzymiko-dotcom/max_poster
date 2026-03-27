@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MAX POST — Руководство</title>
+<style>
+/* ── Переменные ──────────────────────────────────────────────── */
+:root {
+  --bg:        #0c1220;
+  --bg2:       #111926;
+  --bg3:       #182035;
+  --bg4:       #1e2840;
+  --border:    #243050;
+  --border2:   #2d3e60;
+  --accent:    #4f72ff;
+  --accent2:   #7fa4ff;
+  --accent3:   #c4d4ff;
+  --text:      #cdd8f5;
+  --text-dim:  #7a8cb0;
+  --text-faint:#3d5080;
+  --green:     #2ec76a;
+  --green-bg:  #0d2a1a;
+  --orange:    #f0900a;
+  --orange-bg: #271800;
+  --red:       #e05050;
+  --purple:    #a07fff;
+  --sidebar-w: 252px;
+  --radius:    10px;
+}
+
+/* ── Reset + Base ────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; font-size: 15px; }
+body {
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.72;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+/* ── Sidebar ─────────────────────────────────────────────────── */
+#sidebar {
+  position: fixed; top: 0; left: 0;
+  width: var(--sidebar-w); height: 100vh;
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  z-index: 200;
+}
+.sidebar-head {
+  padding: 22px 20px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.sidebar-logo {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 6px;
+}
+.sidebar-logo .icon {
+  width: 32px; height: 32px;
+  background: linear-gradient(135deg, var(--accent) 0%, #7b3fef 100%);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; flex-shrink: 0;
+}
+.sidebar-logo .name { font-size: 16px; font-weight: 700; color: #fff; letter-spacing: 0.2px; }
+.sidebar-logo .ver {
+  font-size: 11px; font-weight: 600;
+  background: var(--bg4); color: var(--accent2);
+  border: 1px solid var(--border2);
+  border-radius: 20px; padding: 1px 7px; margin-left: auto;
+}
+.sidebar-desc { font-size: 12px; color: var(--text-dim); }
+
+#sidebar nav {
+  flex: 1; overflow-y: auto; padding: 10px 0 20px;
+}
+.nav-group { margin-top: 6px; }
+.nav-label {
+  padding: 10px 18px 4px;
+  font-size: 10.5px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 1px;
+  color: var(--text-faint);
+}
+#sidebar nav a {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 18px;
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 13.5px;
+  border-left: 3px solid transparent;
+  border-radius: 0 6px 6px 0;
+  transition: all 0.14s;
+  margin-right: 8px;
+}
+#sidebar nav a .nav-icon { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
+#sidebar nav a:hover { color: var(--text); background: var(--bg3); }
+#sidebar nav a.active {
+  color: var(--accent2);
+  border-left-color: var(--accent);
+  background: linear-gradient(90deg, rgba(79,114,255,.15) 0%, transparent 100%);
+  font-weight: 500;
+}
+
+/* ── Content ─────────────────────────────────────────────────── */
+#content {
+  margin-left: var(--sidebar-w);
+  padding: 0 56px 100px;
+  max-width: calc(var(--sidebar-w) + 820px);
+}
+
+/* ── Hero ────────────────────────────────────────────────────── */
+.hero {
+  margin: 0 -56px;
+  padding: 52px 56px 44px;
+  background: linear-gradient(135deg,
+    rgba(79,114,255,.18) 0%,
+    rgba(123,63,239,.12) 40%,
+    rgba(12,18,32,0) 70%);
+  border-bottom: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+}
+.hero::before {
+  content: '';
+  position: absolute; top: -60px; right: -40px;
+  width: 360px; height: 360px;
+  background: radial-gradient(circle, rgba(79,114,255,.12) 0%, transparent 65%);
+  pointer-events: none;
+}
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(79,114,255,.2);
+  border: 1px solid rgba(79,114,255,.4);
+  border-radius: 20px; padding: 3px 12px;
+  font-size: 12px; font-weight: 600; color: var(--accent2);
+  margin-bottom: 16px;
+}
+.hero-badge::before { content: '●'; color: var(--green); font-size: 8px; }
+.hero h1 {
+  font-size: 32px; font-weight: 800; color: #fff;
+  line-height: 1.2; margin-bottom: 10px;
+  letter-spacing: -0.5px;
+}
+.hero h1 span { color: var(--accent2); }
+.hero p { font-size: 15px; color: var(--text-dim); max-width: 520px; }
+.hero-tags { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
+.hero-tag {
+  background: var(--bg3); border: 1px solid var(--border2);
+  border-radius: 20px; padding: 4px 12px;
+  font-size: 12px; color: var(--text-dim);
+}
+
+/* ── Typography ──────────────────────────────────────────────── */
+h2 {
+  font-size: 22px; font-weight: 700; color: #fff;
+  margin: 56px 0 6px;
+  display: flex; align-items: center; gap: 10px;
+}
+h2 .h2-icon {
+  width: 36px; height: 36px;
+  background: linear-gradient(135deg, var(--bg4), var(--bg3));
+  border: 1px solid var(--border2);
+  border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 17px; flex-shrink: 0;
+}
+.h2-line {
+  height: 1px; background: var(--border);
+  margin-bottom: 20px; margin-top: 12px;
+}
+h3 {
+  font-size: 15px; font-weight: 600;
+  color: var(--accent2);
+  margin: 26px 0 10px;
+  display: flex; align-items: center; gap: 7px;
+}
+h3::before { content: ''; display: block; width: 3px; height: 15px; background: var(--accent); border-radius: 2px; }
+p { margin-bottom: 12px; color: var(--text); }
+ul, ol { padding-left: 22px; margin-bottom: 12px; }
+li { margin-bottom: 6px; color: var(--text); }
+strong { color: #fff; font-weight: 600; }
+a { color: var(--accent2); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code {
+  background: var(--bg4);
+  border: 1px solid var(--border2);
+  border-radius: 5px;
+  padding: 1px 7px;
+  font-family: 'Cascadia Code', 'Consolas', 'Courier New', monospace;
+  font-size: 13px; color: var(--accent3);
+}
+pre {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  font-family: 'Cascadia Code', 'Consolas', monospace;
+  font-size: 13px; color: var(--accent3);
+  line-height: 1.6; overflow-x: auto;
+  margin: 12px 0;
+}
+
+/* ── Steps ───────────────────────────────────────────────────── */
+.steps { counter-reset: step; display: flex; flex-direction: column; gap: 8px; margin: 14px 0; }
+.step {
+  display: flex; gap: 14px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  align-items: flex-start;
+  transition: border-color 0.15s;
+}
+.step:hover { border-color: var(--border2); }
+.step-n {
+  counter-increment: step;
+  min-width: 28px; height: 28px;
+  background: linear-gradient(135deg, var(--accent) 0%, #7b3fef 100%);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; color: #fff; flex-shrink: 0;
+}
+.step-n::before { content: counter(step); }
+.step-body { flex: 1; padding-top: 3px; font-size: 14.5px; }
+
+/* ── Callouts ────────────────────────────────────────────────── */
+.callout {
+  border-radius: var(--radius);
+  padding: 13px 16px 13px 46px;
+  margin: 14px 0;
+  font-size: 14px;
+  position: relative;
+  line-height: 1.6;
+}
+.callout::before {
+  position: absolute; left: 14px; top: 13px;
+  font-size: 16px;
+}
+.callout-tip    { background: var(--green-bg);  border: 1px solid rgba(46,199,106,.25); color: #a0e8bc; }
+.callout-tip::before  { content: '✅'; }
+.callout-warn   { background: var(--orange-bg); border: 1px solid rgba(240,144,10,.25);  color: #e8c89a; }
+.callout-warn::before { content: '⚠️'; }
+.callout-info   { background: #0e1a38;          border: 1px solid rgba(79,114,255,.3);   color: #a0b8f0; }
+.callout-info::before { content: 'ℹ️'; }
+
+/* ── Keyboard ────────────────────────────────────────────────── */
+kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg4);
+  border: 1px solid var(--border2);
+  border-bottom: 2px solid var(--border2);
+  border-radius: 5px; padding: 1px 8px;
+  font-size: 12px; font-weight: 600;
+  font-family: 'Segoe UI', sans-serif; color: var(--text);
+  white-space: nowrap;
+}
+
+/* ── Badges ──────────────────────────────────────────────────── */
+.badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 9px; border-radius: 20px;
+  font-size: 12px; font-weight: 600; vertical-align: middle;
+}
+.badge-blue   { background: rgba(79,114,255,.18); color: var(--accent2); border: 1px solid rgba(79,114,255,.3); }
+.badge-green  { background: rgba(46,199,106,.15); color: #5de89a;        border: 1px solid rgba(46,199,106,.3); }
+.badge-orange { background: rgba(240,144,10,.15); color: #f5b84a;        border: 1px solid rgba(240,144,10,.3); }
+.badge-red    { background: rgba(224,80,80,.15);  color: #f08080;        border: 1px solid rgba(224,80,80,.3); }
+
+/* ── Table ───────────────────────────────────────────────────── */
+.table-wrap { overflow-x: auto; margin: 14px 0; border-radius: var(--radius); border: 1px solid var(--border); }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+thead th {
+  text-align: left; padding: 11px 14px;
+  background: var(--bg3);
+  color: var(--accent2); font-weight: 600; font-size: 13px;
+  border-bottom: 1px solid var(--border);
+}
+td { padding: 9px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+tbody tr { transition: background 0.12s; }
+tbody tr:hover td { background: var(--bg3); }
+
+/* ── Cards grid ──────────────────────────────────────────────── */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 10px; margin: 14px 0; }
+.card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 12px;
+  text-align: center;
+  transition: border-color 0.14s, transform 0.14s;
+  cursor: default;
+}
+.card:hover { border-color: var(--border2); transform: translateY(-1px); }
+.card .c-icon { font-size: 24px; display: block; margin-bottom: 7px; }
+.card .c-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.card .c-desc { font-size: 11px; color: var(--text-dim); margin-top: 3px; }
+
+/* ── UI Demo block ───────────────────────────────────────────── */
+.demo {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin: 14px 0;
+}
+.demo-header {
+  background: var(--bg3);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 14px;
+  font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.8px;
+  color: var(--text-dim);
+  display: flex; align-items: center; gap: 8px;
+}
+.demo-header::before {
+  content: ''; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+  display: inline-block;
+}
+.demo-body { padding: 16px 18px; }
+
+/* ── Feature highlight ───────────────────────────────────────── */
+.feature-row {
+  display: flex; gap: 12px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin: 10px 0;
+  align-items: flex-start;
+  transition: border-color 0.14s;
+}
+.feature-row:hover { border-color: var(--border2); }
+.feature-icon {
+  width: 38px; height: 38px;
+  background: linear-gradient(135deg, var(--bg4), var(--bg3));
+  border: 1px solid var(--border2);
+  border-radius: 9px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; flex-shrink: 0;
+}
+.feature-text .title { font-size: 14.5px; font-weight: 600; color: #fff; margin-bottom: 3px; }
+.feature-text .desc  { font-size: 13.5px; color: var(--text-dim); }
+
+/* ── Anchor helper ───────────────────────────────────────────── */
+.anchor { display: block; height: 0; visibility: hidden; margin-top: -24px; padding-top: 80px; }
+
+/* ── Divider ─────────────────────────────────────────────────── */
+.divider { height: 1px; background: var(--border); margin: 8px 0 20px; }
+
+/* ── Color pill ──────────────────────────────────────────────── */
+.color-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--text-dim);
+}
+.color-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Var table ───────────────────────────────────────────────── */
+.var { font-family: monospace; color: var(--purple); }
+
+@media (max-width: 768px) {
+  #sidebar { display: none; }
+  #content { margin-left: 0; padding: 0 20px 60px; }
+  .hero { margin: 0 -20px; padding: 36px 20px 28px; }
+  h2 { font-size: 19px; }
+}
+</style>
+</head>
+<body>
+
+<!-- ══════════ SIDEBAR ══════════ -->
+<div id="sidebar">
+  <div class="sidebar-head">
+    <div class="sidebar-logo">
+      <div class="icon">📬</div>
+      <div class="name">MAX POST</div>
+      <div class="ver">v1.2.75</div>
+    </div>
+    <div class="sidebar-desc">Руководство пользователя</div>
+  </div>
+  <nav>
+    <div class="nav-group">
+      <div class="nav-label">Начало</div>
+      <a href="#start"><span class="nav-icon">🚀</span>Быстрый старт</a>
+      <a href="#tokens"><span class="nav-icon">🔑</span>Токены</a>
+      <a href="#interface"><span class="nav-icon">🖥️</span>Интерфейс</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">Работа</div>
+      <a href="#text"><span class="nav-icon">✏️</span>Ввод текста</a>
+      <a href="#addresses"><span class="nav-icon">📍</span>Адреса</a>
+      <a href="#photo"><span class="nav-icon">🖼️</span>Фото</a>
+      <a href="#platforms"><span class="nav-icon">📡</span>Платформы</a>
+      <a href="#send"><span class="nav-icon">📤</span>Отправка</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">Расширенные</div>
+      <a href="#smart"><span class="nav-icon">🔀</span>Умная рассылка</a>
+      <a href="#scheduled"><span class="nav-icon">🕐</span>Отложенная</a>
+      <a href="#templates"><span class="nav-icon">📋</span>Шаблоны</a>
+      <a href="#spell"><span class="nav-icon">🔤</span>Орфография</a>
+      <a href="#panels"><span class="nav-icon">🗂️</span>Другие панели</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">Система</div>
+      <a href="#settings"><span class="nav-icon">⚙️</span>Настройки</a>
+      <a href="#update"><span class="nav-icon">🔄</span>Обновления</a>
+      <a href="#tray"><span class="nav-icon">📌</span>Трей</a>
+      <a href="#faq"><span class="nav-icon">❓</span>FAQ</a>
+    </div>
+  </nav>
+</div>
+
+<!-- ══════════ CONTENT ══════════ -->
+<div id="content">
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-badge">Актуальная версия · 2026</div>
+  <h1>MAX POST<br><span>Руководство пользователя</span></h1>
+  <p>Программа для массовой рассылки объявлений в группы мессенджера MAX и ВКонтакте. Поддержка текста, фото, шаблонов и умной рассылки по адресам.</p>
+  <div class="hero-tags">
+    <div class="hero-tag">📬 MAX мессенджер</div>
+    <div class="hero-tag">🔵 ВКонтакте</div>
+    <div class="hero-tag">📍 Реестр адресов</div>
+    <div class="hero-tag">🔀 Умная рассылка</div>
+    <div class="hero-tag">🔄 Автообновление</div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="start"></div>
+<h2><span class="h2-icon">🚀</span>Быстрый старт</h2>
+<div class="divider"></div>
+
+<p>При первом запуске программа попросит ввести токены доступа. Без них отправка работать не будет.</p>
+
+<div class="steps">
+  <div class="step"><div class="step-n"></div><div class="step-body">
+    Запустите <strong>MAX POST.exe</strong>. Откроется главное окно программы.
+  </div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">
+    Нажмите кнопку <strong>⚙️</strong> (шестерёнка) внизу боковой панели → откроется диалог настроек.
+  </div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">
+    Введите <strong>MAX Token</strong> и/или <strong>VK User Token</strong>. Нажмите <strong>✓ Проверить</strong> рядом с каждым.
+  </div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">
+    Вернитесь в главное окно. Введите текст → выберите адреса → загрузите фото → нажмите <strong>Опубликовать</strong>.
+  </div></div>
+</div>
+
+<div class="callout callout-tip">Файл реестра адресов <code>max_address.xlsx</code> находится в папке с программой. Откройте его в Excel и заполните адреса, ссылки и ID групп.</div>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="tokens"></div>
+<h2><span class="h2-icon">🔑</span>Токены доступа</h2>
+<div class="divider"></div>
+
+<p>Откройте <strong>⚙️ Настройки</strong> в боковой панели. При первом открытии пароль пустой — нажмите ОК.</p>
+
+<h3>Токен MAX</h3>
+<div class="steps">
+  <div class="step"><div class="step-n"></div><div class="step-body">В настройках найдите поле <strong>MAX Token</strong>.</div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">Нажмите <strong>🔗 Получить токен</strong> — откроется страница авторизации в браузере.</div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">Скопируйте токен из браузера, вставьте в поле и нажмите <strong>✓ Проверить</strong>.</div></div>
+</div>
+
+<h3>Токен ВКонтакте</h3>
+<p>Токен ВК действителен около <strong>3 месяцев</strong>. Программа напомнит о смене через уведомление в трее.</p>
+<div class="callout callout-warn">После получения нового токена ВК нажмите <strong>Действия → 🔑 Сменил токены VK</strong> — это сбросит счётчик напоминаний.</div>
+
+<h3>Telegram-уведомления <span class="badge badge-blue">опционально</span></h3>
+<p>Если указать <strong>Telegram Bot Token</strong> и <strong>Chat ID</strong> — программа будет присылать отчёты об отправке прямо в Telegram.</p>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="interface"></div>
+<h2><span class="h2-icon">🖥️</span>Интерфейс</h2>
+<div class="divider"></div>
+
+<p>Главное окно делится на <strong>левую панель</strong> (адреса получателей) и <strong>правую панель</strong> (ввод данных). Граница между ними перетаскивается, размер сохраняется.</p>
+
+<h3>Боковые панели</h3>
+<div class="cards">
+  <div class="card"><span class="c-icon">📬</span><div class="c-name">Рассылка</div><div class="c-desc">Главная панель</div></div>
+  <div class="card"><span class="c-icon">💬</span><div class="c-name">ВК сообщения</div><div class="c-desc">Входящие ВК</div></div>
+  <div class="card"><span class="c-icon">📊</span><div class="c-name">Статистика</div><div class="c-desc">Отчёты</div></div>
+  <div class="card"><span class="c-icon">🤖</span><div class="c-name">AI Чат</div><div class="c-desc">DeepSeek AI</div></div>
+  <div class="card"><span class="c-icon">📁</span><div class="c-name">Общие файлы</div><div class="c-desc">Фото и документы</div></div>
+  <div class="card"><span class="c-icon">QR</span><div class="c-name">QR Коды</div><div class="c-desc">Генератор</div></div>
+</div>
+
+<h3>Тема оформления</h3>
+<p>Кнопка <strong>🌙</strong> / <strong>☀️</strong> внизу боковой панели переключает тёмную и светлую тему без перезапуска программы.</p>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="text"></div>
+<h2><span class="h2-icon">✏️</span>Ввод текста</h2>
+<div class="divider"></div>
+
+<div class="feature-row">
+  <div class="feature-icon">📄</div>
+  <div class="feature-text">
+    <div class="title">Открытие файла</div>
+    <div class="desc">Кнопка <strong>📄 Файл</strong> в заголовке раздела. Поддерживаются <code>.txt</code> (UTF-8, CP1251 — автоматически) и <code>.docx</code> (вставляется чистый текст).</div>
+  </div>
+</div>
+
+<div class="feature-row">
+  <div class="feature-icon">📋</div>
+  <div class="feature-text">
+    <div class="title">Шаблоны текста</div>
+    <div class="desc">Кнопка <strong>📋</strong> — сохранить текущий текст как шаблон или вставить сохранённый. Подробнее в разделе «Шаблоны».</div>
+  </div>
+</div>
+
+<div class="feature-row">
+  <div class="feature-icon">🔢</div>
+  <div class="feature-text">
+    <div class="title">Счётчик символов</div>
+    <div class="desc">
+      Отображается под полем ввода.<br>
+      <span class="color-pill"><span class="color-dot" style="background:#4f72ff"></span>обычный</span> &nbsp;
+      <span class="color-pill"><span class="color-dot" style="background:#f0900a"></span>близко к лимиту</span> &nbsp;
+      <span class="color-pill"><span class="color-dot" style="background:#e05050"></span>превышен</span>
+    </div>
+  </div>
+</div>
+
+<h3>Предпросмотр</h3>
+<p>Справа от поля ввода — карточка предпросмотра. Показывает как пост будет выглядеть с фото и текстом в реальном времени.</p>
+
+<div class="callout callout-tip">Перетаскивайте границу между левой и правой панелью — ширина сохраняется между запусками программы.</div>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="addresses"></div>
+<h2><span class="h2-icon">📍</span>Адреса получателей</h2>
+<div class="divider"></div>
+
+<p>Список получателей формируется в левой панели. Галочка рядом с адресом — он включён в рассылку.</p>
+
+<h3>Поиск по реестру</h3>
+<p>Введите улицу или номер дома в поле <strong>🔍 Поиск</strong> — появится список совпадений с чекбоксами.</p>
+
+<div class="demo">
+  <div class="demo-header">Мультивыбор адресов</div>
+  <div class="demo-body">
+    <div class="steps" style="margin:0">
+      <div class="step"><div class="step-n"></div><div class="step-body">Введите «есенина» → список совпадений с чекбоксами.</div></div>
+      <div class="step"><div class="step-n"></div><div class="step-body">Отметьте нужные адреса галочками.</div></div>
+      <div class="step"><div class="step-n"></div><div class="step-body">Нажмите <strong>✓ Добавить (N)</strong> — все добавятся сразу.</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="callout callout-tip">Если ничего не отмечено — кнопка показывает <strong>«Добавить все (N)»</strong>. Нажмите <kbd>Enter</kbd> для быстрого добавления.</div>
+
+<h3>Другие способы добавления</h3>
+<div class="feature-row">
+  <div class="feature-icon">✏️</div>
+  <div class="feature-text"><div class="title">Ручной ввод</div><div class="desc">Кнопка <strong>+ Добавить</strong> — ввод адреса вручную с автопоиском по реестру.</div></div>
+</div>
+<div class="feature-row">
+  <div class="feature-icon">📋</div>
+  <div class="feature-text"><div class="title">Вставка списка</div><div class="desc">Кнопка <strong>📋</strong> в заголовке — вставьте несколько адресов из буфера. Программа разберёт список и покажет диалог выбора.</div></div>
+</div>
+<div class="feature-row">
+  <div class="feature-icon">🔍</div>
+  <div class="feature-text"><div class="title">Авто-определение из текста</div><div class="desc">При вводе текста программа автоматически ищет в нём адреса и предлагает добавить. <span style="color:var(--green)">Зелёная</span> подсветка — найден, <span style="color:var(--orange)">оранжевая</span> — не найден в реестре.</div></div>
+</div>
+
+<h3>Управление списком</h3>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Действие</th><th>Способ</th></tr></thead>
+    <tbody>
+      <tr><td>Снять / поставить галочку</td><td>Двойной клик или клик по чекбоксу</td></tr>
+      <tr><td>Удалить адрес</td><td>Выделить → кнопка 🗑 или <kbd>Delete</kbd></td></tr>
+      <tr><td>ПКМ на адресе</td><td>Контекстное меню «Удалить адрес»</td></tr>
+      <tr><td>Выбрать / снять все</td><td>Кнопка <strong>☑</strong> в заголовке раздела</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warn">Рекомендуется отправлять не более <strong>10 групп за раз</strong> — во избежание временной блокировки в мессенджере MAX (ограничение ~5 минут).</div>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="photo"></div>
+<h2><span class="h2-icon">🖼️</span>Фото</h2>
+<div class="divider"></div>
+
+<div class="feature-row">
+  <div class="feature-icon">📂</div>
+  <div class="feature-text"><div class="title">Загрузка</div><div class="desc">Нажмите <strong>Загрузить фото</strong> или перетащите файл изображения прямо в окно программы. Поддерживаются JPG, PNG и другие форматы.</div></div>
+</div>
+<div class="feature-row">
+  <div class="feature-icon">📌</div>
+  <div class="feature-text"><div class="title">Закрепить фото</div><div class="desc">Кнопка <strong>📌</strong> становится <span style="color:var(--orange)">оранжевой</span> когда активна. При очистке формы фото <em>не сбрасывается</em> — удобно для серии рассылок с одним фото.</div></div>
+</div>
+<div class="feature-row">
+  <div class="feature-icon">🗂️</div>
+  <div class="feature-text"><div class="title">Галерея последних фото</div><div class="desc">Под превью — кнопки 5 последних использованных фото. Нажмите для быстрого повторного выбора.</div></div>
+</div>
+<div class="feature-row">
+  <div class="feature-icon">📷</div>
+  <div class="feature-text"><div class="title">Требовать фото</div><div class="desc">Чекбокс <strong>📷 Фото</strong> рядом с «Опубликовать». Когда включён — отправка без фото заблокирована. Защита от случайной публикации без изображения.</div></div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="platforms"></div>
+<h2><span class="h2-icon">📡</span>Платформы</h2>
+<div class="divider"></div>
+
+<div class="demo">
+  <div class="demo-header">Выбор платформы</div>
+  <div class="demo-body" style="display:flex;gap:16px;flex-wrap:wrap;">
+    <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:12px 18px;min-width:160px;">
+      <div style="font-weight:700;color:#fff;margin-bottom:4px;">☑ MAX</div>
+      <div style="font-size:13px;color:var(--text-dim)">Отправить в выбранные группы мессенджера MAX</div>
+    </div>
+    <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:12px 18px;min-width:160px;">
+      <div style="font-weight:700;color:#fff;margin-bottom:4px;">☑ ВКонтакте</div>
+      <div style="font-size:13px;color:var(--text-dim)">Опубликовать на стене выбранных групп ВК</div>
+    </div>
+  </div>
+</div>
+
+<p>Можно включить обе платформы одновременно — пост отправится в MAX <em>и</em> опубликуется в ВК.</p>
+
+<h3>Задержка между отправками</h3>
+<p>Параметр <code>SEND_DELAY_SEC</code> в настройках — пауза в секундах между отправкой в каждую следующую группу. Помогает избежать спам-фильтров.</p>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="send"></div>
+<h2><span class="h2-icon">📤</span>Отправка</h2>
+<div class="divider"></div>
+
+<div class="steps">
+  <div class="step"><div class="step-n"></div><div class="step-body">Убедитесь что текст введён и нужные адреса отмечены галочками.</div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">При необходимости загрузите фото (или снимите чекбокс <strong>📷 Фото</strong>).</div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">Нажмите <strong>Опубликовать</strong>. Кнопка покажет прогресс: «Отправка 2/5…»</div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">По завершении появится лог с результатами и прозвучит сигнал.</div></div>
+</div>
+
+<h3>Лог отправки</h3>
+<p>После рассылки в левой панели — список результатов:</p>
+<ul>
+  <li><strong style="color:var(--green)">✓ Адрес</strong> — успешно отправлено</li>
+  <li><strong style="color:var(--red)">✗ Адрес</strong> — ошибка при отправке</li>
+</ul>
+<p>Кнопка <strong>💾 Сохранить отчёт</strong> сохраняет лог в текстовый файл.</p>
+
+<h3>Отмена отправки</h3>
+<p>Во время рассылки отображается кнопка <strong>Отмена</strong> — прекращает отправку после текущего адреса.</p>
+
+<div class="callout callout-tip">Горячая клавиша публикации: <kbd>Ctrl</kbd> + <kbd>Enter</kbd></div>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="smart"></div>
+<h2><span class="h2-icon">🔀</span>Умная рассылка</h2>
+<div class="divider"></div>
+
+<p>Умная рассылка — когда один текст содержит несколько блоков для разных адресов, разделённых пустыми строками. Каждый блок автоматически отправляется нужному получателю.</p>
+
+<div class="demo">
+  <div class="demo-header">Пример текста</div>
+  <div class="demo-body">
+<pre>Уважаемые жители!
+
+ул. Есенина д. 10
+Плановое отключение воды 15 марта с 9:00 до 18:00.
+
+ул. Есенина д. 14
+Плановое отключение воды 16 марта с 9:00 до 18:00.
+
+С уважением, УК «Пример»</pre>
+    <p style="font-size:13px;color:var(--text-dim);margin:8px 0 0">
+      Текст до первого блока — <strong>приветствие</strong> — добавляется в начало каждого.<br>
+      Текст после последнего блока — <strong>подпись</strong> — добавляется в конец каждого.
+    </p>
+  </div>
+</div>
+
+<div class="steps">
+  <div class="step"><div class="step-n"></div><div class="step-body">Нажмите кнопку <strong>🔀 Умная</strong> в заголовке «Ввод данных».</div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">Откроется диалог предпросмотра — каждый блок с чекбоксом, видно кому и что пойдёт.</div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">Нажмите <strong>Тест</strong> для пробного прогона (без реальной отправки), или <strong>Отправить</strong>.</div></div>
+</div>
+
+<div class="callout callout-info">Блоки разделяются <strong>пустой строкой</strong>. Каждый блок должен содержать адрес из реестра <code>max_address.xlsx</code>.</div>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="scheduled"></div>
+<h2><span class="h2-icon">🕐</span>Отложенная отправка</h2>
+<div class="divider"></div>
+
+<p>Планирование публикации в ВКонтакте на конкретное время.</p>
+
+<div class="steps">
+  <div class="step"><div class="step-n"></div><div class="step-body">Включите <strong>☑ Отложить</strong> под кнопкой «Опубликовать».</div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">Выберите дату и время публикации.</div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">Нажмите <strong>Опубликовать</strong> — пост встанет в очередь ВКонтакте на указанное время.</div></div>
+</div>
+
+<div class="callout callout-info">Отложенная отправка работает только для <strong>ВКонтакте</strong>. Если программа была закрыта и пропустила время — при следующем запуске посты отправятся автоматически.</div>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="templates"></div>
+<h2><span class="h2-icon">📋</span>Шаблоны текста</h2>
+<div class="divider"></div>
+
+<p>Шаблоны позволяют сохранить часто используемые тексты и быстро вставлять их одним кликом.</p>
+
+<div class="feature-row">
+  <div class="feature-icon">💾</div>
+  <div class="feature-text"><div class="title">Сохранить шаблон</div><div class="desc">Кнопка <strong>📋</strong> → <strong>💾 Сохранить текущий текст как шаблон</strong>.</div></div>
+</div>
+<div class="feature-row">
+  <div class="feature-icon">📝</div>
+  <div class="feature-text"><div class="title">Применить шаблон</div><div class="desc">Кнопка <strong>📋</strong> → выберите шаблон из списка. Также через меню <strong>Файл → Шаблоны</strong>.</div></div>
+</div>
+
+<h3>Переменные</h3>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Переменная</th><th>Что подставляется</th></tr></thead>
+    <tbody>
+      <tr><td><code><span class="var">{{адрес}}</span></code></td><td>Адрес текущего получателя</td></tr>
+      <tr><td><code><span class="var">{{дата}}</span></code></td><td>Сегодняшняя дата (ДД.ММ.ГГГГ)</td></tr>
+      <tr><td><code><span class="var">{{месяц}}</span></code></td><td>Текущий месяц прописью</td></tr>
+      <tr><td><code><span class="var">{{год}}</span></code></td><td>Текущий год</td></tr>
+    </tbody>
+  </table>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="spell"></div>
+<h2><span class="h2-icon">🔤</span>Проверка орфографии</h2>
+<div class="divider"></div>
+
+<p>Поле ввода текста автоматически подчёркивает слова с возможными ошибками.</p>
+
+<div class="steps">
+  <div class="step"><div class="step-n"></div><div class="step-body">Нажмите <strong>правой кнопкой мыши</strong> на подчёркнутом слове.</div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">В меню появятся варианты замены вида <strong>→ правильное</strong>.</div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">Нажмите нужный вариант — слово заменится автоматически.</div></div>
+</div>
+
+<h3>Добавить в словарь</h3>
+<p>ПКМ на слове → <strong>«Добавить "слово" в словарь»</strong> — слово запомнится и больше не будет подчёркиваться.</p>
+<div class="callout callout-info">Словарь хранится в <code>%APPDATA%\MAX POST\user_dict.txt</code> — можно редактировать вручную.</div>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="panels"></div>
+<h2><span class="h2-icon">🗂️</span>Другие панели</h2>
+<div class="divider"></div>
+
+<div class="feature-row">
+  <div class="feature-icon">💬</div>
+  <div class="feature-text"><div class="title">ВК Сообщения</div><div class="desc">Просмотр входящих сообщений из групп ВКонтакте.</div></div>
+</div>
+<div class="feature-row">
+  <div class="feature-icon">📊</div>
+  <div class="feature-text"><div class="title">Статистика</div><div class="desc">Статистика отправок. Кнопка <strong>🌐 Веб-отчёт</strong> открывает подробный отчёт в браузере.</div></div>
+</div>
+<div class="feature-row">
+  <div class="feature-icon">🤖</div>
+  <div class="feature-text"><div class="title">AI Чат (DeepSeek)</div><div class="desc">Встроенный ИИ-ассистент для помощи в написании текстов. Требует ключ <code>DEEPSEEK_API_KEY</code> в настройках.</div></div>
+</div>
+<div class="feature-row">
+  <div class="feature-icon">📁</div>
+  <div class="feature-text"><div class="title">Общие файлы</div><div class="desc">Фото и документы из общего альбома ВКонтакте. Выберите фото — сразу использовать для рассылки.</div></div>
+</div>
+<div class="feature-row">
+  <div class="feature-icon">QR</div>
+  <div class="feature-text"><div class="title">QR Коды</div><div class="desc">Генератор QR-карточек по адресу. Сохраняет в папку <code>Рабочий стол / Адреса с QR /</code>.</div></div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="settings"></div>
+<h2><span class="h2-icon">⚙️</span>Настройки</h2>
+<div class="divider"></div>
+
+<p>Кнопка <strong>⚙️</strong> внизу боковой панели. Защищена паролем — по умолчанию пустой.</p>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Параметр</th><th>Описание</th></tr></thead>
+    <tbody>
+      <tr><td><strong>MAX Token</strong></td><td>Токен авторизации для мессенджера MAX</td></tr>
+      <tr><td><strong>VK User Token</strong></td><td>Токен пользователя ВКонтакте</td></tr>
+      <tr><td><strong>Telegram Bot Token</strong></td><td>Бот для отчётов (опционально)</td></tr>
+      <tr><td><strong>Telegram Chat ID</strong></td><td>ID чата для получения отчётов</td></tr>
+      <tr><td><strong>DeepSeek API Key</strong></td><td>Ключ для AI-чата</td></tr>
+      <tr><td><strong>SEND_DELAY_SEC</strong></td><td>Задержка между отправками (секунды)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h3>Тема и шрифт</h3>
+<p>Тема — кнопка 🌙/☀️ в сайдбаре. Шрифт и размер — меню <strong>Вид → Шрифт</strong>.</p>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="update"></div>
+<h2><span class="h2-icon">🔄</span>Автообновления</h2>
+<div class="divider"></div>
+
+<p>MAX POST обновляется автоматически каждые <strong>30 минут</strong> в фоне через планировщик задач Windows.</p>
+
+<div class="steps">
+  <div class="step"><div class="step-n"></div><div class="step-body">Фоновая задача проверяет наличие новой версии на сервере.</div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">При наличии обновления — установщик скачивается и запускается автоматически.</div></div>
+  <div class="step"><div class="step-n"></div><div class="step-body">Программа перезапускается. В трее: уведомление <em>«Обновлено до vX.X.X»</em>.</div></div>
+</div>
+
+<div class="callout callout-info">Лог автообновления: <code>%APPDATA%\MAX POST\update.log</code><br>Ручная проверка: меню <strong>Справка → Проверить обновления</strong></div>
+
+<h3>История версий</h3>
+<p>Кнопка с иконкой обновления в боковой панели (над кнопкой авторизации) — показывает список изменений по версиям.</p>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="tray"></div>
+<h2><span class="h2-icon">📌</span>Системный трей</h2>
+<div class="divider"></div>
+
+<p>Нажатие <strong>✕</strong> сворачивает программу в трей — она продолжает работать в фоне (отложенные посты продолжают работать).</p>
+
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Действие</th><th>Результат</th></tr></thead>
+    <tbody>
+      <tr><td>Нажать <strong>✕</strong></td><td>Свернуть в трей (программа работает)</td></tr>
+      <tr><td>Двойной клик на иконке в трее</td><td>Развернуть окно</td></tr>
+      <tr><td>ПКМ → <strong>Выход</strong></td><td>Полностью закрыть</td></tr>
+      <tr><td>Меню <strong>Файл → Выход</strong></td><td>Полностью закрыть</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-warn">Если есть активные отложенные посты — при сворачивании появится уведомление с их количеством.</div>
+
+
+<!-- ══════════════════════════════════════════════════════════ -->
+<div class="anchor" id="faq"></div>
+<h2><span class="h2-icon">❓</span>Частые вопросы</h2>
+<div class="divider"></div>
+
+<h3>Программа не отправляет в MAX</h3>
+<p>Проверьте токен MAX в настройках → <strong>✓ Проверить</strong>. Если истёк — получите новый по <strong>🔗 Получить токен</strong>.</p>
+
+<h3>Адрес не находится в поиске</h3>
+<p>Убедитесь что адрес есть в <code>max_address.xlsx</code>. Обновите реестр: <strong>Действия → 🔄 Обновить реестр адресов</strong>.</p>
+
+<h3>Файл max_address.xlsx обновился — как перезагрузить?</h3>
+<p>Программа следит за изменением файла и покажет жёлтую полосу-уведомление. Нажмите «Обновить» или <strong>Действия → Обновить реестр адресов</strong>.</p>
+
+<h3>Не работает отправка в ВКонтакте</h3>
+<p>Токен ВК живёт около 3 месяцев. Проверьте его в настройках. После смены нажмите <strong>Действия → 🔑 Сменил токены VK</strong>.</p>
+
+<h3>Где хранятся данные программы?</h3>
+<p>Папка <code>%APPDATA%\MAX POST\</code>:</p>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Файл</th><th>Содержимое</th></tr></thead>
+    <tbody>
+      <tr><td><code>.env</code></td><td>Все токены и настройки</td></tr>
+      <tr><td><code>app_state.json</code></td><td>Состояние окна, последние адреса</td></tr>
+      <tr><td><code>history.db</code></td><td>История отправок</td></tr>
+      <tr><td><code>user_dict.txt</code></td><td>Пользовательский словарь орфографии</td></tr>
+      <tr><td><code>update.log</code></td><td>Лог автообновлений</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="callout callout-tip">Для резервной копии настроек — скопируйте <code>%APPDATA%\MAX POST\.env</code>.</div>
+
+<h3>Горячие клавиши</h3>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Клавиши</th><th>Действие</th></tr></thead>
+    <tbody>
+      <tr><td><kbd>Ctrl</kbd> + <kbd>Enter</kbd></td><td>Опубликовать</td></tr>
+      <tr><td><kbd>Ctrl</kbd> + <kbd>L</kbd></td><td>Загрузить фото</td></tr>
+      <tr><td><kbd>F1</kbd></td><td>Открыть это руководство</td></tr>
+      <tr><td><kbd>Delete</kbd></td><td>Удалить выбранный адрес</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<br>
+<div style="text-align:center; padding: 28px; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-faint); font-size: 13px;">
+  <div style="font-size:24px; margin-bottom:8px;">📬</div>
+  <strong style="color:var(--text-dim)">MAX POST</strong> · Версия 1.2.75<br>
+  Руководство обновляется вместе с программой
+</div>
+
+</div><!-- /content -->
+
+<script>
+// Подсветка активного пункта при прокрутке
+const navLinks = document.querySelectorAll('#sidebar nav a[href^="#"]');
+const anchors  = document.querySelectorAll('.anchor[id]');
+
+const io = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (!e.isIntersecting) return;
+    navLinks.forEach(l => l.classList.remove('active'));
+    const a = document.querySelector(`#sidebar nav a[href="#${e.target.id}"]`);
+    if (a) a.classList.add('active');
+  });
+}, { rootMargin: '-15% 0px -75% 0px' });
+
+anchors.forEach(el => io.observe(el));
+
+// Первый пункт — активен по умолчанию
+if (navLinks[0]) navLinks[0].classList.add('active');
+</script>
+</body>
+</html>

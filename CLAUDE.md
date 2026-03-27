@@ -199,3 +199,13 @@ PyQt6 desktop-приложение для отправки объявлений 
 - После сохранения: `_save_result_widget` (QWidget-контейнер) показывает `✓ filename.png` + кнопку `📂 Открыть папку`
 - Пульс-анимация при сохранении: `QSequentialAnimationGroup` — fade_out 110мс + fade_in 300мс с `OutQuart`
 - **Важно**: результат сохранения завёрнут в `QWidget` (не голый `QHBoxLayout`) — иначе `setVisible` на дочерних виджетах не обновляет layout
+- `_chk_require_photo` (QCheckBox «📷 Фото») в `send_row_l` — блокирует публикацию без фото; `_require_photo: bool` в state; `objectName = "requirePhotoChk"`; три состояния `_cl_photo`: ✓ загружено / оранжевое «обязательно» / серое «опционально»
+- `QPushButton#tplMiniBtn:checked` — оранжевый стиль в обеих темах (кнопка 📌 меняет цвет когда закреплено)
+- Тихое автообновление (`MAX POST Updater`): задача теперь `/rl HIGHEST` + триггер `MINUTE /mo 30` (каждые 30 мин) вместо ONLOGON — обновления применяются без перезагрузки ПК; исправлено в ISS и `ensure_update_task()`
+- Орфография ПКМ меню: `_get_suggestions()` edit-distance 1 + pymorphy3 фильтр → варианты `→ слово` в контекстном меню; «Добавить в словарь» → `%APPDATA%\MAX POST\user_dict.txt`
+- `_user_dict: set[str]` — пользовательский словарь, загружается из файла в фоне вместе с morph, кэшируется в `_word_known_cache`
+- Кнопка `📄 Файл` в заголовке «Ввод данных» (рядом с ВК посты / Умная): `_open_text_file()` — открывает `.txt` + `.docx`, вставляет чистый текст в `text_input`; `python-docx>=1.1.0` в requirements + spec hiddenimports
+- `_AddrSearchWorker(QThread)` — поиск адресов в фоне; `_do_addr_search` запускает воркер, дебаунс 150ms; `_addr_search_worker` сбрасывается в None через `finished.connect(lambda: setattr(...))`
+- `_addr_search_results` с чекбоксами + `_addr_search_add_btn` — мультивыбор адресов; `_add_checked_search_results()` добавляет все отмеченные сразу; `blockSignals(True)` при заполнении списка
+- `_chk_require_photo`: `_require_photo: bool` удалён — везде `_chk_require_photo.isChecked()` (redundant state fix)
+- `_load_user_dict`: encoding fallback utf-8-sig→utf-8→cp1251→errors=replace; `_word_known_cache` определён ДО `threading.Thread(...).start()`; `_add_to_user_dict` пишет файл в фоновом треде

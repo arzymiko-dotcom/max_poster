@@ -409,6 +409,25 @@ _DARK_STYLESHEET = """
                 border-color: #7a9cff;
                 color: #ffffff;
             }
+            QPushButton#tplMiniBtn:checked {
+                background: #5a3000;
+                border-color: #f5a623;
+                color: #f5a623;
+            }
+            QCheckBox#requirePhotoChk {
+                color: #ccd6ff;
+                font-size: 12px;
+            }
+            QCheckBox#requirePhotoChk::indicator {
+                width: 14px; height: 14px;
+                border-radius: 3px;
+                border: 1px solid #4a6cf7;
+                background: #1e2a5a;
+            }
+            QCheckBox#requirePhotoChk::indicator:checked {
+                background: #4a6cf7;
+                border-color: #7a9cff;
+            }
             #sectionTitle {
                 font-size: 12px;
                 font-weight: 600;
@@ -910,6 +929,25 @@ _LIGHT_STYLESHEET = """
                 background: #2d6cdf;
                 border-color: #1a55c4;
                 color: #ffffff;
+            }
+            QPushButton#tplMiniBtn:checked {
+                background: #fff3cd;
+                border-color: #e6a817;
+                color: #b77800;
+            }
+            QCheckBox#requirePhotoChk {
+                color: #374151;
+                font-size: 12px;
+            }
+            QCheckBox#requirePhotoChk::indicator {
+                width: 14px; height: 14px;
+                border-radius: 3px;
+                border: 1px solid #2d6cdf;
+                background: #eef4ff;
+            }
+            QCheckBox#requirePhotoChk::indicator:checked {
+                background: #2d6cdf;
+                border-color: #1a55c4;
             }
             /* ── Секция платформ ──────────────────────────────────── */
             #sectionTitle {

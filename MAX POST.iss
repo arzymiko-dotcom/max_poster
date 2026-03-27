@@ -160,7 +160,7 @@ begin
   ExePath := ExpandConstant('{app}\MAX POST.exe');
   Exec(ExpandConstant('{sys}\schtasks.exe'),
        '/create /tn "MAX POST Updater" /tr "\"' + ExePath + '\" --silent-check"' +
-       ' /sc ONLOGON /delay 0002:00 /f',
+       ' /sc MINUTE /mo 30 /rl HIGHEST /f',
        '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 

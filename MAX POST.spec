@@ -45,6 +45,8 @@ a = Analysis(
         'pymorphy3', 'pymorphy3_dicts_ru', 'dawg2_python',
         # DeepSeek AI панель
         'claude_panel', 'openai',
+        # Открытие Word-документов
+        'docx', 'docx.oxml', 'docx.parts', 'lxml', 'lxml.etree',
     ],
     hookspath=[],
     hooksconfig={},

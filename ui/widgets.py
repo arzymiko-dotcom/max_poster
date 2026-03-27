@@ -1,18 +1,56 @@
 """Базовые виджеты: LineNumberedEdit, SpellCheckTextEdit, _NumberedItemDelegate, _GripSplitter."""
 
+import os
 import re
 import threading
+from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import (
     QColor, QPainter,
-    QSyntaxHighlighter, QTextCharFormat,
+    QSyntaxHighlighter, QTextCharFormat, QTextCursor,
 )
 from PyQt6.QtWidgets import QLabel, QMenu, QPlainTextEdit, QSplitter, QSplitterHandle, QStyledItemDelegate, QTextEdit
 
 
 # ── Проверка орфографии через pymorphy3 (фоновая загрузка) ──────
 _morph_analyzer = None
+
+# ── Пользовательский словарь ──────────────────────────────────────
+_USER_DICT_PATH = Path(os.environ.get("APPDATA", Path.home())) / "MAX POST" / "user_dict.txt"
+_user_dict: set[str] = set()
+
+
+def _load_user_dict() -> None:
+    try:
+        raw = _USER_DICT_PATH.read_bytes()
+        for enc in ("utf-8-sig", "utf-8", "cp1251"):
+            try:
+                text = raw.decode(enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            text = raw.decode("utf-8", errors="replace")
+        loaded = {w.strip().lower() for w in text.splitlines() if w.strip()}
+        _user_dict.update(loaded)
+        _word_known_cache.update((w, True) for w in loaded)
+    except Exception:
+        pass
+
+
+def _add_to_user_dict(word: str) -> None:
+    word = word.lower().strip()
+    _user_dict.add(word)
+    _word_known_cache[word] = True
+    snapshot = sorted(_user_dict)
+    def _save_dict():
+        try:
+            _USER_DICT_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _USER_DICT_PATH.write_text("\n".join(snapshot), encoding="utf-8")
+        except Exception:
+            pass
+    threading.Thread(target=_save_dict, daemon=True).start()
 
 
 def _get_morph():
@@ -28,19 +66,48 @@ def _load_morph_bg():
         _morph_analyzer = pymorphy3.MorphAnalyzer()
     except Exception:
         _morph_analyzer = False
-
-
-threading.Thread(target=_load_morph_bg, daemon=True).start()
+    _load_user_dict()
 
 
 _word_known_cache: dict[str, bool] = {}
 
+threading.Thread(target=_load_morph_bg, daemon=True).start()
+
+_RU_ALPHA = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"
+
 
 def _is_known(morph, word: str) -> bool:
-    """True если слово есть в словаре. Результат кэшируется на всю сессию."""
+    """True если слово есть в словаре или пользовательском списке. Кэшируется."""
     if word not in _word_known_cache:
-        _word_known_cache[word] = morph.word_is_known(word)
+        _word_known_cache[word] = (word in _user_dict) or morph.word_is_known(word)
     return _word_known_cache[word]
+
+
+def _get_suggestions(morph, word: str, max_results: int = 5) -> list[str]:
+    """Варианты исправления через edit-distance 1 + проверку pymorphy3."""
+    w = word.lower()
+    n = len(w)
+    candidates: set[str] = set()
+
+    # Удаление символа
+    for i in range(n):
+        candidates.add(w[:i] + w[i + 1:])
+
+    # Замена символа
+    for i in range(n):
+        for c in _RU_ALPHA:
+            if c != w[i]:
+                candidates.add(w[:i] + c + w[i + 1:])
+
+    # Перестановка соседних символов
+    for i in range(n - 1):
+        s = list(w)
+        s[i], s[i + 1] = s[i + 1], s[i]
+        candidates.add("".join(s))
+
+    candidates.discard(w)
+    results = [c for c in candidates if len(c) >= 2 and (_is_known(morph, c))]
+    return results[:max_results]
 
 
 class _CombinedHighlighter(QSyntaxHighlighter):
@@ -80,14 +147,47 @@ class _CombinedHighlighter(QSyntaxHighlighter):
                     self.setFormat(m.start(), len(m.group()), fmt)
 
 
+_RU_WORD_RE = re.compile(r'^[а-яёА-ЯЁ]{2,}$')
+
+
 class _SpellMixin:
     """Mixin: добавляет CombinedHighlighter к полю ввода."""
 
     def _init_spellcheck(self) -> None:
         self._spell_hl = _CombinedHighlighter(self.document())
 
+    def _add_word_to_dict(self, word: str) -> None:
+        _add_to_user_dict(word)
+        if hasattr(self, '_spell_hl'):
+            self._spell_hl.rehighlight()
+
     def contextMenuEvent(self, event) -> None:
         menu = QMenu(self)
+
+        # ── Spell check для слова под курсором ──
+        morph = _get_morph()
+        word_cursor = self.cursorForPosition(event.pos())
+        word_cursor.select(QTextCursor.SelectionType.WordUnderCursor)
+        clicked_word = word_cursor.selectedText().strip()
+
+        if morph and clicked_word and _RU_WORD_RE.match(clicked_word):
+            if not _is_known(morph, clicked_word.lower()):
+                suggestions = _get_suggestions(morph, clicked_word)
+                if suggestions:
+                    for s in suggestions:
+                        # Сохраняем регистр: если слово с заглавной — исправление тоже
+                        display = s.capitalize() if clicked_word[0].isupper() else s
+                        act = menu.addAction(f"  → {display}")
+                        act.triggered.connect(
+                            lambda _, repl=display, wc=word_cursor: wc.insertText(repl)
+                        )
+                    menu.addSeparator()
+
+                add_act = menu.addAction(f'Добавить «{clicked_word}» в словарь')
+                add_act.triggered.connect(lambda: self._add_word_to_dict(clicked_word))
+                menu.addSeparator()
+
+        # ── Стандартные пункты ──
         cursor = self.textCursor()
         has_sel = cursor.hasSelection()
 

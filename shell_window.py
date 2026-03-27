@@ -130,6 +130,21 @@ QPushButton#updBtn:hover {
     background: rgba(255,255,255,0.07);
     color: #cccccc;
 }
+QPushButton#updBtnEmoji {
+    border: none;
+    border-left: 3px solid transparent;
+    background: transparent;
+    min-width: 0px;
+    min-height: 0px;
+    color: #888aaa;
+    font-size: 22px;
+    text-align: left;
+    padding-left: 10px;
+}
+QPushButton#updBtnEmoji:hover {
+    background: rgba(255,255,255,0.07);
+    color: #cccccc;
+}
 """
 
 _CHANGELOG_POPUP_DARK = """
@@ -585,10 +600,18 @@ class _SideBar(QFrame):
         layout.addWidget(self.btn_upd)
         layout.addSpacing(2)
 
+        # Кнопка справки
+        self.btn_help = QPushButton("📖")
+        self.btn_help.setObjectName("updBtnEmoji")
+        self.btn_help.setFixedHeight(50)
+        self.btn_help.setToolTip("Руководство пользователя (F1)")
+        layout.addWidget(self.btn_help)
+        layout.addSpacing(2)
+
         # Кнопка переключения темы
         self.btn_theme = QPushButton("🌙")
-        self.btn_theme.setObjectName("updBtn")
-        self.btn_theme.setFixedHeight(40)
+        self.btn_theme.setObjectName("updBtnEmoji")
+        self.btn_theme.setFixedHeight(50)
         self.btn_theme.setToolTip("Переключить тему (тёмная / светлая)")
         layout.addWidget(self.btn_theme)
         layout.addSpacing(2)
@@ -667,6 +690,7 @@ class _SideBar(QFrame):
                     self.btn_claude, self.btn_shared, self.btn_mkd,
                     self.btn_upd, self.btn_auth, self.btn_settings):
             btn.set_expanded(show)
+        self.btn_help.setText("📖  Справка" if show else "📖")
         emoji = "☀️" if self._dark else "🌙"
         self.btn_theme.setText(f"{emoji}  Тема" if show else emoji)
 
@@ -849,6 +873,7 @@ class ShellWindow(QMainWindow):
                 lambda: self._max_win.text_input.toPlainText()
             )
 
+        self._sidebar.btn_help.clicked.connect(self._max_win._open_help)
         self._sidebar.btn_theme.clicked.connect(self._toggle_dark_mode)
 
         # ── Тема — восстанавливаем состояние ────────────────────
