@@ -3762,7 +3762,7 @@ class MainWindow(QMainWindow):
 
     def _open_help(self) -> None:
         """Открывает руководство пользователя в браузере."""
-        base = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
+        base = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).parent
         help_path = base / "assets" / "help.html"
         if help_path.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(help_path)))
