@@ -2024,8 +2024,8 @@ class MainWindow(QMainWindow):
         if checked:
             try:
                 if self._matcher is None:
-                raise RuntimeError("Реестр адресов не загружен")
-            all_matches = self._matcher.get_all()
+                    raise RuntimeError("Реестр адресов не загружен")
+                all_matches = self._matcher.get_all()
             except Exception as exc:
                 _log.warning("Не удалось загрузить все адреса: %s", exc)
                 self._chk_select_all.blockSignals(True)
