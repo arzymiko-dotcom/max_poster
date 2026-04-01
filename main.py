@@ -1586,17 +1586,15 @@ class MainWindow(QMainWindow):
         self._delay_max_spin.setSuffix(" с")
         self._delay_max_spin.setFixedWidth(58)
         self._delay_max_spin.setToolTip("Максимальная пауза (сек)")
-        self._select_all_send_btn = QPushButton("☑  Все адреса")
-        self._select_all_send_btn.setObjectName("tplMiniBtn")
-        self._select_all_send_btn.setFixedHeight(28)
-        self._select_all_send_btn.setToolTip("Выбрать все адреса / Снять все")
-        self._select_all_send_btn.clicked.connect(self._toggle_select_all)
-        delay_row_l.addWidget(self._select_all_send_btn)
-        delay_row_l.addSpacing(12)
         delay_row_l.addWidget(delay_lbl)
         delay_row_l.addWidget(self._delay_min_spin)
         delay_row_l.addWidget(delay_dash)
         delay_row_l.addWidget(self._delay_max_spin)
+        delay_row_l.addSpacing(12)
+        self._chk_select_all = QCheckBox("Выбрать все адреса")
+        self._chk_select_all.setToolTip("Отметить все адреса для рассылки")
+        self._chk_select_all.clicked.connect(self._on_select_all_chk)
+        delay_row_l.addWidget(self._chk_select_all)
         delay_row_l.addStretch()
 
         send_row_w = QWidget()
@@ -1975,16 +1973,32 @@ class MainWindow(QMainWindow):
         """Один слот вместо двух подключений itemChanged."""
         self._update_checklist()
         self.save_state()
-        tip = "Снять все" if not self._has_unchecked_items() else "Выбрать все"
-        self._select_all_btn.setToolTip(tip)
-        self._select_all_send_btn.setText(
-            "☑  Снять все" if not self._has_unchecked_items() else "☑  Все адреса"
+        self._select_all_btn.setToolTip(
+            "Снять все" if not self._has_unchecked_items() else "Выбрать все"
         )
+        # синхронизируем чекбокс «Выбрать все адреса»
+        all_checked = not self._has_unchecked_items() and self._addr_list.count() > 0
+        self._chk_select_all.blockSignals(True)
+        self._chk_select_all.setChecked(all_checked)
+        self._chk_select_all.blockSignals(False)
 
     def _toggle_select_all(self) -> None:
         """Выбирает все адреса или снимает все."""
         has_unchecked = self._has_unchecked_items()
         new_state = Qt.CheckState.Checked if has_unchecked else Qt.CheckState.Unchecked
+        try:
+            self._addr_list.blockSignals(True)
+            for i in range(self._addr_list.count()):
+                item = self._addr_list.item(i)
+                if item:
+                    item.setCheckState(new_state)
+        finally:
+            self._addr_list.blockSignals(False)
+        self._on_addr_item_changed()
+
+    def _on_select_all_chk(self, checked: bool) -> None:
+        """Чекбокс «Выбрать все адреса» — выбирает или снимает все адреса."""
+        new_state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
         try:
             self._addr_list.blockSignals(True)
             for i in range(self._addr_list.count()):
