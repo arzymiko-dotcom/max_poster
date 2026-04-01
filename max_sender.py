@@ -39,13 +39,10 @@ def _ascii_strip(value: str) -> str:
 class MaxSender:
     def __init__(self) -> None:
         self.api_url   = _ascii_strip(os.getenv("MAX_API_URL",   "https://api.green-api.com"))
-        self.media_url = _ascii_strip(os.getenv("MAX_MEDIA_URL", "https://media.green-api.com"))
         self.id_instance = _ascii_strip(os.getenv("MAX_ID_INSTANCE", ""))
         self.api_token   = _ascii_strip(os.getenv("MAX_API_TOKEN",   ""))
         if not self.api_url:
             self.api_url = "https://api.green-api.com"
-        if not self.media_url:
-            self.media_url = "https://media.green-api.com"
 
     def _check_credentials(self) -> str | None:
         """Возвращает сообщение об ошибке если учётные данные не заполнены."""
@@ -140,44 +137,30 @@ class MaxSender:
         return SendResult(True, f"Сообщение отправлено. ID: {msg_id}")
 
     _CAPTION_LIMIT = 4000
-
-    def _upload_file(self, image_path: str) -> str:
-        """Загружает файл на сервер, возвращает urlFile."""
-        upload_url = f"{self.media_url}/waInstance{self.id_instance}/uploadFile/{self.api_token}"
-        file_name = Path(image_path).name
-        _ALLOWED_MIME = {"image/jpeg", "image/png", "image/gif", "image/webp"}
-        mime_type, _ = mimetypes.guess_type(image_path)
-        if not mime_type or mime_type not in _ALLOWED_MIME:
-            ext = Path(image_path).suffix.lower()
-            raise RuntimeError(
-                f"Неподдерживаемый тип файла '{ext}'. Разрешены: JPEG, PNG, GIF, WEBP"
-            )
-        with open(image_path, "rb") as f:
-            resp = requests.post(
-                upload_url,
-                headers={"Content-Type": mime_type, "GA-Filename": file_name},
-                data=f,
-                timeout=60,
-            )
-        if not resp.ok:
-            raise RuntimeError(f"Ошибка загрузки файла ({resp.status_code}): {resp.text}")
-        url_file = _json_or_raise(resp).get("urlFile")
-        if not url_file:
-            raise RuntimeError(f"API не вернул urlFile. Ответ: {resp.text}")
-        return url_file
+    _ALLOWED_MIME = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
     def _send_with_image(self, chat_id: str, text: str, image_path: str) -> SendResult:
         caption = text if len(text) <= self._CAPTION_LIMIT else ""
         file_name = Path(image_path).name
 
-        url_file = self._upload_file(image_path)
+        mime_type, _ = mimetypes.guess_type(image_path)
+        if not mime_type or mime_type not in self._ALLOWED_MIME:
+            ext = Path(image_path).suffix.lower()
+            raise RuntimeError(
+                f"Неподдерживаемый тип файла '{ext}'. Разрешены: JPEG, PNG, GIF, WEBP"
+            )
 
-        send_url = f"{self.api_url}/waInstance{self.id_instance}/sendFileByUrl/{self.api_token}"
-        payload = {"chatId": chat_id, "urlFile": url_file, "fileName": file_name, "caption": caption}
-        resp = requests.post(send_url, json=payload, timeout=30)
+        send_url = f"{self.api_url}/waInstance{self.id_instance}/sendFileByUpload/{self.api_token}"
+        with open(image_path, "rb") as f:
+            resp = requests.post(
+                send_url,
+                data={"chatId": chat_id, "caption": caption},
+                files={"file": (file_name, f, mime_type)},
+                timeout=60,
+            )
 
         if not resp.ok:
-            return SendResult(False, f"chatId={chat_id}\nОшибка отправки ({resp.status_code}): {resp.text}")
+            return SendResult(False, f"chatId={chat_id}\nОшибка отправки фото ({resp.status_code}): {resp.text}")
 
         msg_id = _json_or_raise(resp).get("idMessage", "")
 

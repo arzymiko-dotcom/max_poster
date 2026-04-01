@@ -502,6 +502,18 @@ class _ExpandBtn(QPushButton):
             self.setText(self._label if expanded else "")
 
 
+def _emoji_icon(char: str) -> QIcon:
+    """Рисует эмодзи на прозрачном QPixmap 28×28 и возвращает QIcon."""
+    from PyQt6.QtGui import QPixmap, QPainter, QFont
+    px = QPixmap(28, 28)
+    px.fill(Qt.GlobalColor.transparent)
+    p = QPainter(px)
+    p.setFont(QFont("Segoe UI Emoji", 17))
+    p.drawText(px.rect(), Qt.AlignmentFlag.AlignCenter, char)
+    p.end()
+    return QIcon(px)
+
+
 # ──────────────────────────────────────────────────────────────
 #  Сайдбар
 # ──────────────────────────────────────────────────────────────
@@ -601,17 +613,17 @@ class _SideBar(QFrame):
         layout.addSpacing(2)
 
         # Кнопка справки
-        self.btn_help = QPushButton("📖")
-        self.btn_help.setObjectName("updBtnEmoji")
-        self.btn_help.setFixedHeight(50)
+        self.btn_help = _ExpandBtn(_assets("reference.ico"), "📖", "Справка", "settingsBtn", 50)
         self.btn_help.setToolTip("Руководство пользователя (F1)")
         layout.addWidget(self.btn_help)
         layout.addSpacing(2)
 
-        # Кнопка переключения темы
-        self.btn_theme = QPushButton("🌙")
-        self.btn_theme.setObjectName("updBtnEmoji")
-        self.btn_theme.setFixedHeight(50)
+        # Кнопка переключения темы (иконка — эмодзи 🌙/☀️ через QPixmap)
+        self.btn_theme = _ExpandBtn("", "🌙", "Тема", "settingsBtn", 50)
+        self.btn_theme.setIcon(_emoji_icon("🌙"))
+        self.btn_theme.setIconSize(QSize(24, 24))
+        self.btn_theme._has_icon = True
+        self.btn_theme.setText("")
         self.btn_theme.setToolTip("Переключить тему (тёмная / светлая)")
         layout.addWidget(self.btn_theme)
         layout.addSpacing(2)
@@ -688,11 +700,9 @@ class _SideBar(QFrame):
     def _set_btn_labels(self, show: bool) -> None:
         for btn in (self.btn_max, self.btn_qr, self.btn_stats, self.btn_vk,
                     self.btn_claude, self.btn_shared, self.btn_mkd,
-                    self.btn_upd, self.btn_auth, self.btn_settings):
+                    self.btn_upd, self.btn_auth, self.btn_settings,
+                    self.btn_help, self.btn_theme):
             btn.set_expanded(show)
-        self.btn_help.setText("📖  Справка" if show else "📖")
-        emoji = "☀️" if self._dark else "🌙"
-        self.btn_theme.setText(f"{emoji}  Тема" if show else emoji)
 
     # ── Бейдж ВК ────────────────────────────────────────────────
     def set_vk_badge(self, count: int) -> None:
@@ -705,9 +715,7 @@ class _SideBar(QFrame):
     # ── Тема ─────────────────────────────────────────────────────
     def set_dark(self, dark: bool) -> None:
         self._dark = dark
-        emoji = "☀️" if dark else "🌙"
-        suffix = "  Тема" if self._sb_expanded else ""
-        self.btn_theme.setText(emoji + suffix)
+        self.btn_theme.setIcon(_emoji_icon("☀️" if dark else "🌙"))
         self.btn_theme.setToolTip("Переключить на светлую тему" if dark else "Переключить на тёмную тему")
         self.btn_upd.set_dark(dark)
 

@@ -15,7 +15,80 @@ import sys
 import tempfile
 import time
 from datetime import datetime, timedelta
+from html.parser import HTMLParser as _HTMLParser
 from pathlib import Path
+
+
+# ── Минимальный DOM-парсер (замена bs4) ─────────────────────────
+class _Node:
+    __slots__ = ("tag", "attrs", "children")
+
+    def __init__(self, tag: str, attrs: dict):
+        self.tag = tag
+        self.attrs = attrs
+        self.children: list = []   # str | _Node
+
+    def get_text(self, strip: bool = False) -> str:
+        parts: list[str] = []
+        for c in self.children:
+            parts.append(c if isinstance(c, str) else c.get_text())
+        t = "".join(parts)
+        return t.strip() if strip else t
+
+    def get(self, attr: str, default=None):
+        return self.attrs.get(attr, default)
+
+    def find(self, tag: str) -> "_Node | None":
+        for c in self.children:
+            if isinstance(c, _Node):
+                if c.tag == tag:
+                    return c
+                found = c.find(tag)
+                if found:
+                    return found
+        return None
+
+    def find_all(self, tag: str) -> "list[_Node]":
+        result: list[_Node] = []
+        for c in self.children:
+            if isinstance(c, _Node):
+                if c.tag == tag:
+                    result.append(c)
+                result.extend(c.find_all(tag))
+        return result
+
+
+class _DOMBuilder(_HTMLParser):
+    _VOID = frozenset({"area","base","br","col","embed","hr","img","input",
+                       "link","meta","param","source","track","wbr"})
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self._root = _Node("root", {})
+        self._stack: list[_Node] = [self._root]
+
+    def handle_starttag(self, tag: str, attrs):
+        tag = tag.lower()
+        node = _Node(tag, dict(attrs))
+        self._stack[-1].children.append(node)
+        if tag not in self._VOID:
+            self._stack.append(node)
+
+    def handle_endtag(self, tag: str):
+        tag = tag.lower()
+        for i in range(len(self._stack) - 1, 0, -1):
+            if self._stack[i].tag == tag:
+                self._stack = self._stack[:i]
+                return
+
+    def handle_data(self, data: str):
+        self._stack[-1].children.append(data)
+
+    def find(self, tag: str) -> "_Node | None":
+        return self._root.find(tag)
+
+    def find_all(self, tag: str) -> "list[_Node]":
+        return self._root.find_all(tag)
 
 import pandas as pd
 import requests
@@ -346,11 +419,16 @@ class _WebFetchWorker(QThread):
     def run(self) -> None:
         self.progress.emit("Загрузка отчёта с сервера…")
         try:
-            from bs4 import BeautifulSoup
             resp = requests.get(_WEB_REPORT_URL, timeout=15)
             resp.raise_for_status()
-            soup  = BeautifulSoup(resp.text, "html.parser")
-            table = soup.find("table")
+            # Сервер отдаёт cp1251 несмотря на заголовок UTF-8
+            try:
+                html_text = resp.content.decode("utf-8")
+            except UnicodeDecodeError:
+                html_text = resp.content.decode("cp1251", errors="replace")
+            dom = _DOMBuilder()
+            dom.feed(html_text)
+            table = dom.find("table")
             if not table:
                 self.failed.emit("Таблица не найдена на странице отчёта.")
                 return
@@ -365,7 +443,7 @@ class _WebFetchWorker(QThread):
                 link    = ""
                 if len(tds) >= 4:
                     a = tds[3].find("a")
-                    link = a["href"] if a else tds[3].get_text(strip=True)
+                    link = a.attrs.get("href", "") if a else tds[3].get_text(strip=True)
                 rows.append({
                     "name":       name,
                     "members":    members,
@@ -1394,16 +1472,16 @@ class StatsPanel(QWidget):
         """Парсит HTML-отчёт подписчиков и обновляет таблицу с дельтой."""
         self._save_report_to_disk(html)
         try:
-            from bs4 import BeautifulSoup
-            soup = BeautifulSoup(html, "html.parser")
+            dom = _DOMBuilder()
+            dom.feed(html)
 
             period_text = ""
-            for p in soup.find_all("p"):
+            for p in dom.find_all("p"):
                 if "Период" in p.get_text():
                     period_text = p.get_text(strip=True)
                     break
 
-            table = soup.find("table")
+            table = dom.find("table")
             if not table:
                 raise ValueError("Таблица не найдена в HTML-файле")
 
@@ -1411,7 +1489,7 @@ class StatsPanel(QWidget):
             skip_classes  = {"average-row", "total-row"}
 
             for tr in table.find_all("tr")[1:]:
-                if set(tr.get("class", [])) & skip_classes:
+                if set(tr.attrs.get("class", "").split()) & skip_classes:
                     continue
                 tds = tr.find_all("td")
                 if len(tds) < 4:
