@@ -1552,6 +1552,7 @@ class MainWindow(QMainWindow):
         self._sched_hint_lbl.setWordWrap(True)
         self._sched_hint_lbl.hide()
         buttons_row.addWidget(self._sched_hint_lbl, 2, 0, 1, 2)
+        # строки 3 и 4 заняты delay_frame и select_all_frame (добавляются ниже)
 
         self._cancel_button = QPushButton("✕  Отменить отправку")
         self._cancel_button.setObjectName("cancelSendBtn")
@@ -1564,38 +1565,66 @@ class MainWindow(QMainWindow):
         self._chk_require_photo.setToolTip("Требовать фото перед публикацией")
         self._chk_require_photo.toggled.connect(self._on_require_photo_toggled)
 
-        # ── Настройка паузы ──────────────────────────────────────────
-        delay_row_w = QWidget()
-        delay_row_l = QHBoxLayout(delay_row_w)
-        delay_row_l.setContentsMargins(0, 0, 0, 0)
-        delay_row_l.setSpacing(4)
-        delay_lbl = QLabel("⏱ пауза:")
-        delay_lbl.setObjectName("checklistItem")
-        delay_lbl.setToolTip("Случайная пауза между отправками в группы MAX")
+        # ── Пауза (стиль как у «Отложить») ───────────────────────────
+        delay_frame = QFrame()
+        delay_frame.setObjectName("scheduleRow")
+        delay_fl = QHBoxLayout(delay_frame)
+        delay_fl.setContentsMargins(0, 0, 0, 0)
+        delay_fl.setSpacing(8)
+
+        self._chk_delay = QCheckBox("Пауза")
+        self._chk_delay.setObjectName("scheduleChk")
+        self._chk_delay.setToolTip("Случайная пауза между отправками в группы MAX")
+        self._chk_delay.setChecked(True)
+        self._chk_delay.toggled.connect(self._on_delay_toggled)
+
         self._delay_min_spin = QSpinBox()
+        self._delay_min_spin.setObjectName("scheduleHour")
         self._delay_min_spin.setRange(1, 120)
         self._delay_min_spin.setValue(5)
         self._delay_min_spin.setSuffix(" с")
-        self._delay_min_spin.setFixedWidth(58)
+        self._delay_min_spin.setFixedWidth(52)
         self._delay_min_spin.setToolTip("Минимальная пауза (сек)")
+
         delay_dash = QLabel("–")
-        delay_dash.setObjectName("checklistItem")
+        delay_dash.setObjectName("scheduleTimeSep")
+
         self._delay_max_spin = QSpinBox()
+        self._delay_max_spin.setObjectName("scheduleMin")
         self._delay_max_spin.setRange(1, 120)
         self._delay_max_spin.setValue(12)
         self._delay_max_spin.setSuffix(" с")
-        self._delay_max_spin.setFixedWidth(58)
+        self._delay_max_spin.setFixedWidth(52)
         self._delay_max_spin.setToolTip("Максимальная пауза (сек)")
-        delay_row_l.addWidget(delay_lbl)
-        delay_row_l.addWidget(self._delay_min_spin)
-        delay_row_l.addWidget(delay_dash)
-        delay_row_l.addWidget(self._delay_max_spin)
-        delay_row_l.addSpacing(12)
+
+        self._delay_widget = QFrame()
+        self._delay_widget.setObjectName("scheduleRow")
+        _dw = QHBoxLayout(self._delay_widget)
+        _dw.setContentsMargins(0, 0, 0, 0)
+        _dw.setSpacing(4)
+        _dw.addWidget(self._delay_min_spin)
+        _dw.addWidget(delay_dash)
+        _dw.addWidget(self._delay_max_spin)
+
+        delay_fl.addWidget(self._chk_delay)
+        delay_fl.addWidget(self._delay_widget)
+        delay_fl.addStretch()
+        buttons_row.addWidget(delay_frame, 3, 0, 1, 2)
+
+        # ── Выбрать все адреса (стиль как у «Отложить») ──────────────
+        select_all_frame = QFrame()
+        select_all_frame.setObjectName("scheduleRow")
+        select_all_fl = QHBoxLayout(select_all_frame)
+        select_all_fl.setContentsMargins(0, 0, 0, 0)
+        select_all_fl.setSpacing(8)
+
         self._chk_select_all = QCheckBox("Выбрать все адреса")
-        self._chk_select_all.setToolTip("Отметить все адреса для рассылки")
+        self._chk_select_all.setObjectName("scheduleChk")
+        self._chk_select_all.setToolTip("Загрузить все адреса из реестра и отметить для рассылки")
         self._chk_select_all.clicked.connect(self._on_select_all_chk)
-        delay_row_l.addWidget(self._chk_select_all)
-        delay_row_l.addStretch()
+        select_all_fl.addWidget(self._chk_select_all)
+        select_all_fl.addStretch()
+        buttons_row.addWidget(select_all_frame, 4, 0, 1, 2)
 
         send_row_w = QWidget()
         send_row_l = QHBoxLayout(send_row_w)
@@ -1607,11 +1636,10 @@ class MainWindow(QMainWindow):
         send_area = QFrame()
         sa_layout = QVBoxLayout(send_area)
         sa_layout.setContentsMargins(0, 0, 0, 0)
-        sa_layout.setSpacing(4)
-        sa_layout.addWidget(delay_row_w)
+        sa_layout.setSpacing(0)
         sa_layout.addWidget(send_row_w)
         sa_layout.addWidget(self._cancel_button)
-        buttons_row.addWidget(send_area, 3, 0, 1, 2)
+        buttons_row.addWidget(send_area, 5, 0, 1, 2)
 
         ctrl_layout.addWidget(platforms_section)
 
@@ -1976,11 +2004,6 @@ class MainWindow(QMainWindow):
         self._select_all_btn.setToolTip(
             "Снять все" if not self._has_unchecked_items() else "Выбрать все"
         )
-        # синхронизируем чекбокс «Выбрать все адреса»
-        all_checked = not self._has_unchecked_items() and self._addr_list.count() > 0
-        self._chk_select_all.blockSignals(True)
-        self._chk_select_all.setChecked(all_checked)
-        self._chk_select_all.blockSignals(False)
 
     def _toggle_select_all(self) -> None:
         """Выбирает все адреса или снимает все."""
@@ -1997,16 +2020,62 @@ class MainWindow(QMainWindow):
         self._on_addr_item_changed()
 
     def _on_select_all_chk(self, checked: bool) -> None:
-        """Чекбокс «Выбрать все адреса» — выбирает или снимает все адреса."""
-        new_state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-        try:
-            self._addr_list.blockSignals(True)
+        """Чекбокс «Выбрать все адреса» — загружает все адреса из Excel и отмечает их."""
+        if checked:
+            try:
+                all_matches = self.matcher.get_all()
+            except Exception as exc:
+                _log.warning("Не удалось загрузить все адреса: %s", exc)
+                self._chk_select_all.blockSignals(True)
+                self._chk_select_all.setChecked(False)
+                self._chk_select_all.blockSignals(False)
+                return
+            # Собираем уже добавленные chat_id и адреса
+            existing_ids: set[str] = set()
+            existing_addrs: set[str] = set()
             for i in range(self._addr_list.count()):
-                item = self._addr_list.item(i)
-                if item:
-                    item.setCheckState(new_state)
-        finally:
-            self._addr_list.blockSignals(False)
+                it = self._addr_list.item(i)
+                if not it:
+                    continue
+                m = it.data(Qt.ItemDataRole.UserRole)
+                if m:
+                    existing_addrs.add(m.address)
+                    if m.chat_id:
+                        existing_ids.add(m.chat_id)
+            try:
+                self._addr_list.blockSignals(True)
+                for match in all_matches:
+                    if match.address in existing_addrs:
+                        # уже есть — просто отмечаем
+                        for i in range(self._addr_list.count()):
+                            it = self._addr_list.item(i)
+                            if it and it.data(Qt.ItemDataRole.UserRole) and \
+                                    it.data(Qt.ItemDataRole.UserRole).address == match.address:
+                                it.setCheckState(Qt.CheckState.Checked)
+                        continue
+                    if match.chat_id and match.chat_id in existing_ids:
+                        continue
+                    item = QListWidgetItem(match.address)
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                    item.setCheckState(Qt.CheckState.Checked)
+                    item.setData(Qt.ItemDataRole.UserRole, match)
+                    item.setData(_MANUAL_ROLE, True)
+                    self._addr_list.addItem(item)
+                    existing_addrs.add(match.address)
+                    if match.chat_id:
+                        existing_ids.add(match.chat_id)
+            finally:
+                self._addr_list.blockSignals(False)
+        else:
+            # Снимаем галочки со всех адресов
+            try:
+                self._addr_list.blockSignals(True)
+                for i in range(self._addr_list.count()):
+                    it = self._addr_list.item(i)
+                    if it:
+                        it.setCheckState(Qt.CheckState.Unchecked)
+            finally:
+                self._addr_list.blockSignals(False)
         self._on_addr_item_changed()
 
     def _export_report_csv(self) -> None:
@@ -2719,8 +2788,8 @@ class MainWindow(QMainWindow):
             send_vk=send_vk,
             dry_run=False,
             extra_delay=extra_delay,
-            delay_min=self._delay_min_spin.value(),
-            delay_max=self._delay_max_spin.value(),
+            delay_min=self._delay_min_spin.value() if self._chk_delay.isChecked() else 0,
+            delay_max=self._delay_max_spin.value() if self._chk_delay.isChecked() else 0,
         )
         self._worker.progress.connect(self._on_send_progress)
         self._worker.progress_step.connect(self._on_send_step)
@@ -2829,6 +2898,9 @@ class MainWindow(QMainWindow):
     # ──────────────────────────────────────────────────────────────────
     #  Отложенные посты
     # ──────────────────────────────────────────────────────────────────
+
+    def _on_delay_toggled(self, checked: bool) -> None:
+        self._delay_widget.setVisible(checked)
 
     def _on_schedule_toggled(self, checked: bool) -> None:
         if checked:
@@ -3553,6 +3625,7 @@ class MainWindow(QMainWindow):
             "photo_pinned": self._photo_pinned,
             "require_photo": self._chk_require_photo.isChecked(),
             "splitter_sizes": self._main_splitter.sizes(),
+            "delay_enabled": self._chk_delay.isChecked(),
             "delay_min": self._delay_min_spin.value(),
             "delay_max": self._delay_max_spin.value(),
         })
@@ -3581,6 +3654,7 @@ class MainWindow(QMainWindow):
         self._pin_photo_btn.setChecked(self._photo_pinned)
         self._chk_require_photo.setChecked(bool(data.get("require_photo", True)))
         try:
+            self._chk_delay.setChecked(bool(data.get("delay_enabled", True)))
             self._delay_min_spin.setValue(int(data.get("delay_min", 5) or 5))
             self._delay_max_spin.setValue(int(data.get("delay_max", 12) or 12))
         except (ValueError, TypeError):

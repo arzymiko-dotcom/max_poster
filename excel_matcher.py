@@ -170,6 +170,11 @@ class ExcelMatcher:
         matches.sort(key=lambda x: (-x.score, x.address))
         return matches
 
+    def get_all(self) -> list[MatchResult]:
+        """Возвращает все адреса из реестра (без фильтрации по тексту)."""
+        self.load_dataframe()
+        return [r for _lower, _norm, r in self._search_index]
+
     def search(self, query: str, limit: int = 25) -> list[MatchResult]:
         """Ищет адреса по подстроке. Нормализует запрос и поддерживает мульти-токены.
 
