@@ -1263,12 +1263,7 @@ class MainWindow(QMainWindow):
         self._addr_notfound_hint.hide()
         text_layout.addWidget(self._addr_notfound_hint)
 
-        self._photo_thumb = QLabel()
-        self._photo_thumb.setObjectName("photoThumb")
-        self._photo_thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._photo_thumb.setMaximumHeight(110)
-        self._photo_thumb.hide()
-        # Кнопка загрузки фото + закрепить — под текстом, над миниатюрой
+        # Кнопка загрузки фото + закрепить — под текстом
         self.photo_button = QPushButton("Загрузить фото")
         self.photo_button.clicked.connect(self.select_image)
         self.photo_button.setToolTip("Выбрать фото (Ctrl+L)")
@@ -1287,8 +1282,6 @@ class MainWindow(QMainWindow):
         photo_row_l.addWidget(self.photo_button, 1)
         photo_row_l.addWidget(self._pin_photo_btn)
         text_layout.addWidget(photo_row_w)
-
-        text_layout.addWidget(self._photo_thumb)
 
         # Галерея последних фото — встраивается в строку платформ
         self._recent_bar = QFrame()
@@ -2278,7 +2271,8 @@ class MainWindow(QMainWindow):
         self.save_state()
 
     def _update_photo_thumb(self) -> None:
-        """Обновляет миниатюру фото в левой панели."""
+        """Миниатюра отключена."""
+        return
         if self.image_path:
             pix = QPixmap(str(self.image_path))
             if not pix.isNull():
