@@ -209,3 +209,10 @@ PyQt6 desktop-приложение для отправки объявлений 
 - `_addr_search_results` с чекбоксами + `_addr_search_add_btn` — мультивыбор адресов; `_add_checked_search_results()` добавляет все отмеченные сразу; `blockSignals(True)` при заполнении списка
 - `_chk_require_photo`: `_require_photo: bool` удалён — везде `_chk_require_photo.isChecked()` (redundant state fix)
 - `_load_user_dict`: encoding fallback utf-8-sig→utf-8→cp1251→errors=replace; `_word_known_cache` определён ДО `threading.Thread(...).start()`; `_add_to_user_dict` пишет файл в фоновом треде
+- `max_sender._send_with_image`: `sendFileByUrl` (upload → URL) заменён на `sendFileByUpload` (прямой multipart) — фото теперь доходит в группы MAX
+- `stats_panel._DOMBuilder` + `_Node` — замена `bs4.BeautifulSoup` на встроенный `html.parser`; кодировка cp1251 fallback
+- `shell_window._emoji_icon(char)` — рисует эмодзи на QPixmap 28×28 для btn_theme и btn_help
+- `main._chk_delay` (`scheduleChk`) + `_delay_min_spin`/`_delay_max_spin` — пауза в стиле «Отложить», сохраняется в state
+- `main._chk_select_all` (`scheduleChk`) — загружает все адреса из `_matcher.get_all()` в список; снимает галочки при uncheck
+- `excel_matcher.get_all()` — возвращает все `MatchResult` без фильтрации по тексту
+- `SendWorker` принимает `delay_min`/`delay_max`; при выключенной паузе оба = 0
