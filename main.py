@@ -1268,6 +1268,26 @@ class MainWindow(QMainWindow):
         self._photo_thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._photo_thumb.setMaximumHeight(110)
         self._photo_thumb.hide()
+        # Кнопка загрузки фото + закрепить — под текстом, над миниатюрой
+        self.photo_button = QPushButton("Загрузить фото")
+        self.photo_button.clicked.connect(self.select_image)
+        self.photo_button.setToolTip("Выбрать фото (Ctrl+L)")
+
+        self._pin_photo_btn = QPushButton("📌")
+        self._pin_photo_btn.setObjectName("tplMiniBtn")
+        self._pin_photo_btn.setFixedSize(28, 28)
+        self._pin_photo_btn.setCheckable(True)
+        self._pin_photo_btn.setToolTip("Закрепить фото — не сбрасывать при очистке формы")
+        self._pin_photo_btn.toggled.connect(self._on_photo_pin_toggled)
+
+        photo_row_w = QWidget()
+        photo_row_l = QHBoxLayout(photo_row_w)
+        photo_row_l.setContentsMargins(0, 4, 0, 0)
+        photo_row_l.setSpacing(4)
+        photo_row_l.addWidget(self.photo_button, 1)
+        photo_row_l.addWidget(self._pin_photo_btn)
+        text_layout.addWidget(photo_row_w)
+
         text_layout.addWidget(self._photo_thumb)
 
         # Галерея последних фото — встраивается в строку платформ
@@ -1471,30 +1491,10 @@ class MainWindow(QMainWindow):
         buttons_row = QGridLayout()
         buttons_row.setSpacing(8)
 
-        self.photo_button = QPushButton("Загрузить фото")
-        self.photo_button.clicked.connect(self.select_image)
-        self.photo_button.setToolTip("Выбрать фото (Ctrl+L)")
-
-        self._pin_photo_btn = QPushButton("📌")
-        self._pin_photo_btn.setObjectName("tplMiniBtn")
-        self._pin_photo_btn.setFixedSize(28, 28)
-        self._pin_photo_btn.setCheckable(True)
-        self._pin_photo_btn.setToolTip("Закрепить фото — не сбрасывать при очистке формы")
-        self._pin_photo_btn.toggled.connect(self._on_photo_pin_toggled)
-
-        photo_row_w = QWidget()
-        photo_row_l = QHBoxLayout(photo_row_w)
-        photo_row_l.setContentsMargins(0, 0, 0, 0)
-        photo_row_l.setSpacing(4)
-        photo_row_l.addWidget(self.photo_button, 1)
-        photo_row_l.addWidget(self._pin_photo_btn)
-
         self.send_button = QPushButton("Опубликовать")
         self.send_button.clicked.connect(self.send_post)
         self.send_button.setObjectName("primaryButton")
         self.send_button.setToolTip("Опубликовать пост (Ctrl+Return)")
-
-        buttons_row.addWidget(photo_row_w, 0, 0, 1, 2)
 
         sched_frame = QFrame()
         sched_frame.setObjectName("scheduleRow")
@@ -1545,14 +1545,13 @@ class MainWindow(QMainWindow):
 
         sched_fl.addWidget(self._chk_schedule)
         sched_fl.addWidget(self._sched_widget, 1)
-        buttons_row.addWidget(sched_frame, 1, 0, 1, 2)
+        buttons_row.addWidget(sched_frame, 0, 0, 1, 2)
 
         self._sched_hint_lbl = QLabel()
         self._sched_hint_lbl.setObjectName("schedHintLbl")
         self._sched_hint_lbl.setWordWrap(True)
         self._sched_hint_lbl.hide()
-        buttons_row.addWidget(self._sched_hint_lbl, 2, 0, 1, 2)
-        # строки 3 и 4 заняты delay_frame и select_all_frame (добавляются ниже)
+        buttons_row.addWidget(self._sched_hint_lbl, 1, 0, 1, 2)
 
         self._cancel_button = QPushButton("✕  Отменить отправку")
         self._cancel_button.setObjectName("cancelSendBtn")
@@ -1609,7 +1608,7 @@ class MainWindow(QMainWindow):
         delay_fl.addWidget(self._chk_delay)
         delay_fl.addWidget(self._delay_widget)
         delay_fl.addStretch()
-        buttons_row.addWidget(delay_frame, 3, 0, 1, 2)
+        buttons_row.addWidget(delay_frame, 2, 0, 1, 2)
 
         # ── Выбрать все адреса (стиль как у «Отложить») ──────────────
         select_all_frame = QFrame()
@@ -1624,7 +1623,7 @@ class MainWindow(QMainWindow):
         self._chk_select_all.clicked.connect(self._on_select_all_chk)
         select_all_fl.addWidget(self._chk_select_all)
         select_all_fl.addStretch()
-        buttons_row.addWidget(select_all_frame, 4, 0, 1, 2)
+        buttons_row.addWidget(select_all_frame, 3, 0, 1, 2)
 
         send_row_w = QWidget()
         send_row_l = QHBoxLayout(send_row_w)
@@ -1639,7 +1638,7 @@ class MainWindow(QMainWindow):
         sa_layout.setSpacing(0)
         sa_layout.addWidget(send_row_w)
         sa_layout.addWidget(self._cancel_button)
-        buttons_row.addWidget(send_area, 5, 0, 1, 2)
+        buttons_row.addWidget(send_area, 4, 0, 1, 2)
 
         ctrl_layout.addWidget(platforms_section)
 
