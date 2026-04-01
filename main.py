@@ -228,6 +228,8 @@ class SendWorker(QThread):
         send_vk: bool,
         dry_run: bool = False,
         extra_delay: int = 0,
+        delay_min: int = 5,
+        delay_max: int = 12,
     ) -> None:
         super().__init__()
         self.max_sender = max_sender
@@ -239,6 +241,8 @@ class SendWorker(QThread):
         self.send_vk = send_vk
         self.dry_run = dry_run
         self.extra_delay = extra_delay
+        self.delay_min = delay_min
+        self.delay_max = delay_max
         self._cancelled = False
         self.vk_post_id: int | None = None  # заполняется в run() при успешной отправке в ВК
 
@@ -267,7 +271,9 @@ class SendWorker(QThread):
                     return
                 # Случайная пауза между отправками — имитирует живого человека
                 if i > 1:
-                    delay = random.randint(5, 12) + self.extra_delay
+                    lo = min(self.delay_min, self.delay_max)
+                    hi = max(self.delay_min, self.delay_max)
+                    delay = random.randint(lo, hi) + self.extra_delay
                     for sec in range(delay):
                         if self._cancelled:
                             break
@@ -1558,6 +1564,34 @@ class MainWindow(QMainWindow):
         self._chk_require_photo.setToolTip("Требовать фото перед публикацией")
         self._chk_require_photo.toggled.connect(self._on_require_photo_toggled)
 
+        # ── Настройка паузы ──────────────────────────────────────────
+        delay_row_w = QWidget()
+        delay_row_l = QHBoxLayout(delay_row_w)
+        delay_row_l.setContentsMargins(0, 0, 0, 0)
+        delay_row_l.setSpacing(4)
+        delay_lbl = QLabel("⏱ пауза:")
+        delay_lbl.setObjectName("checklistItem")
+        delay_lbl.setToolTip("Случайная пауза между отправками в группы MAX")
+        self._delay_min_spin = QSpinBox()
+        self._delay_min_spin.setRange(1, 120)
+        self._delay_min_spin.setValue(5)
+        self._delay_min_spin.setSuffix(" с")
+        self._delay_min_spin.setFixedWidth(58)
+        self._delay_min_spin.setToolTip("Минимальная пауза (сек)")
+        delay_dash = QLabel("–")
+        delay_dash.setObjectName("checklistItem")
+        self._delay_max_spin = QSpinBox()
+        self._delay_max_spin.setRange(1, 120)
+        self._delay_max_spin.setValue(12)
+        self._delay_max_spin.setSuffix(" с")
+        self._delay_max_spin.setFixedWidth(58)
+        self._delay_max_spin.setToolTip("Максимальная пауза (сек)")
+        delay_row_l.addWidget(delay_lbl)
+        delay_row_l.addWidget(self._delay_min_spin)
+        delay_row_l.addWidget(delay_dash)
+        delay_row_l.addWidget(self._delay_max_spin)
+        delay_row_l.addStretch()
+
         send_row_w = QWidget()
         send_row_l = QHBoxLayout(send_row_w)
         send_row_l.setContentsMargins(0, 0, 0, 0)
@@ -1568,7 +1602,8 @@ class MainWindow(QMainWindow):
         send_area = QFrame()
         sa_layout = QVBoxLayout(send_area)
         sa_layout.setContentsMargins(0, 0, 0, 0)
-        sa_layout.setSpacing(0)
+        sa_layout.setSpacing(4)
+        sa_layout.addWidget(delay_row_w)
         sa_layout.addWidget(send_row_w)
         sa_layout.addWidget(self._cancel_button)
         buttons_row.addWidget(send_area, 3, 0, 1, 2)
@@ -2225,28 +2260,29 @@ class MainWindow(QMainWindow):
         worker = _AddrSearchWorker(q, self._matcher, self)
         worker.results_ready.connect(self._on_addr_search_results)
         worker.finished.connect(worker.deleteLater)
-        worker.finished.connect(lambda: setattr(self, '_addr_search_worker', None))
+        worker.finished.connect(lambda w=worker: setattr(self, '_addr_search_worker', None) if self._addr_search_worker is w else None)
         self._addr_search_worker = worker
         worker.start()
 
     def _on_addr_search_results(self, results: list) -> None:
         """Показывает результаты поиска с чекбоксами (вызывается из фонового потока)."""
-        self._addr_search_results.blockSignals(True)
-        self._addr_search_results.clear()
-        if not results:
-            self._addr_search_results.hide()
-            self._addr_search_add_btn.hide()
+        try:
+            self._addr_search_results.blockSignals(True)
+            self._addr_search_results.clear()
+            if not results:
+                self._addr_search_results.hide()
+                self._addr_search_add_btn.hide()
+                return
+            for match in results:
+                item = QListWidgetItem(match.address)
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(Qt.CheckState.Unchecked)
+                item.setData(Qt.ItemDataRole.UserRole, match)
+                self._addr_search_results.addItem(item)
+            self._addr_search_results.show()
+            self._update_search_add_btn()
+        finally:
             self._addr_search_results.blockSignals(False)
-            return
-        for match in results:
-            item = QListWidgetItem(match.address)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Unchecked)
-            item.setData(Qt.ItemDataRole.UserRole, match)
-            self._addr_search_results.addItem(item)
-        self._addr_search_results.blockSignals(False)
-        self._addr_search_results.show()
-        self._update_search_add_btn()
 
     def _on_addr_search_check_changed(self, item: QListWidgetItem) -> None:
         self._update_search_add_btn()
@@ -2660,6 +2696,8 @@ class MainWindow(QMainWindow):
             send_vk=send_vk,
             dry_run=False,
             extra_delay=extra_delay,
+            delay_min=self._delay_min_spin.value(),
+            delay_max=self._delay_max_spin.value(),
         )
         self._worker.progress.connect(self._on_send_progress)
         self._worker.progress_step.connect(self._on_send_step)
@@ -3492,6 +3530,8 @@ class MainWindow(QMainWindow):
             "photo_pinned": self._photo_pinned,
             "require_photo": self._chk_require_photo.isChecked(),
             "splitter_sizes": self._main_splitter.sizes(),
+            "delay_min": self._delay_min_spin.value(),
+            "delay_max": self._delay_max_spin.value(),
         })
 
     def load_state(self) -> None:
@@ -3517,6 +3557,11 @@ class MainWindow(QMainWindow):
         self._photo_pinned = bool(data.get("photo_pinned", False))
         self._pin_photo_btn.setChecked(self._photo_pinned)
         self._chk_require_photo.setChecked(bool(data.get("require_photo", True)))
+        try:
+            self._delay_min_spin.setValue(int(data.get("delay_min", 5) or 5))
+            self._delay_max_spin.setValue(int(data.get("delay_max", 12) or 12))
+        except (ValueError, TypeError):
+            pass
         splitter_sizes = data.get("splitter_sizes")
         if splitter_sizes and len(splitter_sizes) == 2:
             self._main_splitter.setSizes(splitter_sizes)
