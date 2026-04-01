@@ -1586,6 +1586,13 @@ class MainWindow(QMainWindow):
         self._delay_max_spin.setSuffix(" с")
         self._delay_max_spin.setFixedWidth(58)
         self._delay_max_spin.setToolTip("Максимальная пауза (сек)")
+        self._select_all_send_btn = QPushButton("☑  Все адреса")
+        self._select_all_send_btn.setObjectName("tplMiniBtn")
+        self._select_all_send_btn.setFixedHeight(28)
+        self._select_all_send_btn.setToolTip("Выбрать все адреса / Снять все")
+        self._select_all_send_btn.clicked.connect(self._toggle_select_all)
+        delay_row_l.addWidget(self._select_all_send_btn)
+        delay_row_l.addSpacing(12)
         delay_row_l.addWidget(delay_lbl)
         delay_row_l.addWidget(self._delay_min_spin)
         delay_row_l.addWidget(delay_dash)
@@ -1968,8 +1975,10 @@ class MainWindow(QMainWindow):
         """Один слот вместо двух подключений itemChanged."""
         self._update_checklist()
         self.save_state()
-        self._select_all_btn.setToolTip(
-            "Снять все" if not self._has_unchecked_items() else "Выбрать все"
+        tip = "Снять все" if not self._has_unchecked_items() else "Выбрать все"
+        self._select_all_btn.setToolTip(tip)
+        self._select_all_send_btn.setText(
+            "☑  Снять все" if not self._has_unchecked_items() else "☑  Все адреса"
         )
 
     def _toggle_select_all(self) -> None:
