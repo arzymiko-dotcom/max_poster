@@ -39,10 +39,13 @@ def _ascii_strip(value: str) -> str:
 class MaxSender:
     def __init__(self) -> None:
         self.api_url   = _ascii_strip(os.getenv("MAX_API_URL",   "https://api.green-api.com"))
+        self.media_url = _ascii_strip(os.getenv("MAX_MEDIA_URL", "https://media.green-api.com"))
         self.id_instance = _ascii_strip(os.getenv("MAX_ID_INSTANCE", ""))
         self.api_token   = _ascii_strip(os.getenv("MAX_API_TOKEN",   ""))
         if not self.api_url:
             self.api_url = "https://api.green-api.com"
+        if not self.media_url:
+            self.media_url = "https://media.green-api.com"
 
     def _check_credentials(self) -> str | None:
         """Возвращает сообщение об ошибке если учётные данные не заполнены."""
@@ -150,7 +153,7 @@ class MaxSender:
                 f"Неподдерживаемый тип файла '{ext}'. Разрешены: JPEG, PNG, GIF, WEBP"
             )
 
-        send_url = f"{self.api_url}/waInstance{self.id_instance}/sendFileByUpload/{self.api_token}"
+        send_url = f"{self.media_url}/waInstance{self.id_instance}/sendFileByUpload/{self.api_token}"
         with open(image_path, "rb") as f:
             resp = requests.post(
                 send_url,
