@@ -39,12 +39,15 @@ def _ascii_strip(value: str) -> str:
 class MaxSender:
     def __init__(self) -> None:
         self.api_url   = _ascii_strip(os.getenv("MAX_API_URL",   "https://api.green-api.com"))
-        self.media_url = _ascii_strip(os.getenv("MAX_MEDIA_URL", "https://media.green-api.com"))
         self.id_instance = _ascii_strip(os.getenv("MAX_ID_INSTANCE", ""))
         self.api_token   = _ascii_strip(os.getenv("MAX_API_TOKEN",   ""))
         if not self.api_url:
             self.api_url = "https://api.green-api.com"
-        if not self.media_url:
+        # media_url выводим автоматически: 3100.api.green-api.com → 3100.media.green-api.com
+        # Явный MAX_MEDIA_URL в .env игнорируем — он исторически выставлен неверно
+        self.media_url = self.api_url.replace(".api.green-api.com", ".media.green-api.com")
+        if self.media_url == self.api_url:
+            # Fallback: стандартный хост без префикса инстанса
             self.media_url = "https://media.green-api.com"
 
     def _check_credentials(self) -> str | None:
@@ -154,24 +157,35 @@ class MaxSender:
             )
 
         send_url = f"{self.media_url}/waInstance{self.id_instance}/sendFileByUpload/{self.api_token}"
+        _log.debug("sendFileByUpload → %s  chatId=%s  file=%s  mime=%s",
+                   send_url, chat_id, file_name, mime_type)
         with open(image_path, "rb") as f:
             resp = requests.post(
                 send_url,
-                data={"chatId": chat_id, "caption": caption},
+                data={"chatId": chat_id, "fileName": file_name, "caption": caption},
                 files={"file": (file_name, f, mime_type)},
                 timeout=60,
             )
 
-        if not resp.ok:
-            return SendResult(False, f"chatId={chat_id}\nОшибка отправки фото ({resp.status_code}): {resp.text}")
+        _log.debug("sendFileByUpload ответ: status=%s  body=%s",
+                   resp.status_code, resp.text[:500])
 
-        msg_id = _json_or_raise(resp).get("idMessage", "")
+        if not resp.ok:
+            return SendResult(False,
+                f"chatId={chat_id}\n"
+                f"Ошибка загрузки фото ({resp.status_code}): {resp.text[:300]}")
+
+        try:
+            msg_id = _json_or_raise(resp).get("idMessage", "")
+        except RuntimeError as exc:
+            return SendResult(False, f"chatId={chat_id}\nФото отправлено, но ответ не JSON: {exc}")
 
         if not caption and text:
             text_result = self._send_text(chat_id, text)
             if not text_result.success:
-                # Фото уже отправлено — частичный успех, а не ошибка
-                return SendResult(True, f"Фото отправлено (ID: {msg_id}), текст — отдельным сообщением не удалось: {text_result.message}")
+                return SendResult(True,
+                    f"Фото отправлено (ID: {msg_id}), "
+                    f"текст отдельным сообщением не удалось: {text_result.message}")
 
         return SendResult(True, f"Сообщение с фото отправлено. ID: {msg_id}")
 
