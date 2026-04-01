@@ -41,14 +41,12 @@ class MaxSender:
         self.api_url   = _ascii_strip(os.getenv("MAX_API_URL",   "https://api.green-api.com"))
         self.id_instance = _ascii_strip(os.getenv("MAX_ID_INSTANCE", ""))
         self.api_token   = _ascii_strip(os.getenv("MAX_API_TOKEN",   ""))
+        self.media_url = _ascii_strip(os.getenv("MAX_MEDIA_URL", ""))
         if not self.api_url:
             self.api_url = "https://api.green-api.com"
-        # media_url выводим автоматически: 3100.api.green-api.com → 3100.media.green-api.com
-        # Явный MAX_MEDIA_URL в .env игнорируем — он исторически выставлен неверно
-        self.media_url = self.api_url.replace(".api.green-api.com", ".media.green-api.com")
-        if self.media_url == self.api_url:
-            # Fallback: стандартный хост без префикса инстанса
-            self.media_url = "https://media.green-api.com"
+        # Если MAX_MEDIA_URL не задан — используем тот же хост что и API
+        if not self.media_url:
+            self.media_url = self.api_url
 
     def _check_credentials(self) -> str | None:
         """Возвращает сообщение об ошибке если учётные данные не заполнены."""
