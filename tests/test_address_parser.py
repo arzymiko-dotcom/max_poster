@@ -3,8 +3,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest
-from address_parser import extract_all_addresses, ParsedAddress
+from address_parser import extract_all_addresses
 
 
 class TestExtractAllAddresses:

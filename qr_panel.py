@@ -6,7 +6,6 @@ qr_panel.py — адаптер для встраивания QR Generator в uni
 """
 
 import importlib.util
-import os
 import sys
 from pathlib import Path
 

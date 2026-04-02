@@ -1,3 +1,38 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+---
+
+## Команды
+
+```bash
+# Запуск приложения
+python app.py
+
+# Сборка EXE + установщик (запускать из корня проекта)
+"build_MAX POST.bat"
+
+# Сборка с бампом версии
+"build_MAX POST.bat" patch      # 1.2.80 → 1.2.81
+"build_MAX POST.bat" 1.3.0      # конкретная версия
+
+# Линтинг
+.venv/Scripts/ruff check .
+.venv/Scripts/ruff check . --fix   # автоисправление
+
+# Проверка безопасности
+.venv/Scripts/python -m bandit *.py -ll
+
+# Установка зависимостей
+pip install -r requirements.txt
+```
+
+**Готовый установщик:** `installer/MAX POST_setup.exe`
+**Версия:** `version.txt` (первая строка) + SHA256 установщика (вторая строка)
+
+---
+
 # MAX Poster — инструкции для Claude
 
 ## Обязательная диагностика перед любым изменением
@@ -209,10 +244,14 @@ PyQt6 desktop-приложение для отправки объявлений 
 - `_addr_search_results` с чекбоксами + `_addr_search_add_btn` — мультивыбор адресов; `_add_checked_search_results()` добавляет все отмеченные сразу; `blockSignals(True)` при заполнении списка
 - `_chk_require_photo`: `_require_photo: bool` удалён — везде `_chk_require_photo.isChecked()` (redundant state fix)
 - `_load_user_dict`: encoding fallback utf-8-sig→utf-8→cp1251→errors=replace; `_word_known_cache` определён ДО `threading.Thread(...).start()`; `_add_to_user_dict` пишет файл в фоновом треде
-- `max_sender._send_with_image`: `sendFileByUrl` (upload → URL) заменён на `sendFileByUpload` (прямой multipart) — фото теперь доходит в группы MAX
+- `max_sender._send_with_image`: `sendFileByUrl` заменён на `sendFileByUpload` (multipart/form-data) — фото доходит в группы MAX; протестировано вживую STATUS 200
+- `max_sender.media_url`: читается из `MAX_MEDIA_URL` в `.env`, fallback = `api_url` (для инстанса 3100 оба одинаковы — `3100.api.green-api.com`); `3100.media.green-api.com` не существует
+- `sendFileByUpload` endpoint: `POST {{mediaUrl}}/waInstance.../sendFileByUpload/...` — multipart: поля `chatId`, `fileName`, `caption`; файл в поле `file`
 - `stats_panel._DOMBuilder` + `_Node` — замена `bs4.BeautifulSoup` на встроенный `html.parser`; кодировка cp1251 fallback
 - `shell_window._emoji_icon(char)` — рисует эмодзи на QPixmap 28×28 для btn_theme и btn_help
-- `main._chk_delay` (`scheduleChk`) + `_delay_min_spin`/`_delay_max_spin` — пауза в стиле «Отложить», сохраняется в state
+- `main._chk_delay` (`scheduleChk`) + `_delay_min_spin`/`_delay_max_spin` — пауза в стиле «Отложить», сохраняется в state; `delay_min=0, delay_max=0` если чекбокс снят
 - `main._chk_select_all` (`scheduleChk`) — загружает все адреса из `_matcher.get_all()` в список; снимает галочки при uncheck
 - `excel_matcher.get_all()` — возвращает все `MatchResult` без фильтрации по тексту
 - `SendWorker` принимает `delay_min`/`delay_max`; при выключенной паузе оба = 0
+- Кнопка «Загрузить фото» + 📌 перемещены в левую панель под поле ввода текста (`text_layout`)
+- `_photo_thumb` (миниатюра фото) убрана — `_update_photo_thumb()` сразу возвращает без действий

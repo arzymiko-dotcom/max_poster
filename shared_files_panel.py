@@ -10,18 +10,17 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
 import requests
 from vk_utils import vk_api_call
-from PyQt6.QtCore import QObject, QRunnable, QSize, Qt, QThreadPool, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QRunnable, Qt, QThreadPool, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QFileDialog, QFrame, QGridLayout, QHBoxLayout,
-    QLabel, QPushButton, QScrollArea, QSizePolicy, QStackedWidget,
+    QLabel, QPushButton, QScrollArea, QStackedWidget,
     QVBoxLayout, QWidget,
 )
 
@@ -825,6 +824,7 @@ class SharedFilesPanel(QWidget):
         self._start_download(url, save_path)
 
     def _on_doc_download(self, url: str, fname: str) -> None:
+        fname = os.path.basename(fname)  # защита от path traversal из VK API
         save_path, _ = QFileDialog.getSaveFileName(
             self, "Сохранить файл", fname, "Все файлы (*.*)"
         )

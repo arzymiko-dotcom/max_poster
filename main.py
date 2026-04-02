@@ -17,17 +17,14 @@ from pathlib import Path
 import requests
 
 from PyQt6.QtCore import QDateTime, QSize, QTime, QTimer, Qt, QThread, QUrl, pyqtSignal
-from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QKeySequence, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QAction, QColor, QDesktopServices, QFont, QFontDatabase, QIcon, QKeySequence, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
-    QButtonGroup,
     QCheckBox,
     QDateEdit,
-    QDateTimeEdit,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QFormLayout,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -41,22 +38,18 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QPlainTextEdit,
-    QRadioButton,
     QScrollArea,
     QSizePolicy,
-    QSplitter,
     QSpinBox,
-    QStyledItemDelegate,
-    QSlider,
     QSystemTrayIcon,
-    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
 # Роль для пометки вручную добавленных адресов
 _MANUAL_ROLE: int = Qt.ItemDataRole.UserRole + 1
+# Роль для хранения MatchResult в строках лога отправки (для повтора)
+_LOG_MATCH_ROLE: int = Qt.ItemDataRole.UserRole + 2
 
 _TOKEN_ROTATION_DAYS = 10  # напоминание сменить токены раз в N дней
 
@@ -882,9 +875,9 @@ class SendResultDialog(QDialog):
         self.setMinimumWidth(520)
         self.setMinimumHeight(300)
 
-        lines = [l for l in message.strip().splitlines() if l.strip()]
-        ok_count = sum(1 for l in lines if "Отправлено" in l or "отправлено" in l.lower())
-        fail_count = sum(1 for l in lines if "Ошибка" in l or "ошибка" in l.lower() or "⛔" in l)
+        lines = [ln for ln in message.strip().splitlines() if ln.strip()]
+        ok_count = sum(1 for ln in lines if "Отправлено" in ln or "отправлено" in ln.lower())
+        fail_count = sum(1 for ln in lines if "Ошибка" in ln or "ошибка" in ln.lower() or "⛔" in ln)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 12)
@@ -922,9 +915,41 @@ class SendResultDialog(QDialog):
             list_w.addItem(item)
         layout.addWidget(list_w)
 
-        btn_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok)
-        btn_box.accepted.connect(self.accept)
-        layout.addWidget(btn_box)
+        btn_row = QHBoxLayout()
+
+        copy_btn = QPushButton("📋 Копировать")
+        copy_btn.setFixedHeight(30)
+        copy_btn.setToolTip("Скопировать текст ошибки в буфер обмена")
+        copy_btn.clicked.connect(lambda: QApplication.clipboard().setText(message))
+
+        save_btn = QPushButton("💾 Сохранить")
+        save_btn.setFixedHeight(30)
+        save_btn.setToolTip("Сохранить ошибку в текстовый файл")
+
+        def _save_error() -> None:
+            default = f"error_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Сохранить ошибку", default, "Текстовые файлы (*.txt)"
+            )
+            if path:
+                try:
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(message)
+                except OSError as exc:
+                    QMessageBox.warning(self, "Ошибка", str(exc))
+
+        save_btn.clicked.connect(_save_error)
+
+        ok_btn = QPushButton("OK")
+        ok_btn.setFixedHeight(30)
+        ok_btn.setDefault(True)
+        ok_btn.clicked.connect(self.accept)
+
+        btn_row.addWidget(copy_btn)
+        btn_row.addWidget(save_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(ok_btn)
+        layout.addLayout(btn_row)
 
 
 class MainWindow(QMainWindow):
@@ -1460,6 +1485,13 @@ class MainWindow(QMainWindow):
         self._save_report_btn.hide()
         self._save_report_btn.clicked.connect(self._export_report_csv)
 
+        self._retry_btn = QPushButton("🔁 Повторить")
+        self._retry_btn.setObjectName("saveReportBtn")
+        self._retry_btn.setFixedHeight(28)
+        self._retry_btn.setToolTip("Повторить отправку в адреса с ошибками")
+        self._retry_btn.hide()
+        self._retry_btn.clicked.connect(self._retry_send)
+
         self._recent_sep_left = QFrame()
         self._recent_sep_left.setFrameShape(QFrame.Shape.VLine)
         self._recent_sep_left.setObjectName("recentPhotoSep")
@@ -1476,6 +1508,7 @@ class MainWindow(QMainWindow):
         platforms_row.addWidget(self._recent_bar)
         platforms_row.addWidget(self._recent_sep_right)
         platforms_row.addStretch()
+        platforms_row.addWidget(self._retry_btn)
         platforms_row.addWidget(self._save_report_btn)
         platforms_row.addWidget(self.clear_button)
         pl_layout.addLayout(platforms_row)
@@ -2092,6 +2125,56 @@ class MainWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.warning(self, "Ошибка", f"Не удалось сохранить файл:\n{exc}")
 
+    def _save_error_log(self, message: str) -> None:
+        """Автоматически дописывает ошибку отправки в %APPDATA%\\MAX POST\\send_errors.log."""
+        try:
+            log_dir = Path(os.getenv("APPDATA", "")) / "MAX POST"
+            log_dir.mkdir(exist_ok=True)
+            log_file = log_dir / "send_errors.log"
+            ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open(log_file, "a", encoding="utf-8") as f:
+                f.write(f"\n{'='*60}\n{ts}\n{message}\n")
+        except OSError:
+            pass
+
+    def _retry_one(self, match) -> None:
+        """Повторяет отправку для одного адреса."""
+        self._load_matches_to_addr_list([match])
+        self.send_post()
+
+    def _retry_send(self) -> None:
+        """Повторяет отправку для всех адресов с ошибками из последней рассылки."""
+        failed: list = []
+        for i in range(self._send_log_list.count()):
+            item = self._send_log_list.item(i)
+            if item:
+                m = item.data(_LOG_MATCH_ROLE)
+                if m and not any(ok for a, ok, _ in self._send_log_results if a == m.address):
+                    failed.append(m)
+        if not failed:
+            return
+        self._load_matches_to_addr_list(failed)
+        self.send_post()
+
+    def _load_matches_to_addr_list(self, matches: list) -> None:
+        """Заменяет список адресов переданными MatchResult и показывает список."""
+        self._addr_list.clear()
+        try:
+            self._addr_list.blockSignals(True)
+            for match in matches:
+                new_item = QListWidgetItem(match.address)
+                new_item.setFlags(new_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                new_item.setCheckState(Qt.CheckState.Checked)
+                new_item.setData(Qt.ItemDataRole.UserRole, match)
+                new_item.setData(_MANUAL_ROLE, True)
+                self._addr_list.addItem(new_item)
+        finally:
+            self._addr_list.blockSignals(False)
+        self._on_addr_item_changed()
+        self._retry_btn.hide()
+        self._save_report_btn.hide()
+        self._send_log_list.hide()
+        self._addr_list.show()
 
     def _update_checklist(self) -> None:
         def row(ok: bool, label: str) -> str:
@@ -2446,6 +2529,7 @@ class MainWindow(QMainWindow):
 
     def clear_form(self) -> None:
         self._save_report_btn.hide()
+        self._retry_btn.hide()
         self._send_log_results = []
         self.text_input.clear()
         self._addr_search.clear()
@@ -2702,9 +2786,10 @@ class MainWindow(QMainWindow):
         if self._chk_schedule.isChecked():
             self._schedule_post()
             return
-        # Сбрасываем предыдущий лог и скрываем кнопку отчёта
+        # Сбрасываем предыдущий лог и скрываем кнопки отчёта/повтора
         self._send_log_results = []
         self._save_report_btn.hide()
+        self._retry_btn.hide()
         text = self.text_input.toPlainText().strip()
         if not text:
             QMessageBox.warning(self, "Отправка", "Нельзя отправить пустой текст.")
@@ -2796,6 +2881,7 @@ class MainWindow(QMainWindow):
             for m in checked:
                 log_item = QListWidgetItem(f"⏳  {m.address}")
                 log_item.setData(Qt.ItemDataRole.UserRole, m.address)
+                log_item.setData(_LOG_MATCH_ROLE, m)
                 self._send_log_list.addItem(log_item)
             self._addr_list.hide()
             self._send_log_list.show()
@@ -2811,12 +2897,32 @@ class MainWindow(QMainWindow):
         if not item:
             return
         addr = item.data(Qt.ItemDataRole.UserRole)
+        match = item.data(_LOG_MATCH_ROLE)
         if success:
             item.setText(f"✓  {addr}")
             item.setForeground(QColor("#16a34a"))
         else:
-            item.setText(f"✗  {addr}")
+            item.setText("")
             item.setForeground(QColor("#dc2626"))
+            # Вставляем виджет с кнопкой повтора для провальных адресов
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(4, 0, 4, 0)
+            row_layout.setSpacing(6)
+            lbl = QLabel(f"✗  {addr}")
+            lbl.setStyleSheet("color: #dc2626;")
+            retry_btn = QPushButton("🔁")
+            retry_btn.setFixedSize(24, 20)
+            retry_btn.setToolTip("Повторить отправку")
+            retry_btn.setStyleSheet(
+                "QPushButton { font-size: 11px; padding: 0; border-radius: 3px; }"
+            )
+            if match:
+                retry_btn.clicked.connect(lambda _checked=False, m=match: self._retry_one(m))
+            row_layout.addWidget(lbl, 1)
+            row_layout.addWidget(retry_btn)
+            item.setSizeHint(row_widget.sizeHint())
+            self._send_log_list.setItemWidget(item, row_widget)
         self._send_log_list.scrollToItem(item)
         ts = datetime.now().strftime("%H:%M:%S")
         self._send_log_results.append((addr, success, ts))
@@ -2857,9 +2963,13 @@ class MainWindow(QMainWindow):
         # Восстанавливаем список адресов после отправки
         self._send_log_list.hide()
         self._addr_list.show()
-        # Показываем кнопку сохранения отчёта если есть результаты MAX
+        # Показываем кнопки отчёта и повтора если есть результаты MAX
         if self._send_log_results:
             self._save_report_btn.show()
+            failed_count = sum(1 for _, ok, _ in self._send_log_results if not ok)
+            if failed_count:
+                self._retry_btn.setText(f"🔁 Повторить ({failed_count})")
+                self._retry_btn.show()
         vk_post_id = getattr(self._worker, "vk_post_id", None) if self._worker else None
         if self._worker is not None:
             self._worker.deleteLater()
@@ -2886,6 +2996,7 @@ class MainWindow(QMainWindow):
             )
         else:
             tg_notify.send_error("Ошибка отправки поста", message)
+            self._save_error_log(message)
             SendResultDialog(message, self).exec()
 
         self._notify_send_done(success)

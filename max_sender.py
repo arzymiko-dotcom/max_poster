@@ -2,7 +2,6 @@ import logging
 import mimetypes
 import os
 import re
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -155,8 +154,8 @@ class MaxSender:
             )
 
         send_url = f"{self.media_url}/waInstance{self.id_instance}/sendFileByUpload/{self.api_token}"
-        _log.debug("sendFileByUpload → %s  chatId=%s  file=%s  mime=%s",
-                   send_url, chat_id, file_name, mime_type)
+        _log.debug("sendFileByUpload → .../sendFileByUpload/***  chatId=%s  file=%s  mime=%s",
+                   chat_id, file_name, mime_type)
         with open(image_path, "rb") as f:
             resp = requests.post(
                 send_url,

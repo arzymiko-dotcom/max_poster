@@ -1,4 +1,5 @@
-import hashlib, os
+import hashlib
+import os
 pw = input("Введи пароль администратора: ")
 salt = os.urandom(16)
 key = hashlib.pbkdf2_hmac("sha256", pw.encode(), salt, 260_000)

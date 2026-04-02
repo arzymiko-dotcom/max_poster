@@ -171,7 +171,11 @@ class DownloadWorker(QThread):
 
             # Проверяем SHA256, если хэш был передан из version.txt
             if self.expected_sha256:
-                actual = hashlib.sha256(dest.read_bytes()).hexdigest().lower()
+                h = hashlib.sha256()
+                with open(dest, "rb") as _f:
+                    for chunk in iter(lambda: _f.read(65536), b""):
+                        h.update(chunk)
+                actual = h.hexdigest().lower()
                 if actual != self.expected_sha256:
                     raise RuntimeError(
                         f"SHA256 не совпадает — файл повреждён или подменён.\n"

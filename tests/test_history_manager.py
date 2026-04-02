@@ -1,11 +1,8 @@
 """Тесты для history_manager.py"""
 import sys
-import json
-import tempfile
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import pytest
 import history_manager
 
 

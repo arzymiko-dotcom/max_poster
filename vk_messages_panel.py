@@ -9,29 +9,27 @@ vk_messages_panel.py — Панель сообщений VK-сообщества
 """
 from __future__ import annotations
 
-import json
 import logging
 import mimetypes
 import os
 import random
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import requests
 
 from PyQt6.QtCore import (
-    QEvent, QObject, QRunnable, QSize, QThread, QThreadPool, QTimer, QUrl,
-    Qt, pyqtSignal, pyqtSlot,
+    QEvent, QObject, QRunnable, QThread, QThreadPool, QTimer, QUrl,
+    Qt, pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QDesktopServices, QFont, QFontMetrics,
-    QKeyEvent, QPainter, QPainterPath, QPixmap,
+    QColor, QDesktopServices, QFont, QFontMetrics,
+    QPainter, QPainterPath, QPixmap,
 )
 from PyQt6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QPushButton, QScrollArea, QSizePolicy,
-    QSpacerItem, QTextEdit, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from constants import VK_MAX_ATTACHMENTS

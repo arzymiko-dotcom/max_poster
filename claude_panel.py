@@ -7,9 +7,9 @@ import logging
 import os
 
 from PyQt6.QtCore import QEvent, QObject, Qt, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QKeyEvent
+from PyQt6.QtGui import QKeyEvent
 from PyQt6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton,
+    QHBoxLayout, QLabel, QMenu, QPushButton,
     QScrollArea, QSizePolicy, QTextEdit,
     QVBoxLayout, QWidget,
 )
