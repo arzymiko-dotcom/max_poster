@@ -706,6 +706,7 @@ class StatsPanel(QWidget):
         self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
         self._table.setSortingEnabled(True)
+        self._table.horizontalHeader().setSortIndicator(_COL_TIME, Qt.SortOrder.DescendingOrder)
         self._table.verticalHeader().setVisible(False)
         self._table.horizontalHeader().setSortIndicatorShown(True)
         self._table.cellDoubleClicked.connect(self._on_double_click)
@@ -867,7 +868,7 @@ class StatsPanel(QWidget):
         items = [
             name_item,
             _NumItem(members),
-            QTableWidgetItem(t_event),
+            _DateItem(t_event),
             delta_item,
             QTableWidgetItem(row["link"]),
         ]
@@ -1017,6 +1018,7 @@ class StatsPanel(QWidget):
         self._dead_btn.setEnabled(True)
         # Включаем сортировку (была отключена во время стриминга)
         self._table.setSortingEnabled(True)
+        self._table.sortItems(_COL_TIME, Qt.SortOrder.DescendingOrder)
         self._update_summary_labels()
         total = len(self._all_rows)
         self._status_lbl.setText(
@@ -1126,7 +1128,7 @@ class StatsPanel(QWidget):
             items: list[QTableWidgetItem] = [
                 name_item,
                 _NumItem(members),
-                QTableWidgetItem(t_event),
+                _DateItem(t_event),
                 delta_item,
                 QTableWidgetItem(link),
             ]
@@ -1137,6 +1139,7 @@ class StatsPanel(QWidget):
                 self._table.setItem(row_idx, col, item)
 
         self._table.setSortingEnabled(True)
+        self._table.sortItems(_COL_TIME, Qt.SortOrder.DescendingOrder)
         self._table.resizeRowsToContents()
 
     # ── Взаимодействие с таблицей ────────────────────────────────
@@ -1746,3 +1749,19 @@ class _NumItem(QTableWidgetItem):
             return int(self.text()) < int(other.text())
         except ValueError:
             return super().__lt__(other)
+
+
+class _DateItem(QTableWidgetItem):
+    """Элемент таблицы с хронологической сортировкой (формат dd.mm.yyyy hh:mm)."""
+
+    def __init__(self, text: str):
+        super().__init__(text)
+        try:
+            self._ts = datetime.strptime(text[:16], "%d.%m.%Y %H:%M").timestamp()
+        except Exception:
+            self._ts = 0.0
+
+    def __lt__(self, other: QTableWidgetItem) -> bool:
+        if isinstance(other, _DateItem):
+            return self._ts < other._ts
+        return super().__lt__(other)
