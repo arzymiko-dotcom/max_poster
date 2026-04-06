@@ -224,6 +224,13 @@ PyQt6 desktop-приложение для отправки объявлений 
 - `updater.run_silent_update()`: lock stale detection — если lock старше 2 часов, удаляется и процесс продолжается (защита от зависших процессов)
 - `app/my_qr_app/main.py`: `generate_qr` отменяет предыдущий `_QRGenWorker` перед запуском нового (двойной клик)
 - `shell_window._ChangelogPopup.show_near()`: popup позиция ограничена `screen.availableGeometry()` — не уходит за край экрана
+- ПКМ в `LineNumberedEdit` → «📤 Отправить выделенное в MAX/ВКонтакте» — `send_selected_max/vk = pyqtSignal(str)`; hook `_extra_menu_actions`; `addr_count_getter` + `vk_token_getter` — MainWindow устанавливает при init
+- `_sel_worker: SendWorker | None` — воркер отправки выделенного текста; guard по всем трём `_worker/_smart_worker/_sel_worker`; останавливается в `closeEvent`
+- `_run_selection_worker`: `worker.progress` → title bar; `finished` → title reset + `deleteLater` + `_sel_worker = None`
+- `_get_checked_addr_count()` — быстрый счётчик отмеченных адресов с chat_id (для getter меню)
+- `_SmartSendWorker` лог: `_LOG_MATCH_ROLE` теперь сохраняется в элементах `_send_log_list` + `_send_log_results = []` перед стартом (фикс кнопки 🔁)
+- `_DateItem` в `stats_panel.py` — хронологическая сортировка по `dd.mm.yyyy HH:MM`; `sortItems(_COL_TIME, Descending)` после загрузки
+- `changelog.json` v1.2.81 добавлен; `assets/help.html` раздел «Отправить выделенный фрагмент»
 
 ### QR Генератор (`app/my_qr_app/main.py`) — сделано в 1.2.57
 - Галочка «Показывать наименование на карточке» под `inp_org` — `chk_show_org`, состояние в QSettings (`show_org`)
