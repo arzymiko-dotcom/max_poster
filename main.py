@@ -2261,14 +2261,16 @@ class MainWindow(QMainWindow):
             delay_max=0,
         )
         self._sel_worker = worker
+        worker.progress.connect(lambda msg: self.setWindowTitle(f"MAX POST — {msg}"))
         worker.result_ready.connect(self._on_selection_send_done)
+        worker.finished.connect(lambda: self.setWindowTitle("MAX POST"))
         worker.finished.connect(worker.deleteLater)
         worker.finished.connect(lambda: setattr(self, "_sel_worker", None))
         worker.start()
 
     def _on_selection_send_done(self, success: bool, msg: str) -> None:
         icon = "✅" if success else "⚠️"
-        QMessageBox.information(self, "Результат отправки", f"{icon} {msg}")
+        QMessageBox.information(self, "Результат отправки выделенного текста", f"{icon}\n\n{msg}")
 
     def _update_checklist(self) -> None:
         def row(ok: bool, label: str) -> str:
