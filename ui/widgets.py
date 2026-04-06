@@ -5,7 +5,7 @@ import re
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor, QPainter,
     QSyntaxHighlighter, QTextCharFormat, QTextCursor,
@@ -222,11 +222,19 @@ class _SpellMixin:
         select_all = menu.addAction("Выделить всё")
         select_all.triggered.connect(self.selectAll)
 
+        self._extra_menu_actions(menu, cursor.selectedText() if has_sel else "")
+
         menu.exec(event.globalPos())
+
+    def _extra_menu_actions(self, menu: QMenu, selected_text: str) -> None:
+        """Hook для подклассов: добавить дополнительные пункты в контекстное меню."""
 
 
 class LineNumberedEdit(_SpellMixin, QPlainTextEdit):
     """QPlainTextEdit с проверкой орфографии и подсветкой адресных строк."""
+
+    send_selected_max = pyqtSignal(str)  # выделенный текст → отправить в MAX
+    send_selected_vk  = pyqtSignal(str)  # выделенный текст → отправить в ВКонтакте
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -235,6 +243,15 @@ class LineNumberedEdit(_SpellMixin, QPlainTextEdit):
     def set_address_marks(self, marks: dict[int, bool]) -> None:
         """Подсветить строки с адресами: True=найден (зелёный), False=не найден (оранжевый)."""
         self._spell_hl.set_line_marks(marks)
+
+    def _extra_menu_actions(self, menu: QMenu, selected_text: str) -> None:
+        if not selected_text.strip():
+            return
+        menu.addSeparator()
+        act_max = menu.addAction("📤 Отправить выделенное в MAX")
+        act_max.triggered.connect(lambda: self.send_selected_max.emit(selected_text))
+        act_vk = menu.addAction("📤 Отправить выделенное в ВКонтакте")
+        act_vk.triggered.connect(lambda: self.send_selected_vk.emit(selected_text))
 
 
 class SpellCheckTextEdit(_SpellMixin, QTextEdit):

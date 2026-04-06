@@ -978,6 +978,7 @@ class MainWindow(QMainWindow):
             self.excel_path.stat().st_mtime if self.excel_path.exists() else 0.0
         )
         self._send_log_results: list[tuple[str, bool, str]] = []  # (адрес, успех, время)
+        self._sel_worker: "SendWorker | None" = None  # воркер отправки выделенного текста
         self._bg_index: "int | None" = None
         self._bg_mode: int = 0  # 0 = фон, 1 = наложение
         self._bg_opacity: int = 50
@@ -1243,6 +1244,8 @@ class MainWindow(QMainWindow):
         self.text_input.setPlaceholderText(
             "Введите текст объявления…\n\nАдрес будет найден автоматически"
         )
+        self.text_input.send_selected_max.connect(self._send_selection_max)
+        self.text_input.send_selected_vk.connect(self._send_selection_vk)
 
         self._emoji_picker: "EmojiPicker | None" = None
         self._emoji_btn = QPushButton("😊")
@@ -2175,6 +2178,82 @@ class MainWindow(QMainWindow):
         self._save_report_btn.hide()
         self._send_log_list.hide()
         self._addr_list.show()
+
+    # ── Отправка выделенного текста (ПКМ в поле ввода) ───────────
+
+    def _send_selection_max(self, text: str) -> None:
+        """Отправить выделенный текст в MAX (во все отмеченные адреса)."""
+        if self._worker is not None or self._smart_worker is not None:
+            QMessageBox.warning(self, "Отправка", "Дождитесь завершения текущей рассылки.")
+            return
+        checked = self._get_checked_matches()
+        chat_ids = list(dict.fromkeys(m.chat_id for m in checked if m.chat_id))
+        if not chat_ids:
+            QMessageBox.warning(self, "Отправка", "Нет отмеченных адресов для отправки в MAX.")
+            return
+        preview = text[:120].replace("&", "&amp;").replace("<", "&lt;")
+        if len(text) > 120:
+            preview += "…"
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Отправить в MAX")
+        dlg.setText(
+            f"Отправить выделенный текст в <b>{len(chat_ids)}</b> групп MAX?"
+            f"<br><br><i>{preview}</i>"
+        )
+        dlg.setIcon(QMessageBox.Icon.Question)
+        btn_yes = dlg.addButton("Отправить", QMessageBox.ButtonRole.AcceptRole)
+        dlg.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
+        dlg.exec()
+        if dlg.clickedButton() != btn_yes:
+            return
+        self._run_selection_worker(text, send_max=True, send_vk=False, chat_ids=chat_ids)
+
+    def _send_selection_vk(self, text: str) -> None:
+        """Отправить выделенный текст в ВКонтакте."""
+        if self._worker is not None or self._smart_worker is not None:
+            QMessageBox.warning(self, "Отправка", "Дождитесь завершения текущей рассылки.")
+            return
+        preview = text[:120].replace("&", "&amp;").replace("<", "&lt;")
+        if len(text) > 120:
+            preview += "…"
+        dlg = QMessageBox(self)
+        dlg.setWindowTitle("Отправить в ВКонтакте")
+        dlg.setText(
+            f"Отправить выделенный текст в ВКонтакте?"
+            f"<br><br><i>{preview}</i>"
+        )
+        dlg.setIcon(QMessageBox.Icon.Question)
+        btn_yes = dlg.addButton("Отправить", QMessageBox.ButtonRole.AcceptRole)
+        dlg.addButton("Отмена", QMessageBox.ButtonRole.RejectRole)
+        dlg.exec()
+        if dlg.clickedButton() != btn_yes:
+            return
+        self._run_selection_worker(text, send_max=False, send_vk=True, chat_ids=[])
+
+    def _run_selection_worker(self, text: str, send_max: bool, send_vk: bool, chat_ids: list) -> None:
+        """Запускает SendWorker для отправки выделенного текста."""
+        worker = SendWorker(
+            max_sender=self.max_sender,
+            vk_sender=self.vk_sender,
+            chat_ids=chat_ids,
+            text=text,
+            image_path=str(self.image_path) if self.image_path else None,
+            send_max=send_max,
+            send_vk=send_vk,
+            dry_run=False,
+            extra_delay=int(os.getenv("SEND_DELAY_SEC", "0") or 0),
+            delay_min=0,
+            delay_max=0,
+        )
+        self._sel_worker = worker
+        worker.result_ready.connect(self._on_selection_send_done)
+        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(lambda: setattr(self, "_sel_worker", None))
+        worker.start()
+
+    def _on_selection_send_done(self, success: bool, msg: str) -> None:
+        icon = "✅" if success else "⚠️"
+        QMessageBox.information(self, "Результат отправки", f"{icon} {msg}")
 
     def _update_checklist(self) -> None:
         def row(ok: bool, label: str) -> str:
@@ -3951,6 +4030,10 @@ class MainWindow(QMainWindow):
             self._smart_worker.cancel()
             self._smart_worker.quit()
             self._smart_worker.wait(3000)
+
+        if self._sel_worker and self._sel_worker.isRunning():
+            self._sel_worker.quit()
+            self._sel_worker.wait(2000)
 
         if self._addr_check_worker and self._addr_check_worker.isRunning():
             self._addr_check_worker.cancel()
