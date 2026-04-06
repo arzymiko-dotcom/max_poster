@@ -685,8 +685,9 @@ tbody tr:hover td { background: var(--bg3); }
 <p>После рассылки в левой панели — список результатов:</p>
 <ul>
   <li><strong style="color:var(--green)">✓ Адрес</strong> — успешно отправлено</li>
-  <li><strong style="color:var(--red)">✗ Адрес</strong> — ошибка при отправке</li>
+  <li><strong style="color:var(--red)">✗ Адрес 🔁</strong> — ошибка при отправке; кнопка <strong>🔁</strong> рядом повторяет отправку именно для этого адреса</li>
 </ul>
+<p>Кнопка <strong>🔁 Повторить (N)</strong> над списком — повторяет все провальные адреса сразу одним нажатием.</p>
 <p>Кнопка <strong>💾 Сохранить отчёт</strong> сохраняет лог в текстовый файл.</p>
 
 <h3>Отмена отправки</h3>
@@ -728,6 +729,9 @@ tbody tr:hover td { background: var(--bg3); }
 </div>
 
 <div class="callout callout-info">Блоки разделяются <strong>пустой строкой</strong>. Каждый блок должен содержать адрес из реестра <code>max_address.xlsx</code>.</div>
+
+<h3>Повтор ошибок в умной рассылке</h3>
+<p>Если часть блоков не отправилась — в логе рядом с каждым провальным адресом появляется кнопка <strong>🔁</strong>. Нажмите её чтобы повторить отправку именно этого блока в нужную группу.</p>
 
 
 <!-- ══════════════════════════════════════════════════════════ -->
@@ -805,7 +809,7 @@ tbody tr:hover td { background: var(--bg3); }
 </div>
 <div class="feature-row">
   <div class="feature-icon">📊</div>
-  <div class="feature-text"><div class="title">Статистика</div><div class="desc">Статистика отправок. Кнопка <strong>🌐 Веб-отчёт</strong> открывает подробный отчёт в браузере.</div></div>
+  <div class="feature-text"><div class="title">Статистика</div><div class="desc">Статистика отправок по группам. Таблица сортируется по дате последней активности — самые активные группы всегда наверху. Кнопка <strong>🌐 Веб-отчёт</strong> открывает подробный отчёт в браузере.</div></div>
 </div>
 <div class="feature-row">
   <div class="feature-icon">🤖</div>
