@@ -1247,6 +1247,7 @@ class MainWindow(QMainWindow):
         self.text_input.send_selected_max.connect(self._send_selection_max)
         self.text_input.send_selected_vk.connect(self._send_selection_vk)
         self.text_input.addr_count_getter = self._get_checked_addr_count
+        self.text_input.vk_token_getter   = lambda: bool(os.getenv("VK_GROUP_TOKEN"))
 
         self._emoji_picker: "EmojiPicker | None" = None
         self._emoji_btn = QPushButton("😊")
@@ -2184,7 +2185,7 @@ class MainWindow(QMainWindow):
 
     def _send_selection_max(self, text: str) -> None:
         """Отправить выделенный текст в MAX (во все отмеченные адреса)."""
-        if self._worker is not None or self._smart_worker is not None:
+        if self._worker is not None or self._smart_worker is not None or self._sel_worker is not None:
             QMessageBox.warning(self, "Отправка", "Дождитесь завершения текущей рассылки.")
             return
         checked = self._get_checked_matches()
@@ -2217,8 +2218,15 @@ class MainWindow(QMainWindow):
 
     def _send_selection_vk(self, text: str) -> None:
         """Отправить выделенный текст в ВКонтакте."""
-        if self._worker is not None or self._smart_worker is not None:
+        if self._worker is not None or self._smart_worker is not None or self._sel_worker is not None:
             QMessageBox.warning(self, "Отправка", "Дождитесь завершения текущей рассылки.")
+            return
+        if not os.getenv("VK_GROUP_TOKEN"):
+            QMessageBox.warning(
+                self, "Отправка",
+                "Не задан токен ВКонтакте (VK_GROUP_TOKEN).\n"
+                "Откройте Настройки подключений (🔑) и заполните данные."
+            )
             return
         preview = text[:120].replace("&", "&amp;").replace("<", "&lt;")
         if len(text) > 120:

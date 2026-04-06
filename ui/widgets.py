@@ -236,8 +236,9 @@ class LineNumberedEdit(_SpellMixin, QPlainTextEdit):
     send_selected_max = pyqtSignal(str)  # выделенный текст → отправить в MAX
     send_selected_vk  = pyqtSignal(str)  # выделенный текст → отправить в ВКонтакте
 
-    # MainWindow устанавливает этот getter чтобы меню показывало счётчик адресов
-    addr_count_getter: "callable | None" = None
+    # MainWindow устанавливает эти getters чтобы меню показывало актуальный статус
+    addr_count_getter: "callable | None" = None   # → int: кол-во отмеченных адресов MAX
+    vk_token_getter:   "callable | None" = None   # → bool: есть ли VK_GROUP_TOKEN
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -259,7 +260,16 @@ class LineNumberedEdit(_SpellMixin, QPlainTextEdit):
         act_max = menu.addAction(max_label)
         act_max.setEnabled(bool(n))  # серый если нет адресов, но виден — напоминает выбрать
         act_max.triggered.connect(lambda: self.send_selected_max.emit(selected_text))
-        act_vk = menu.addAction("📤 Отправить в ВКонтакте")
+        has_vk = self.vk_token_getter() if callable(self.vk_token_getter) else None
+        if has_vk is None:
+            vk_label = "📤 Отправить в ВКонтакте"
+        elif has_vk:
+            vk_label = "📤 Отправить в ВКонтакте"
+        else:
+            vk_label = "📤 Отправить в ВКонтакте — токен не задан"
+        act_vk = menu.addAction(vk_label)
+        if has_vk is not None:
+            act_vk.setEnabled(bool(has_vk))
         act_vk.triggered.connect(lambda: self.send_selected_vk.emit(selected_text))
 
 
