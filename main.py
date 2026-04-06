@@ -4169,6 +4169,7 @@ class MainWindow(QMainWindow):
 
         # Лог отправки — только адреса с chat_id (те, что реально будут отправлены)
         # Порядок должен совпадать с global_idx в _SmartSendWorker.run()
+        self._send_log_results = []
         self._send_log_list.clear()
         for b in confirmed_blocks:
             for m in b.matches:
@@ -4176,6 +4177,7 @@ class MainWindow(QMainWindow):
                     continue
                 log_item = QListWidgetItem(f"⏳  {m.address}")
                 log_item.setData(Qt.ItemDataRole.UserRole, m.address)
+                log_item.setData(_LOG_MATCH_ROLE, m)
                 self._send_log_list.addItem(log_item)
         self._addr_list.hide()
         self._send_log_list.show()
