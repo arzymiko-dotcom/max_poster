@@ -1246,6 +1246,7 @@ class MainWindow(QMainWindow):
         )
         self.text_input.send_selected_max.connect(self._send_selection_max)
         self.text_input.send_selected_vk.connect(self._send_selection_vk)
+        self.text_input.addr_count_getter = self._get_checked_addr_count
 
         self._emoji_picker: "EmojiPicker | None" = None
         self._emoji_btn = QPushButton("😊")
@@ -2189,7 +2190,13 @@ class MainWindow(QMainWindow):
         checked = self._get_checked_matches()
         chat_ids = list(dict.fromkeys(m.chat_id for m in checked if m.chat_id))
         if not chat_ids:
-            QMessageBox.warning(self, "Отправка", "Нет отмеченных адресов для отправки в MAX.")
+            QMessageBox.warning(
+                self, "Нет адресов",
+                "Не выбрано ни одного адреса для отправки в MAX.\n\n"
+                "Выберите адреса через поле 🔍 Поиск или кнопку «+»,\n"
+                "затем повторите отправку через ПКМ."
+            )
+            self._addr_search.setFocus()
             return
         preview = text[:120].replace("&", "&amp;").replace("<", "&lt;")
         if len(text) > 120:
@@ -2623,6 +2630,16 @@ class MainWindow(QMainWindow):
         self._update_photo_thumb()
         self._update_checklist()
         self.save_state()
+
+    def _get_checked_addr_count(self) -> int:
+        """Количество отмеченных адресов с chat_id (для счётчика в ПКМ меню)."""
+        return sum(
+            1 for i in range(self._addr_list.count())
+            if (item := self._addr_list.item(i))
+            and item.checkState() == Qt.CheckState.Checked
+            and item.data(Qt.ItemDataRole.UserRole)
+            and item.data(Qt.ItemDataRole.UserRole).chat_id
+        )
 
     def _get_checked_matches(self) -> list[MatchResult]:
         results = []

@@ -236,6 +236,9 @@ class LineNumberedEdit(_SpellMixin, QPlainTextEdit):
     send_selected_max = pyqtSignal(str)  # выделенный текст → отправить в MAX
     send_selected_vk  = pyqtSignal(str)  # выделенный текст → отправить в ВКонтакте
 
+    # MainWindow устанавливает этот getter чтобы меню показывало счётчик адресов
+    addr_count_getter: "callable | None" = None
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._init_spellcheck()
@@ -248,9 +251,15 @@ class LineNumberedEdit(_SpellMixin, QPlainTextEdit):
         if not selected_text.strip():
             return
         menu.addSeparator()
-        act_max = menu.addAction("📤 Отправить выделенное в MAX")
+        n = self.addr_count_getter() if callable(self.addr_count_getter) else None
+        if n:
+            max_label = f"📤 Отправить в MAX ({n} адр.)"
+        else:
+            max_label = "📤 Отправить в MAX — сначала выберите адреса"
+        act_max = menu.addAction(max_label)
+        act_max.setEnabled(bool(n))  # серый если нет адресов, но виден — напоминает выбрать
         act_max.triggered.connect(lambda: self.send_selected_max.emit(selected_text))
-        act_vk = menu.addAction("📤 Отправить выделенное в ВКонтакте")
+        act_vk = menu.addAction("📤 Отправить в ВКонтакте")
         act_vk.triggered.connect(lambda: self.send_selected_vk.emit(selected_text))
 
 
