@@ -1,7 +1,4 @@
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_all
-
-bs4_datas, bs4_binaries, bs4_hiddenimports = collect_all('bs4')
 
 a = Analysis(
     ['app.py'],
@@ -18,13 +15,9 @@ a = Analysis(
         ('.venv/Lib/site-packages/pymorphy3_dicts_ru/data', 'pymorphy3_dicts_ru/data'),
         # История изменений
         ('changelog.json', '.'),
-        *bs4_datas,
     ],
-    binaries=[
-        *bs4_binaries,
-    ],
+    binaries=[],
     hiddenimports=[
-        *bs4_hiddenimports,
         'dotenv', 'dotenv.main',
         'qrcode', 'qrcode.image.pil',
         'PIL', 'PIL.Image', 'PIL.ImageDraw',
@@ -33,8 +26,6 @@ a = Analysis(
         # Новые модули
         'stats_panel',
         'html', 'html.parser',       # парсер отчёта в stats_panel
-        'bs4', 'bs4.builder', 'bs4.builder._htmlparser',
-        'soupsieve',
         'log_setup', 'constants', 'crash_dialog', 'template_manager', 'vk_utils',
         # ui-пакет — импортируются внутри try/except, PyInstaller может пропустить
         'ui', 'ui.paths', 'ui.widgets', 'ui.emoji_picker',
