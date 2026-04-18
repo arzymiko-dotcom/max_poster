@@ -41,7 +41,9 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QSplitter,
     QSystemTrayIcon,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -247,6 +249,14 @@ class SendWorker(QThread):
         lines: list[str] = []
         success = True
 
+        # Читаем файл фото один раз до цикла — избегаем повторного чтения с диска
+        _img_bytes: bytes | None = None
+        if self.image_path:
+            try:
+                _img_bytes = Path(self.image_path).read_bytes()
+            except OSError:
+                _img_bytes = None
+
         if self.send_max:
             # Проверяем авторизацию перед стартом рассылки
             self.progress.emit("Проверка авторизации MAX…")
@@ -282,6 +292,7 @@ class SendWorker(QThread):
                         chat_link=chat_id,
                         text=self.text,
                         image_path=self.image_path,
+                        _file_bytes=_img_bytes,
                     )
                 lines.append(f"MAX [{i}/{total}]: {r.message}")
                 self.address_result.emit(i - 1, r.success, r.message)
@@ -605,6 +616,7 @@ class _PasteConfirmDialog(QDialog):
 @dataclass
 class _SmartBlock:
     text: str
+    clean_text: str = ""  # текст без строк-адресов (для опции «без адресов»)
     matches: list = dc_field(default_factory=list)   # list[MatchResult]
     not_found: list = dc_field(default_factory=list)  # list[str] — не найдены в реестре
 
@@ -658,6 +670,21 @@ def _parse_smart_blocks(text: str, matcher) -> "tuple[list[_SmartBlock], str, st
                         block.matches.append(r)
             else:
                 block.not_found.append(getattr(parsed, "original", str(parsed)))
+
+        # Строим clean_text: убираем строки-адреса по их line_idx
+        addr_line_indices: set[int] = set()
+        for parsed in parsed_cache[i]:
+            if parsed.line_idx is not None:
+                addr_line_indices.add(parsed.line_idx)
+        clean_lines = [
+            line for line_num, line in enumerate(raw.splitlines())
+            if line_num not in addr_line_indices
+        ]
+        # убираем «по адресам:» / «по адресу:» в конце строк-заголовков блока
+        cleaned = "\n".join(clean_lines).rstrip()
+        cleaned = re.sub(r"[,\s]*по адресам?\s*:?\s*$", "", cleaned, flags=re.IGNORECASE)
+        block.clean_text = cleaned.strip()
+
         address_blocks.append(block)
 
     return address_blocks, header, footer
@@ -669,9 +696,11 @@ class _SmartSendPreviewDialog(QDialog):
     def __init__(self, blocks: "list[_SmartBlock]", parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Умная рассылка — предпросмотр")
-        self.setMinimumWidth(520)
-        self.setMinimumHeight(400)
+        self.resize(960, 620)
+        self.setMinimumWidth(700)
+        self.setMinimumHeight(500)
         self._blocks = blocks
+        self._current_block: "_SmartBlock | None" = blocks[0] if blocks else None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 10)
@@ -692,93 +721,147 @@ class _SmartSendPreviewDialog(QDialog):
             warn.setStyleSheet("color: #b45309; background: #fef3c7; padding: 6px 8px; border-radius: 4px;")
             root.addWidget(warn)
 
-        # Список блоков в скролле
+        # Основная область: левая (список блоков) + правая (предпросмотр)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        # ── Левая панель: список блоков ──
+        left_w = QWidget()
+        left_lay = QVBoxLayout(left_w)
+        left_lay.setContentsMargins(0, 0, 4, 0)
+        left_lay.setSpacing(4)
+
+        blocks_lbl = QLabel("Блоки для рассылки:")
+        blocks_lbl.setStyleSheet("font-weight: 600; font-size: 12px;")
+        left_lay.addWidget(blocks_lbl)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         container = QWidget()
         scroll.setWidget(container)
         vbox = QVBoxLayout(container)
-        vbox.setContentsMargins(4, 4, 4, 4)
-        vbox.setSpacing(10)
-        container.setFixedWidth(480)
+        vbox.setContentsMargins(2, 2, 2, 2)
+        vbox.setSpacing(8)
 
         self._checks: list[tuple["QCheckBox", "_SmartBlock"]] = []
+        self._previews: list[tuple["QLabel", "_SmartBlock"]] = []
+        self._frames: list[tuple["QFrame", "_SmartBlock"]] = []
 
         for idx, block in enumerate(blocks, 1):
             frame = QFrame()
             frame.setFrameShape(QFrame.Shape.StyledPanel)
+            frame.setCursor(Qt.CursorShape.PointingHandCursor)
             fl = QVBoxLayout(frame)
             fl.setContentsMargins(8, 6, 8, 6)
-            fl.setSpacing(4)
+            fl.setSpacing(3)
 
-            # Превью первой строки
-            first_line = block.text.splitlines()[0][:80]
+            # Заголовок блока (первая строка текста)
+            first_line = block.text.splitlines()[0][:70]
             chk = QCheckBox(f"Блок {idx}: {first_line}")
             chk.setChecked(True)
             chk.setStyleSheet("font-weight: 600;")
+            chk.clicked.connect(lambda _, b=block: self._select_block(b))
             fl.addWidget(chk)
             self._checks.append((chk, block))
-
-            # Превью полного текста (первые 300 символов)
-            preview_text = block.text if len(block.text) <= 300 else block.text[:300] + "…"
-            preview_lbl = QLabel(preview_text)
-            preview_lbl.setWordWrap(True)
-            preview_lbl.setStyleSheet(
-                "color: #374151; font-size: 11px; padding: 4px 16px;"
-                "background: rgba(0,0,0,0.04); border-radius: 4px;"
-            )
-            fl.addWidget(preview_lbl)
+            self._frames.append((frame, block))
 
             # Найденные адреса — зелёным
             for m in block.matches:
                 lbl = QLabel(f"  ✓  {m.address}")
-                lbl.setStyleSheet("color: #16a34a; padding-left: 16px;")
+                lbl.setStyleSheet("color: #16a34a; font-size: 11px; padding-left: 12px;")
                 fl.addWidget(lbl)
 
             # Не найденные — красным
             for addr in block.not_found:
-                lbl = QLabel(f"  ✗  {addr}  (не найден в реестре)")
-                lbl.setStyleSheet("color: #dc2626; padding-left: 16px;")
+                lbl = QLabel(f"  ✗  {addr}  (не найден)")
+                lbl.setStyleSheet("color: #dc2626; font-size: 11px; padding-left: 12px;")
                 fl.addWidget(lbl)
 
             # Кол-во получателей
             cnt = len(block.matches)
             info = QLabel(f"  Получателей: {cnt}")
-            info.setStyleSheet("color: #6b7280; font-size: 11px; padding-left: 16px;")
+            info.setStyleSheet("color: #6b7280; font-size: 11px; padding-left: 12px;")
             fl.addWidget(info)
 
+            frame.mousePressEvent = lambda _e, b=block: self._select_block(b)
             vbox.addWidget(frame)
 
         vbox.addStretch()
-        root.addWidget(scroll, 1)
+        left_lay.addWidget(scroll, 1)
+        splitter.addWidget(left_w)
 
-        # Кнопки: [Тест] слева, [Отмена] [Отправить] справа
+        # ── Правая панель: предпросмотр ──
+        right_w = QWidget()
+        right_lay = QVBoxLayout(right_w)
+        right_lay.setContentsMargins(4, 0, 0, 0)
+        right_lay.setSpacing(4)
+
+        prev_title = QLabel("Предпросмотр")
+        prev_title.setStyleSheet("font-weight: 600; font-size: 12px;")
+        right_lay.addWidget(prev_title)
+
+        prev_sub = QLabel("Как будет выглядеть отправляемое сообщение:")
+        prev_sub.setStyleSheet("color: #6b7280; font-size: 11px;")
+        right_lay.addWidget(prev_sub)
+
+        self._preview_browser = QTextBrowser()
+        self._preview_browser.setReadOnly(True)
+        self._preview_browser.setOpenLinks(False)
+        self._preview_browser.setStyleSheet(
+            "font-size: 12px; padding: 8px;"
+            "background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;"
+        )
+        right_lay.addWidget(self._preview_browser, 1)
+        splitter.addWidget(right_w)
+
+        splitter.setSizes([430, 470])
+        root.addWidget(splitter, 1)
+
+        # Галочка «убрать адреса из текста» — включена по умолчанию
+        self._chk_strip = QCheckBox("✂️ Не дублировать адреса в тексте")
+        self._chk_strip.setChecked(True)
+        self._chk_strip.setToolTip(
+            "Убирает строки-адреса из отправляемого текста.\n"
+            "Получатель увидит только дату/время и описание работ."
+        )
+        self._chk_strip.toggled.connect(self._on_strip_toggled)
+        root.addWidget(self._chk_strip)
+
+        # Кнопки: [Отмена] [Отправить]
         self.dry_run = False
         btn_row = QHBoxLayout()
-        btn_test = QPushButton("Тест")
-        btn_test.setObjectName("testButton")
-        btn_test.setToolTip("Пробный прогон — сообщения не отправляются")
         btn_cancel = QPushButton("Отмена")
         btn_send = QPushButton("Отправить")
         btn_send.setDefault(True)
-
-        def _do_test():
-            self.dry_run = True
-            self.accept()
-
-        btn_test.clicked.connect(_do_test)
         btn_cancel.clicked.connect(self.reject)
         btn_send.clicked.connect(self.accept)
-
-        btn_row.addWidget(btn_test)
         btn_row.addStretch()
         btn_row.addWidget(btn_cancel)
         btn_row.addWidget(btn_send)
         root.addLayout(btn_row)
 
+        # Показать предпросмотр первого блока
+        if self._current_block:
+            self._select_block(self._current_block)
+
+    def _select_block(self, block: "_SmartBlock") -> None:
+        """Обновляет правую панель предпросмотра для выбранного блока."""
+        self._current_block = block
+        checked = self._chk_strip.isChecked()
+        src = block.clean_text if checked and block.clean_text else block.text
+        self._preview_browser.setPlainText(src)
+
     def accepted_blocks(self) -> "list[_SmartBlock]":
         return [b for chk, b in self._checks if chk.isChecked() and b.matches]
+
+    @property
+    def strip_addresses(self) -> bool:
+        return self._chk_strip.isChecked()
+
+    def _on_strip_toggled(self, checked: bool) -> None:
+        """Обновляет предпросмотр при переключении галочки «без адресов»."""
+        if self._current_block:
+            self._select_block(self._current_block)
 
 
 class _SmartSendWorker(QThread):
@@ -812,6 +895,14 @@ class _SmartSendWorker(QThread):
         if not self._send_max:
             self.all_done.emit(False, "Умная рассылка работает только для MAX.")
             return
+
+        # Читаем файл фото один раз до цикла — избегаем повторного чтения с диска
+        _img_bytes: bytes | None = None
+        if self._image_path:
+            try:
+                _img_bytes = Path(self._image_path).read_bytes()
+            except OSError:
+                _img_bytes = None
 
         total_blocks = len(self._blocks)
         ok_count = 0
@@ -847,6 +938,7 @@ class _SmartSendWorker(QThread):
                             chat_link=chat_id,
                             text=text,
                             image_path=self._image_path,
+                            _file_bytes=_img_bytes,
                         )
                         if r.success:
                             ok_count += 1
@@ -979,6 +1071,8 @@ class MainWindow(QMainWindow):
         )
         self._send_log_results: list[tuple[str, bool, str]] = []  # (адрес, успех, время)
         self._sel_worker: "SendWorker | None" = None  # воркер отправки выделенного текста
+        self._smart_hint_shown: bool = False   # флаг: кнопка уже мигала для текущего текста
+        self._last_smart_text: str = ""         # текст последней умной рассылки (для повтора)
         self._bg_index: "int | None" = None
         self._bg_mode: int = 0  # 0 = фон, 1 = наложение
         self._bg_opacity: int = 50
@@ -1224,6 +1318,21 @@ class MainWindow(QMainWindow):
         self._smart_send_btn.clicked.connect(self._start_smart_send)
         lh_layout.addWidget(self._smart_send_btn)
 
+        self._repeat_smart_btn = QPushButton("🔁")
+        self._repeat_smart_btn.setObjectName("tplMiniBtn")
+        self._repeat_smart_btn.setFixedSize(28, 28)
+        self._repeat_smart_btn.setToolTip("Повторить последнюю умную рассылку")
+        self._repeat_smart_btn.clicked.connect(self._repeat_smart_send)
+        self._repeat_smart_btn.hide()
+        lh_layout.addWidget(self._repeat_smart_btn)
+
+        self._strip_addr_btn = QPushButton("✂️")
+        self._strip_addr_btn.setObjectName("tplMiniBtn")
+        self._strip_addr_btn.setFixedSize(28, 28)
+        self._strip_addr_btn.setToolTip("Убрать строки-адреса из текста (оставить только описание и даты)")
+        self._strip_addr_btn.clicked.connect(self._strip_addresses_from_text)
+        lh_layout.addWidget(self._strip_addr_btn)
+
         self._open_file_btn = QPushButton("📄 Файл")
         self._open_file_btn.setObjectName("tplMiniBtn")
         self._open_file_btn.setFixedHeight(28)
@@ -1262,6 +1371,11 @@ class MainWindow(QMainWindow):
         self._vk_char_counter.setObjectName("charCounter")
         self._vk_char_counter.hide()
 
+        self._block_counter = QLabel()
+        self._block_counter.setObjectName("charCounter")
+        self._block_counter.setStyleSheet("color: #6366f1; font-weight: 600;")
+        self._block_counter.hide()
+
         right_bar = QWidget()
         rb_layout = QVBoxLayout(right_bar)
         rb_layout.setContentsMargins(0, 2, 2, 2)
@@ -1269,6 +1383,7 @@ class MainWindow(QMainWindow):
         rb_layout.addWidget(self._emoji_btn, alignment=Qt.AlignmentFlag.AlignRight)
         rb_layout.addWidget(self._char_counter, alignment=Qt.AlignmentFlag.AlignRight)
         rb_layout.addWidget(self._vk_char_counter, alignment=Qt.AlignmentFlag.AlignRight)
+        rb_layout.addWidget(self._block_counter, alignment=Qt.AlignmentFlag.AlignRight)
 
         bottom_bar = QWidget()
         bb_layout = QHBoxLayout(bottom_bar)
@@ -2343,6 +2458,24 @@ class MainWindow(QMainWindow):
         else:
             self._vk_char_counter.hide()
 
+        # Счётчик адресных блоков + автоподсказка умной рассылки
+        _addr_pattern = re.compile(
+            r"\b(?:ул\.?|улица|пр\.?|проспект|пер\.?|бульвар|аллея|набережная|д\.?\s*\d|дом\s*\d)\b",
+            re.IGNORECASE,
+        )
+        _raw = [b.strip() for b in re.split(r"\n\s*\n", text.strip()) if b.strip()]
+        bc = sum(1 for b in _raw if _addr_pattern.search(b))
+        if bc >= 2:
+            _sfx = "блока" if 2 <= bc <= 4 else "блоков"
+            self._block_counter.setText(f"🔀 {bc} {_sfx}")
+            self._block_counter.show()
+            if not self._smart_hint_shown:
+                self._smart_hint_shown = True
+                self._flash_smart_btn()
+        else:
+            self._block_counter.hide()
+            self._smart_hint_shown = False
+
         self._update_checklist()
         self.save_state()
         self._parse_timer.start()
@@ -2643,13 +2776,14 @@ class MainWindow(QMainWindow):
 
     def _get_checked_addr_count(self) -> int:
         """Количество отмеченных адресов с chat_id (для счётчика в ПКМ меню)."""
-        return sum(
-            1 for i in range(self._addr_list.count())
-            if (item := self._addr_list.item(i))
-            and item.checkState() == Qt.CheckState.Checked
-            and item.data(Qt.ItemDataRole.UserRole)
-            and item.data(Qt.ItemDataRole.UserRole).chat_id
-        )
+        count = 0
+        for i in range(self._addr_list.count()):
+            item = self._addr_list.item(i)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                match = item.data(Qt.ItemDataRole.UserRole)
+                if match and match.chat_id:
+                    count += 1
+        return count
 
     def _get_checked_matches(self) -> list[MatchResult]:
         results = []
@@ -3908,8 +4042,7 @@ class MainWindow(QMainWindow):
                 state = Qt.CheckState.Checked if (not checked_ids or match.chat_id in checked_ids) else Qt.CheckState.Unchecked
                 item.setCheckState(state)
                 item.setData(Qt.ItemDataRole.UserRole, match)
-                if a.get("manual"):
-                    item.setData(_MANUAL_ROLE, True)
+                item.setData(_MANUAL_ROLE, True)  # всегда закрепляем загруженные адреса
                 self._addr_list.addItem(item)
         finally:
             self._addr_list.blockSignals(False)
@@ -4234,11 +4367,43 @@ class MainWindow(QMainWindow):
     # Умная рассылка
     # ------------------------------------------------------------------
 
+    def _flash_smart_btn(self) -> None:
+        """Кратко подсвечивает кнопку «Умная рассылка» когда обнаружено ≥2 блоков."""
+        self._smart_send_btn.setStyleSheet(
+            "QPushButton#tplMiniBtn { background: #f59e0b; color: #1a1a1a; border: none; }"
+        )
+        QTimer.singleShot(900, lambda: self._smart_send_btn.setStyleSheet(""))
+
+    def _strip_addresses_from_text(self) -> None:
+        """Убирает строки-адреса из текстового поля, оставляя описания и даты."""
+        text = self.text_input.toPlainText()
+        if not text.strip():
+            return
+        try:
+            parsed = extract_all_addresses(text)
+        except Exception:
+            return
+        addr_lines = {p.line_idx for p in parsed if p.line_idx is not None}
+        if not addr_lines:
+            return
+        lines = text.splitlines()
+        clean = "\n".join(ln for i, ln in enumerate(lines) if i not in addr_lines)
+        clean = re.sub(r"\n{3,}", "\n\n", clean).strip()
+        self.text_input.setPlainText(clean)
+
+    def _repeat_smart_send(self) -> None:
+        """Повторяет умную рассылку с текстом последней отправки."""
+        if self._last_smart_text:
+            self.text_input.setPlainText(self._last_smart_text)
+        self._start_smart_send()
+
     def _start_smart_send(self) -> None:
         text = self.text_input.toPlainText().strip()
         if not text:
             QMessageBox.warning(self, "Умная рассылка", "Поле текста пустое.")
             return
+        self._last_smart_text = text
+        self._repeat_smart_btn.hide()
         if not self.chk_max.isChecked():
             QMessageBox.warning(self, "Умная рассылка", "Умная рассылка работает только для MAX.")
             return
@@ -4260,9 +4425,13 @@ class MainWindow(QMainWindow):
 
         for b in blocks:
             if header:
-                b.text = header + "\n\n" + b.text
+                b.text = header + "\n" + b.text
+                if b.clean_text:
+                    b.clean_text = header + "\n" + b.clean_text
             if footer:
                 b.text = b.text + "\n\n" + footer
+                if b.clean_text:
+                    b.clean_text = b.clean_text + "\n\n" + footer
 
         dlg = _SmartSendPreviewDialog(blocks, parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -4272,8 +4441,10 @@ class MainWindow(QMainWindow):
         if not confirmed_blocks:
             return
 
+        use_clean = dlg.strip_addresses
         chat_ids_per_block = [
-            (b.text, [m.chat_id for m in b.matches if m.chat_id])
+            (b.clean_text if use_clean and b.clean_text else b.text,
+             [m.chat_id for m in b.matches if m.chat_id])
             for b in confirmed_blocks
         ]
 

@@ -199,7 +199,9 @@ PyQt6 desktop-приложение для отправки объявлений 
 - `excel_matcher.find_matches`: `street_words = parsed_address.street.lower().split()` — фикс регистра (street приходит с заглавной, индекс строчный)
 - `address_parser.py`: «аллея» добавлена как тип улицы (`"аллея": "ал"` в `normalize_text`, `ал` в `_STREET_TYPES`) — «Придорожная аллея» теперь распознаётся
 - `_SmartBlock` + `_parse_smart_blocks(text, matcher)` → `(blocks, header, footer)` — разбивает текст по пустым строкам; текст до первого адресного блока = header, после последнего = footer; оба добавляются к каждому блоку
-- `_SmartSendPreviewDialog` — диалог предпросмотра умной рассылки с чекбоксами блоков и превью текста (300 символов)
+- `_SmartSendPreviewDialog` — диалог умной рассылки: `QSplitter(Horizontal)` левая панель (блоки с чекбоксами) + правая `QTextBrowser` «Предпросмотр»; клик на блок → обновляет предпросмотр; «✂️ Не дублировать» включена по умолчанию; кнопка «Тест» удалена; `resize(960, 620)`
+- Склейка шапки с блоком: `header + "\n" + b.text` (одинарный перенос, без пустой строки между шапкой и датой в итоговом сообщении)
+- `QSplitter`, `QTextBrowser` добавлены в импорты `PyQt6.QtWidgets`
 - `_SmartSendWorker` — фоновая отправка блоков по chat_id; кнопка «🔀 Умная» в строке отправки
 - Защита `max_address.xlsx` через `icacls`: `SecureExcelFile()` в `MAX POST.iss` + строка в `build_MAX POST.bat` — файл доступен только на чтение
 - `_last_addr_row: int` вместо `_last_addr_item` — хранит индекс строки, а не ссылку на Qt-объект (избегает RuntimeError при пересборке списка)

@@ -5,12 +5,16 @@ import re
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QDate, QTime, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor, QPainter,
     QSyntaxHighlighter, QTextCharFormat, QTextCursor,
 )
-from PyQt6.QtWidgets import QLabel, QMenu, QPlainTextEdit, QSplitter, QSplitterHandle, QStyledItemDelegate, QTextEdit
+from PyQt6.QtWidgets import (
+    QDateEdit, QDialog, QHBoxLayout, QLabel, QMenu,
+    QPlainTextEdit, QPushButton, QSplitter, QSplitterHandle,
+    QStyledItemDelegate, QTextEdit, QTimeEdit, QVBoxLayout,
+)
 
 
 # ── Проверка орфографии через pymorphy3 (фоновая загрузка) ──────
@@ -252,25 +256,99 @@ class LineNumberedEdit(_SpellMixin, QPlainTextEdit):
         if not selected_text.strip():
             return
         menu.addSeparator()
+        act_dt = menu.addAction("📅 Добавить дату и время")
+        act_dt.setToolTip("Вставить строку с датой и временем перед выделенным блоком")
+        act_dt.triggered.connect(self._insert_datetime_for_selection)
+        menu.addSeparator()
         n = self.addr_count_getter() if callable(self.addr_count_getter) else None
         if n:
             max_label = f"📤 Отправить в MAX ({n} адр.)"
         else:
             max_label = "📤 Отправить в MAX — сначала выберите адреса"
         act_max = menu.addAction(max_label)
-        act_max.setEnabled(bool(n))  # серый если нет адресов, но виден — напоминает выбрать
+        act_max.setEnabled(bool(n))
         act_max.triggered.connect(lambda: self.send_selected_max.emit(selected_text))
         has_vk = self.vk_token_getter() if callable(self.vk_token_getter) else None
-        if has_vk is None:
-            vk_label = "📤 Отправить в ВКонтакте"
-        elif has_vk:
-            vk_label = "📤 Отправить в ВКонтакте"
-        else:
+        if has_vk is False:
             vk_label = "📤 Отправить в ВКонтакте — токен не задан"
+        else:
+            vk_label = "📤 Отправить в ВКонтакте"
         act_vk = menu.addAction(vk_label)
         if has_vk is not None:
             act_vk.setEnabled(bool(has_vk))
         act_vk.triggered.connect(lambda: self.send_selected_vk.emit(selected_text))
+
+    def _insert_datetime_for_selection(self) -> None:
+        """Открывает диалог выбора даты/времени и вставляет строку перед выделенным блоком."""
+        dlg = _DateTimePickerDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        line = dlg.formatted_line()
+
+        cursor = self.textCursor()
+        # Идём к началу первой выделенной строки
+        start = min(cursor.selectionStart(), cursor.selectionEnd())
+        cursor.setPosition(start)
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfLine)
+        cursor.insertText(line + "\n")
+
+
+_RU_MONTHS = [
+    "января", "февраля", "марта", "апреля", "мая", "июня",
+    "июля", "августа", "сентября", "октября", "ноября", "декабря",
+]
+
+
+class _DateTimePickerDialog(QDialog):
+    """Диалог выбора даты и временного диапазона для умной рассылки."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Дата и время")
+        self.setFixedWidth(320)
+
+        root = QVBoxLayout(self)
+        root.setSpacing(10)
+        root.setContentsMargins(16, 16, 16, 12)
+
+        # Дата
+        root.addWidget(QLabel("Дата:"))
+        self._date_edit = QDateEdit(QDate.currentDate())
+        self._date_edit.setCalendarPopup(True)
+        self._date_edit.setDisplayFormat("dd.MM.yyyy")
+        root.addWidget(self._date_edit)
+
+        # Время «с»
+        root.addWidget(QLabel("Время с:"))
+        self._time_from = QTimeEdit(QTime(9, 0))
+        self._time_from.setDisplayFormat("HH:mm")
+        root.addWidget(self._time_from)
+
+        # Время «по»
+        root.addWidget(QLabel("Время по:"))
+        self._time_to = QTimeEdit(QTime(17, 0))
+        self._time_to.setDisplayFormat("HH:mm")
+        root.addWidget(self._time_to)
+
+        # Кнопки
+        btn_row = QHBoxLayout()
+        btn_ok = QPushButton("Вставить")
+        btn_ok.setDefault(True)
+        btn_cancel = QPushButton("Отмена")
+        btn_ok.clicked.connect(self.accept)
+        btn_cancel.clicked.connect(self.reject)
+        btn_row.addStretch()
+        btn_row.addWidget(btn_cancel)
+        btn_row.addWidget(btn_ok)
+        root.addLayout(btn_row)
+
+    def formatted_line(self) -> str:
+        """Возвращает строку вида '22 апреля с 13:00 по 19:00'."""
+        d = self._date_edit.date()
+        tf = self._time_from.time().toString("HH:mm")
+        tt = self._time_to.time().toString("HH:mm")
+        month = _RU_MONTHS[d.month() - 1]
+        return f"{d.day()} {month} с {tf} по {tt}"
 
 
 class SpellCheckTextEdit(_SpellMixin, QTextEdit):

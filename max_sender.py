@@ -114,6 +114,7 @@ class MaxSender:
         chat_link: str,
         text: str,
         image_path: str | None = None,
+        _file_bytes: bytes | None = None,
     ) -> SendResult:
         err = self._check_credentials()
         if err:
@@ -123,7 +124,7 @@ class MaxSender:
 
         try:
             if image_path and Path(image_path).exists():
-                return self._send_with_image(chat_id, text, image_path)
+                return self._send_with_image(chat_id, text, image_path, _file_bytes)
             else:
                 return self._send_text(chat_id, text)
         except Exception as exc:
@@ -142,7 +143,8 @@ class MaxSender:
     _CAPTION_LIMIT = 4000
     _ALLOWED_MIME = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 
-    def _send_with_image(self, chat_id: str, text: str, image_path: str) -> SendResult:
+    def _send_with_image(self, chat_id: str, text: str, image_path: str,
+                         _file_bytes: bytes | None = None) -> SendResult:
         caption = text if len(text) <= self._CAPTION_LIMIT else ""
         file_name = Path(image_path).name
 
@@ -153,16 +155,17 @@ class MaxSender:
                 f"Неподдерживаемый тип файла '{ext}'. Разрешены: JPEG, PNG, GIF, WEBP"
             )
 
+        file_data = _file_bytes if _file_bytes is not None else Path(image_path).read_bytes()
+
         send_url = f"{self.media_url}/waInstance{self.id_instance}/sendFileByUpload/{self.api_token}"
         _log.debug("sendFileByUpload → .../sendFileByUpload/***  chatId=%s  file=%s  mime=%s",
                    chat_id, file_name, mime_type)
-        with open(image_path, "rb") as f:
-            resp = requests.post(
-                send_url,
-                data={"chatId": chat_id, "fileName": file_name, "caption": caption},
-                files={"file": (file_name, f, mime_type)},
-                timeout=60,
-            )
+        resp = requests.post(
+            send_url,
+            data={"chatId": chat_id, "fileName": file_name, "caption": caption},
+            files={"file": (file_name, file_data, mime_type)},
+            timeout=60,
+        )
 
         _log.debug("sendFileByUpload ответ: status=%s  body=%s",
                    resp.status_code, resp.text[:500])
