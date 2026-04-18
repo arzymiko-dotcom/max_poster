@@ -68,7 +68,7 @@ from updater import check_for_updates
 from vk_sender import VkSender
 
 from ui.paths import _assets_dir, _fonts_dir
-from ui.widgets import LineNumberedEdit, _GripSplitter, _NumberedItemDelegate
+from ui.widgets import LineNumberedEdit, _GripSplitter, _NumberedItemDelegate, _DateTimePickerDialog
 from ui.emoji_picker import EmojiPicker
 from ui.background import _BgWidget
 from ui.animations import SuccessOverlay
@@ -733,28 +733,30 @@ def _parse_smart_blocks(text: str, matcher) -> "tuple[list[_SmartBlock], str, st
 
 
 class _BlockBuilderRow(QFrame):
-    """Одна строка конструктора блоков: поле даты + чекбоксы адресов."""
+    """Одна строка конструктора блоков: кнопка выбора даты + чекбоксы адресов."""
 
     def __init__(self, addresses, index: int, on_delete, parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self._on_delete_cb = on_delete
         self._checks: list[tuple] = []  # (QCheckBox, MatchResult)
+        self._date_str = ""
 
         main = QVBoxLayout(self)
         main.setContentsMargins(10, 8, 10, 8)
         main.setSpacing(6)
 
-        # Заголовок строки: номер блока + поле даты + удалить
+        # Заголовок строки: номер блока + кнопка даты + удалить
         top_row = QHBoxLayout()
         top_row.setSpacing(8)
         lbl = QLabel(f"<b>Блок {index}:</b>")
         lbl.setMinimumWidth(55)
         top_row.addWidget(lbl)
-        top_row.addWidget(QLabel("Дата / время:"))
-        self._date_edit = QLineEdit()
-        self._date_edit.setPlaceholderText("напр.: 22 апреля с 13:00 по 19:00")
-        top_row.addWidget(self._date_edit, 1)
+        self._date_btn = QPushButton("📅 Выбрать дату и время")
+        self._date_btn.setObjectName("tplMiniBtn")
+        self._date_btn.setFixedHeight(28)
+        self._date_btn.clicked.connect(self._pick_datetime)
+        top_row.addWidget(self._date_btn, 1)
         del_btn = QPushButton("🗑")
         del_btn.setFixedSize(26, 26)
         del_btn.setToolTip("Удалить блок")
@@ -773,10 +775,20 @@ class _BlockBuilderRow(QFrame):
             grid.addWidget(chk, idx // cols, idx % cols)
         main.addLayout(grid)
 
+    def _pick_datetime(self):
+        dlg = _DateTimePickerDialog(self)
+        dlg.setWindowTitle("Дата и время для блока")
+        # Меняем текст кнопки «Вставить» на «Выбрать»
+        for btn in dlg.findChildren(QPushButton):
+            if btn.text() == "Вставить":
+                btn.setText("Выбрать")
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._date_str = dlg.formatted_line()
+            self._date_btn.setText(f"📅 {self._date_str}")
+
     def get_data(self):
-        date_str = self._date_edit.text().strip()
         selected = [m for chk, m in self._checks if chk.isChecked()]
-        return date_str, selected
+        return self._date_str, selected
 
 
 class _BlockBuilderDialog(QDialog):
