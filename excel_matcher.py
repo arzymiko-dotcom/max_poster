@@ -147,8 +147,9 @@ class ExcelMatcher:
                     if base_ok and suffix_ok:
                         score += 90
                         house_matched = True
-                    elif base_ok:
-                        # Только база совпала — слабый матч (нет инфо о корпусе в реестре)
+                    elif base_ok and not suffix.isalpha():
+                        # Только база — слабый матч допустим для числовых суффиксов (корп/стр).
+                        # Буквенные суффиксы (литера) обязаны совпасть — разные литеры = разные здания.
                         score += 60
                         house_matched = True
 
