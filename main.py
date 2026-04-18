@@ -732,6 +732,153 @@ def _parse_smart_blocks(text: str, matcher) -> "tuple[list[_SmartBlock], str, st
     return address_blocks, header, footer
 
 
+class _BlockBuilderRow(QFrame):
+    """Одна строка конструктора блоков: поле даты + чекбоксы адресов."""
+
+    def __init__(self, addresses, index: int, on_delete, parent=None):
+        super().__init__(parent)
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self._on_delete_cb = on_delete
+        self._checks: list[tuple] = []  # (QCheckBox, MatchResult)
+
+        main = QVBoxLayout(self)
+        main.setContentsMargins(10, 8, 10, 8)
+        main.setSpacing(6)
+
+        # Заголовок строки: номер блока + поле даты + удалить
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
+        lbl = QLabel(f"<b>Блок {index}:</b>")
+        lbl.setMinimumWidth(55)
+        top_row.addWidget(lbl)
+        top_row.addWidget(QLabel("Дата / время:"))
+        self._date_edit = QLineEdit()
+        self._date_edit.setPlaceholderText("напр.: 22 апреля с 13:00 по 19:00")
+        top_row.addWidget(self._date_edit, 1)
+        del_btn = QPushButton("🗑")
+        del_btn.setFixedSize(26, 26)
+        del_btn.setToolTip("Удалить блок")
+        del_btn.clicked.connect(lambda: self._on_delete_cb(self))
+        top_row.addWidget(del_btn)
+        main.addLayout(top_row)
+
+        # Чекбоксы адресов в компактной сетке (2 колонки)
+        grid = QGridLayout()
+        grid.setSpacing(2)
+        cols = 2
+        for idx, m in enumerate(addresses):
+            chk = QCheckBox(m.address)
+            chk.setChecked(False)
+            self._checks.append((chk, m))
+            grid.addWidget(chk, idx // cols, idx % cols)
+        main.addLayout(grid)
+
+    def get_data(self):
+        date_str = self._date_edit.text().strip()
+        selected = [m for chk, m in self._checks if chk.isChecked()]
+        return date_str, selected
+
+
+class _BlockBuilderDialog(QDialog):
+    """Конструктор блоков умной рассылки — задаёт дату/время для групп адресов из списка."""
+
+    def __init__(self, base_text: str, addresses, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Конструктор блоков умной рассылки")
+        self.resize(780, 560)
+        self._base_text = base_text
+        self._addresses = addresses  # list[MatchResult]
+        self._rows: list[_BlockBuilderRow] = []
+        self._counter = 0
+
+        root = QVBoxLayout(self)
+        root.setSpacing(10)
+
+        info = QLabel(
+            "Создайте блоки: введите дату и отметьте адреса из списка для каждого блока.\n"
+            "Один адрес можно включить в несколько блоков (если работы в разные дни)."
+        )
+        info.setWordWrap(True)
+        root.addWidget(info)
+
+        # Скролл с блоками
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._container = QWidget()
+        self._vlayout = QVBoxLayout(self._container)
+        self._vlayout.setSpacing(8)
+        self._vlayout.addStretch()
+        self._scroll.setWidget(self._container)
+        root.addWidget(self._scroll, 1)
+
+        # Кнопка добавить блок
+        add_btn = QPushButton("+ Добавить блок")
+        add_btn.setObjectName("tplMiniBtn")
+        add_btn.setFixedHeight(28)
+        add_btn.clicked.connect(self._add_row)
+        root.addWidget(add_btn, 0, Qt.AlignmentFlag.AlignLeft)
+
+        # OK / Отмена
+        btns_row = QHBoxLayout()
+        btns_row.addStretch()
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.clicked.connect(self.reject)
+        btns_row.addWidget(cancel_btn)
+        ok_btn = QPushButton("Предпросмотр →")
+        ok_btn.setDefault(True)
+        ok_btn.clicked.connect(self._on_accept)
+        btns_row.addWidget(ok_btn)
+        root.addLayout(btns_row)
+
+        # Стартовые два блока
+        self._add_row()
+        self._add_row()
+
+    def _add_row(self):
+        self._counter += 1
+        row = _BlockBuilderRow(self._addresses, self._counter, self._remove_row,
+                               parent=self._container)
+        self._rows.append(row)
+        # Вставляем перед stretch
+        self._vlayout.insertWidget(self._vlayout.count() - 1, row)
+        self._scroll.verticalScrollBar().setValue(
+            self._scroll.verticalScrollBar().maximum()
+        )
+
+    def _remove_row(self, row: _BlockBuilderRow):
+        if len(self._rows) <= 1:
+            return
+        self._rows.remove(row)
+        self._vlayout.removeWidget(row)
+        row.deleteLater()
+
+    def _on_accept(self):
+        if not self.build_blocks():
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Конструктор блоков",
+                                "Ни один адрес не отмечен ни в одном блоке.")
+            return
+        self.accept()
+
+    def build_blocks(self) -> list:
+        """Возвращает list[_SmartBlock] на основе заданных дат и адресов."""
+        result = []
+        for row in self._rows:
+            date_str, selected = row.get_data()
+            if not selected:
+                continue
+            combined = (date_str + "\n" + self._base_text).strip() if date_str else self._base_text
+            block = _SmartBlock(
+                text=_finalize_block_text(combined),
+                clean_text="",
+                date_str=date_str,
+                matches=selected,
+            )
+            result.append(block)
+        return result
+
+
 class _SmartSendPreviewDialog(QDialog):
     """Диалог предпросмотра умной рассылки — показывает разбивку до отправки."""
 
@@ -4757,25 +4904,15 @@ class MainWindow(QMainWindow):
         blocks, header, footer = _parse_smart_blocks(text, self._matcher)
         if not blocks:
             # Фолбэк: если адреса не найдены в тексте, но есть отмеченные адреса в списке —
-            # создаём один синтетический блок из всего текста + этих адресов
+            # открываем конструктор блоков чтобы задать дату для каждой группы адресов
             checked_matches: list = []
             for i in range(self._addr_list.count()):
-                item = self._addr_list.item(i)
-                if (item and item.checkState() == Qt.CheckState.Checked):
-                    m = item.data(Qt.ItemDataRole.UserRole)
+                it = self._addr_list.item(i)
+                if it and it.checkState() == Qt.CheckState.Checked:
+                    m = it.data(Qt.ItemDataRole.UserRole)
                     if m and getattr(m, "chat_id", ""):
                         checked_matches.append(m)
-            if checked_matches:
-                synth_block = _SmartBlock(
-                    text=text,
-                    clean_text="",
-                    matches=checked_matches,
-                )
-                synth_block.text = _finalize_block_text(synth_block.text)
-                blocks = [synth_block]
-                header = ""
-                footer = ""
-            else:
+            if not checked_matches:
                 QMessageBox.warning(
                     self,
                     "Умная рассылка",
@@ -4784,6 +4921,15 @@ class MainWindow(QMainWindow):
                     "Добавьте адреса через поиск или вставьте адрес прямо в текст.",
                 )
                 return
+            # Открываем конструктор блоков
+            builder = _BlockBuilderDialog(text, checked_matches, parent=self)
+            if builder.exec() != QDialog.DialogCode.Accepted:
+                return
+            blocks = builder.build_blocks()
+            if not blocks:
+                return
+            header = ""
+            footer = ""
 
         for b in blocks:
             if header:
