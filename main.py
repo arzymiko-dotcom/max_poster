@@ -719,9 +719,9 @@ class _SmartSendPreviewDialog(QDialog):
     def __init__(self, blocks: "list[_SmartBlock]", header: str = "", parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Умная рассылка — предпросмотр")
-        self.resize(960, 620)
-        self.setMinimumWidth(700)
-        self.setMinimumHeight(500)
+        self.resize(1280, 820)
+        self.setMinimumWidth(900)
+        self.setMinimumHeight(600)
         self._blocks = blocks
         self._current_block: "_SmartBlock | None" = blocks[0] if blocks else None
         self._editing = False
@@ -764,13 +764,23 @@ class _SmartSendPreviewDialog(QDialog):
         left_lay.setContentsMargins(0, 0, 4, 0)
         left_lay.setSpacing(4)
 
+        blocks_hdr = QHBoxLayout()
+        blocks_hdr.setSpacing(6)
         blocks_lbl = QLabel("Блоки для рассылки:")
         blocks_lbl.setStyleSheet("font-weight: 600; font-size: 12px;")
-        left_lay.addWidget(blocks_lbl)
+        blocks_hdr.addWidget(blocks_lbl)
+        self._select_all_blocks_btn = QPushButton("Снять все")
+        self._select_all_blocks_btn.setObjectName("tplMiniBtn")
+        self._select_all_blocks_btn.setFixedHeight(28)
+        self._select_all_blocks_btn.clicked.connect(self._toggle_select_all_blocks)
+        blocks_hdr.addWidget(self._select_all_blocks_btn)
+        blocks_hdr.addStretch()
+        left_lay.addLayout(blocks_hdr)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         container = QWidget()
         scroll.setWidget(container)
         vbox = QVBoxLayout(container)
@@ -845,10 +855,11 @@ class _SmartSendPreviewDialog(QDialog):
         prev_hdr = QHBoxLayout()
         prev_title = QLabel("Предпросмотр")
         prev_title.setStyleSheet("font-weight: 600; font-size: 12px;")
-        prev_hdr.addWidget(prev_title)
-        prev_hdr.addStretch()
+        prev_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        prev_hdr.addWidget(prev_title, 1)
         self._edit_btn = QPushButton("✏️ Редактировать")
         self._edit_btn.setFixedHeight(26)
+        self._edit_btn.setFixedWidth(140)
         self._edit_btn.setToolTip("Отредактировать текст этого блока перед отправкой")
         self._edit_btn.clicked.connect(self._toggle_edit)
         prev_hdr.addWidget(self._edit_btn)
@@ -880,7 +891,7 @@ class _SmartSendPreviewDialog(QDialog):
         right_lay.addWidget(self._preview_stack, 1)
         splitter.addWidget(right_w)
 
-        splitter.setSizes([430, 470])
+        splitter.setSizes([620, 620])
         root.addWidget(splitter, 1)
 
         # Галочка «убрать адреса из текста» — включена по умолчанию
@@ -916,6 +927,16 @@ class _SmartSendPreviewDialog(QDialog):
         n = sum(1 for chk, b in self._checks if chk.isChecked() and b.matches)
         self._btn_send.setText(f"Отправить ({n} блок.)" if n != len(self._blocks) else "Отправить все")
         self._btn_send.setEnabled(n > 0)
+        # Обновляем кнопку выбора всех
+        all_checked = all(chk.isChecked() for chk, _ in self._checks)
+        self._select_all_blocks_btn.setText("Снять все" if all_checked else "Выбрать все")
+
+    def _toggle_select_all_blocks(self) -> None:
+        """Выбирает или снимает все блоки."""
+        all_checked = all(chk.isChecked() for chk, _ in self._checks)
+        for chk, _ in self._checks:
+            chk.setChecked(not all_checked)
+        self._update_send_btn()
 
     def _toggle_edit(self) -> None:
         """Переключает между режимом просмотра и редактирования."""
@@ -978,14 +999,14 @@ class _SmartSendPreviewDialog(QDialog):
 
         lbl = QLabel(label_text)
         lbl.setStyleSheet(f"color: {color}; font-size: 11px; padding-left: 12px;")
-        lbl.setWordWrap(False)
+        lbl.setWordWrap(True)
         hl.addWidget(lbl, 1)
 
         btn = QPushButton("✕")
-        btn.setFixedSize(16, 16)
+        btn.setFixedSize(20, 20)
         btn.setToolTip("Убрать этот адрес из рассылки")
         btn.setStyleSheet(
-            "QPushButton { border: none; color: #9ca3af; font-size: 10px; padding: 0; }"
+            "QPushButton { border: none; color: #9ca3af; font-size: 12px; padding: 0; }"
             "QPushButton:hover { color: #ef4444; }"
         )
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
