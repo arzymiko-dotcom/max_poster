@@ -51,7 +51,10 @@ class VkSender:
                 progress(msg)
 
         # 0. Проверка размера файла
-        file_mb = Path(image_path).stat().st_size / (1024 * 1024)
+        try:
+            file_mb = Path(image_path).stat().st_size / (1024 * 1024)
+        except FileNotFoundError:
+            raise RuntimeError(f"Файл не найден: {image_path}")
         if file_mb > VK_MAX_PHOTO_MB:
             raise RuntimeError(
                 f"Файл слишком большой: {file_mb:.1f} МБ (лимит ВК — {VK_MAX_PHOTO_MB} МБ)"

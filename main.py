@@ -145,6 +145,10 @@ class _AddrSearchWorker(QThread):
         super().__init__(parent)
         self._query = query
         self._matcher = matcher
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
 
     def run(self) -> None:
         try:
@@ -152,7 +156,8 @@ class _AddrSearchWorker(QThread):
         except Exception as exc:
             _log.warning("addr search failed: %s", exc)
             results = []
-        self.results_ready.emit(results)
+        if not self._cancelled:
+            self.results_ready.emit(results)
 
 
 class _AddressCheckWorker(QThread):
@@ -2653,6 +2658,7 @@ class MainWindow(QMainWindow):
 
         # Отменяем предыдущий поиск если ещё идёт
         if self._addr_search_worker and self._addr_search_worker.isRunning():
+            self._addr_search_worker.cancel()
             self._addr_search_worker.quit()
             self._addr_search_worker.wait(50)
 

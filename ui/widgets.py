@@ -38,7 +38,8 @@ def _load_user_dict() -> None:
             text = raw.decode("utf-8", errors="replace")
         loaded = {w.strip().lower() for w in text.splitlines() if w.strip()}
         _user_dict.update(loaded)
-        _word_known_cache.update((w, True) for w in loaded)
+        with _cache_lock:
+            _word_known_cache.update((w, True) for w in loaded)
     except Exception:
         pass
 
@@ -46,7 +47,8 @@ def _load_user_dict() -> None:
 def _add_to_user_dict(word: str) -> None:
     word = word.lower().strip()
     _user_dict.add(word)
-    _word_known_cache[word] = True
+    with _cache_lock:
+        _word_known_cache[word] = True
     snapshot = sorted(_user_dict)
     def _save_dict():
         try:
@@ -74,6 +76,7 @@ def _load_morph_bg():
 
 
 _word_known_cache: dict[str, bool] = {}
+_cache_lock = threading.Lock()
 
 threading.Thread(target=_load_morph_bg, daemon=True).start()
 
@@ -82,9 +85,13 @@ _RU_ALPHA = "абвгдеёжзийклмнопрстуфхцчшщъыьэюя"
 
 def _is_known(morph, word: str) -> bool:
     """True если слово есть в словаре или пользовательском списке. Кэшируется."""
-    if word not in _word_known_cache:
-        _word_known_cache[word] = (word in _user_dict) or morph.word_is_known(word)
-    return _word_known_cache[word]
+    with _cache_lock:
+        if word in _word_known_cache:
+            return _word_known_cache[word]
+    result = (word in _user_dict) or morph.word_is_known(word)
+    with _cache_lock:
+        _word_known_cache[word] = result
+    return result
 
 
 def _get_suggestions(morph, word: str, max_results: int = 5) -> list[str]:
