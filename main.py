@@ -1603,7 +1603,12 @@ class MainWindow(QMainWindow):
             "• Между блоками — ПУСТАЯ строка (Enter дважды)\n"
             "• Адрес должен быть из реестра max_address.xlsx\n"
             "• Дата пишется в том же блоке что и адрес\n"
-            "• Программа сама найдёт нужные группы и разошлёт каждому"
+            "• Программа сама найдёт нужные группы и разошлёт каждому\n"
+            "\n"
+            "💡 РЕЖИМ «ТОЛЬКО СПИСОК»:\n"
+            "Если в тексте нет адресов — добавьте адреса через поиск\n"
+            "в список справа, и умная рассылка отправит этот текст\n"
+            "каждому адресу индивидуально с логом и прогресс-баром."
         )
         self._smart_send_btn.clicked.connect(self._start_smart_send)
         lh_layout.addWidget(self._smart_send_btn)
@@ -4751,13 +4756,34 @@ class MainWindow(QMainWindow):
 
         blocks, header, footer = _parse_smart_blocks(text, self._matcher)
         if not blocks:
-            QMessageBox.warning(
-                self,
-                "Умная рассылка",
-                "Не удалось найти блоки с адресами.\n"
-                "Проверьте что блоки разделены пустой строкой.",
-            )
-            return
+            # Фолбэк: если адреса не найдены в тексте, но есть отмеченные адреса в списке —
+            # создаём один синтетический блок из всего текста + этих адресов
+            checked_matches: list = []
+            for i in range(self._addr_list.count()):
+                item = self._addr_list.item(i)
+                if (item and item.checkState() == Qt.CheckState.Checked):
+                    m = item.data(Qt.ItemDataRole.UserRole)
+                    if m and getattr(m, "chat_id", ""):
+                        checked_matches.append(m)
+            if checked_matches:
+                synth_block = _SmartBlock(
+                    text=text,
+                    clean_text="",
+                    matches=checked_matches,
+                )
+                synth_block.text = _finalize_block_text(synth_block.text)
+                blocks = [synth_block]
+                header = ""
+                footer = ""
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Умная рассылка",
+                    "Не удалось найти блоки с адресами в тексте,\n"
+                    "и в списке нет отмеченных адресов.\n\n"
+                    "Добавьте адреса через поиск или вставьте адрес прямо в текст.",
+                )
+                return
 
         for b in blocks:
             if header:
