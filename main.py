@@ -126,6 +126,11 @@ class _VkTokenCheckWorker(QThread):
             self.result.emit(False, str(exc))
 
 
+def _random_delay(lo: int, hi: int, extra: int = 0) -> int:
+    """Случайная пауза между lo и hi секундами (включительно) плюс extra."""
+    return random.randint(min(lo, hi), max(lo, hi)) + extra
+
+
 class _ExcelWarmupWorker(QThread):
     """Прогревает кэш ExcelMatcher в фоне при старте — чтобы первый поиск/парсинг был мгновенным."""
     def __init__(self, matcher: "ExcelMatcher", parent=None) -> None:
@@ -281,9 +286,7 @@ class SendWorker(QThread):
                     return
                 # Случайная пауза между отправками — имитирует живого человека
                 if i > 1:
-                    lo = min(self.delay_min, self.delay_max)
-                    hi = max(self.delay_min, self.delay_max)
-                    delay = random.randint(lo, hi) + self.extra_delay
+                    delay = _random_delay(self.delay_min, self.delay_max, self.extra_delay)
                     for sec in range(delay):
                         if self._cancelled:
                             break
@@ -652,6 +655,21 @@ def _finalize_block_text(text: str) -> str:
     return "\n".join(lines)
 
 
+def _attach_header_footer(block: "_SmartBlock", header: str, footer: str) -> None:
+    """Добавляет шапку и подпись к тексту блока (оба варианта: text и clean_text)."""
+    if header:
+        block.text = header + "\n\n" + block.text
+        if block.clean_text:
+            block.clean_text = header + "\n\n" + block.clean_text
+    if footer:
+        block.text = block.text + "\n\n" + footer
+        if block.clean_text:
+            block.clean_text = block.clean_text + "\n\n" + footer
+    block.text = _finalize_block_text(block.text)
+    if block.clean_text:
+        block.clean_text = _finalize_block_text(block.clean_text)
+
+
 @dataclass
 class _SmartBlock:
     text: str
@@ -892,10 +910,10 @@ class _BlockBuilderDialog(QDialog):
     def _remove_row(self, row: _BlockBuilderRow):
         if len(self._rows) <= 1:
             return
-        # Разблокируем адреса этого блока в остальных
-        for chk, m in row._checks:
-            if chk.isChecked():
-                self._addr_toggled(row, m.address, False)
+        # Разблокируем адреса удаляемого блока в остальных
+        _, selected = row.get_data()
+        for m in selected:
+            self._addr_toggled(row, m.address, False)
         self._rows.remove(row)
         self._vlayout.removeWidget(row)
         row.deleteLater()
@@ -1357,7 +1375,6 @@ class _SmartSendWorker(QThread):
         total_addrs = sum(len(chat_ids) for _, chat_ids in self._blocks)
         ok_count = 0
         fail_count = 0
-        send_num = 0
         global_idx = 0
 
         for b_idx, (text, chat_ids) in enumerate(self._blocks):
@@ -1372,10 +1389,8 @@ class _SmartSendWorker(QThread):
                 if self._cancelled:
                     self.all_done.emit(False, f"Отменено. Отправлено: {ok_count} | Ошибок: {fail_count}")
                     return
-                if send_num > 0 and not self.dry_run:
-                    lo = min(self._delay_min, self._delay_max)
-                    hi = max(self._delay_min, self._delay_max)
-                    delay = random.randint(lo, hi) + self._extra_delay
+                if global_idx > 0 and not self.dry_run:
+                    delay = _random_delay(self._delay_min, self._delay_max, self._extra_delay)
                     for sec in range(delay):
                         if self._cancelled or self._paused:
                             break
@@ -1409,7 +1424,6 @@ class _SmartSendWorker(QThread):
                     except Exception as exc:
                         fail_count += 1
                         self.address_result.emit(global_idx, False, str(exc))
-                send_num += 1
                 global_idx += 1
 
         summary = f"Блоков: {total_blocks} | Отправлено: {ok_count} | Ошибок: {fail_count}"
@@ -3247,12 +3261,7 @@ class MainWindow(QMainWindow):
                     break
             if duplicate:
                 continue
-            new_item = QListWidgetItem(match.address)
-            new_item.setFlags(new_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            new_item.setCheckState(Qt.CheckState.Checked)
-            new_item.setData(Qt.ItemDataRole.UserRole, match)
-            new_item.setData(_MANUAL_ROLE, True)
-            self._addr_list.addItem(new_item)
+            self._addr_list.addItem(self._make_address_item(match))
             added += 1
 
         if added:
@@ -3281,17 +3290,6 @@ class MainWindow(QMainWindow):
         self._update_checklist()
         self.save_state()
 
-    def _get_checked_addr_count(self) -> int:
-        """Количество отмеченных адресов с chat_id (для счётчика в ПКМ меню)."""
-        count = 0
-        for i in range(self._addr_list.count()):
-            item = self._addr_list.item(i)
-            if item and item.checkState() == Qt.CheckState.Checked:
-                match = item.data(Qt.ItemDataRole.UserRole)
-                if match and match.chat_id:
-                    count += 1
-        return count
-
     def _get_checked_matches(self) -> list[MatchResult]:
         results = []
         for i in range(self._addr_list.count()):
@@ -3301,6 +3299,42 @@ class MainWindow(QMainWindow):
                 if match:
                     results.append(match)
         return results
+
+    def _get_checked_addr_count(self) -> int:
+        """Количество отмеченных адресов с chat_id (для счётчика в ПКМ меню)."""
+        return sum(1 for m in self._get_checked_matches() if m.chat_id)
+
+    @staticmethod
+    def _make_address_item(match: MatchResult) -> QListWidgetItem:
+        """Создаёт QListWidgetItem с чекбоксом для списка адресов рассылки."""
+        item = QListWidgetItem(match.address)
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        item.setCheckState(Qt.CheckState.Checked)
+        item.setData(Qt.ItemDataRole.UserRole, match)
+        item.setData(_MANUAL_ROLE, True)
+        return item
+
+    def _add_log_item(self, m: MatchResult) -> None:
+        """Добавляет строку ⏳ в лог отправки."""
+        log_item = QListWidgetItem(f"⏳  {m.address}")
+        log_item.setData(Qt.ItemDataRole.UserRole, m.address)
+        log_item.setData(_LOG_MATCH_ROLE, m)
+        self._send_log_list.addItem(log_item)
+
+    def _resolve_to_match(self, address_text: str) -> MatchResult | None:
+        """Ищет адрес в реестре: сначала через ParsedAddress+find_matches, потом через search."""
+        if self._matcher is None:
+            return None
+        parsed_list = extract_all_addresses(address_text)
+        if parsed_list:
+            try:
+                hits = self._matcher.find_matches(parsed_list[0])
+                if hits:
+                    return hits[0]
+            except Exception:
+                pass
+        hits = self._matcher.search(address_text, limit=1)
+        return hits[0] if hits else None
 
     def _toggle_addr_item(self, item: "QListWidgetItem") -> None:
         """Двойной клик — переключает галочку адреса."""
@@ -3438,26 +3472,10 @@ class MainWindow(QMainWindow):
         if not match.chat_id:
             if self._matcher is None and self.excel_path.exists():
                 self._matcher = ExcelMatcher(self.excel_path)
-            if self._matcher is not None:
-                resolved = None
-                parsed_list = extract_all_addresses(match.address)
-                if parsed_list:
-                    try:
-                        hits = self._matcher.find_matches(parsed_list[0])
-                        resolved = hits[0] if hits else None
-                    except Exception:
-                        pass
-                if resolved is None:
-                    hits = self._matcher.search(match.address, limit=1)
-                    resolved = hits[0] if hits else None
-                if resolved:
-                    match = resolved
-        item = QListWidgetItem(match.address)
-        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-        item.setCheckState(Qt.CheckState.Checked)
-        item.setData(Qt.ItemDataRole.UserRole, match)
-        item.setData(_MANUAL_ROLE, True)
-        self._addr_list.addItem(item)
+            resolved = self._resolve_to_match(match.address)
+            if resolved:
+                match = resolved
+        self._addr_list.addItem(self._make_address_item(match))
         self._update_checklist()
         self.save_state()
 
@@ -3478,23 +3496,8 @@ class MainWindow(QMainWindow):
             original = m.address
             if m.chat_id:
                 results.append((original, m))
-            elif self._matcher is not None:
-                # Используем extract_all_addresses + find_matches для поиска в реестре
-                parsed_list = extract_all_addresses(original)
-                resolved = None
-                if parsed_list:
-                    try:
-                        hits = self._matcher.find_matches(parsed_list[0])
-                        resolved = hits[0] if hits else None
-                    except Exception:
-                        pass
-                # Fallback: простой поиск по тексту
-                if resolved is None:
-                    hits = self._matcher.search(original, limit=1)
-                    resolved = hits[0] if hits else None
-                results.append((original, resolved))
             else:
-                results.append((original, None))
+                results.append((original, self._resolve_to_match(original)))
 
         # Показываем диалог с результатами поиска
         confirm = _PasteConfirmDialog(results, parent=self)
@@ -3522,12 +3525,7 @@ class MainWindow(QMainWindow):
                 continue
             if match.chat_id and match.chat_id in existing_ids:
                 continue
-            item = QListWidgetItem(match.address)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked)
-            item.setData(Qt.ItemDataRole.UserRole, match)
-            item.setData(_MANUAL_ROLE, True)
-            self._addr_list.addItem(item)
+            self._addr_list.addItem(self._make_address_item(match))
             existing_addrs.add(match.address)
             if match.chat_id:
                 existing_ids.add(match.chat_id)
@@ -3635,10 +3633,7 @@ class MainWindow(QMainWindow):
         if send_max and checked:
             self._send_log_list.clear()
             for m in checked:
-                log_item = QListWidgetItem(f"⏳  {m.address}")
-                log_item.setData(Qt.ItemDataRole.UserRole, m.address)
-                log_item.setData(_LOG_MATCH_ROLE, m)
-                self._send_log_list.addItem(log_item)
+                self._add_log_item(m)
             self._addr_list.hide()
             self._send_log_list.show()
             self._worker.address_result.connect(self._on_address_result)
@@ -4979,18 +4974,7 @@ class MainWindow(QMainWindow):
             footer = ""
 
         for b in blocks:
-            if header:
-                b.text = header + "\n\n" + b.text
-                if b.clean_text:
-                    b.clean_text = header + "\n\n" + b.clean_text
-            if footer:
-                b.text = b.text + "\n\n" + footer
-                if b.clean_text:
-                    b.clean_text = b.clean_text + "\n\n" + footer
-            # Переносим дату в начало и чистим пустые строки ДО показа превью
-            b.text = _finalize_block_text(b.text)
-            if b.clean_text:
-                b.clean_text = _finalize_block_text(b.clean_text)
+            _attach_header_footer(b, header, footer)
 
         dlg = _SmartSendPreviewDialog(blocks, header=header, parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -5015,10 +4999,7 @@ class MainWindow(QMainWindow):
             for m in b.matches:
                 if not m.chat_id:
                     continue
-                log_item = QListWidgetItem(f"⏳  {m.address}")
-                log_item.setData(Qt.ItemDataRole.UserRole, m.address)
-                log_item.setData(_LOG_MATCH_ROLE, m)
-                self._send_log_list.addItem(log_item)
+                self._add_log_item(m)
         self._addr_list.hide()
         self._send_log_list.show()
 
