@@ -132,26 +132,48 @@ class ExcelMatcher:
 
             if parsed_address.house:
                 house = parsed_address.house
-                # Требуем "д N" — не матчим корпус/литеру по случайному совпадению числа
+                # Точное совпадение — самый надёжный вариант
                 if re.search(r"\bд\s+" + re.escape(house) + r"\b", normalized_address):
                     score += 100
                     house_matched = True
                 elif "/" in house:
-                    # "32/1" может означать "д. 32, корп. 1" или "д. 32, стр. 1", или "д. 32, лит. а"
-                    base, suffix = house.split("/", 1)
-                    base_ok = re.search(r"\bд\s+" + re.escape(base) + r"\b", normalized_address)
-                    suffix_ok = re.search(
-                        r"\b(?:корп|стр|лит)\s+" + re.escape(suffix) + r"\b",
-                        normalized_address,
-                    )
-                    if base_ok and suffix_ok:
-                        score += 90
-                        house_matched = True
-                    elif base_ok and not suffix.isalpha():
-                        # Только база — слабый матч допустим для числовых суффиксов (корп/стр).
-                        # Буквенные суффиксы (литера) обязаны совпасть — разные литеры = разные здания.
-                        score += 60
-                        house_matched = True
+                    # Разбираем составной номер: "29/2/с" → base="29", corpus="2", litera="с"
+                    #                             "31/29/а" → base="31", corpus="29", litera="а"
+                    #                             "3/а"    → base="3",  corpus=None,  litera="а"
+                    parts = house.split("/")
+                    litera = parts[-1] if parts[-1].isalpha() else None
+                    num_parts = parts[:-1] if litera else parts[:]
+                    base = num_parts[0]
+                    corpus = num_parts[1] if len(num_parts) > 1 else None
+
+                    base_ok = bool(re.search(r"\bд\s+" + re.escape(base) + r"\b", normalized_address))
+                    if base_ok:
+                        # Корпус: ищем "корп N" ИЛИ "д base/corpus" (составной номер типа 31/29)
+                        corpus_ok = corpus and bool(re.search(
+                            r"\b(?:корп|стр)\s+" + re.escape(corpus) + r"\b", normalized_address
+                        ))
+                        composite_ok = corpus and bool(re.search(
+                            r"\bд\s+" + re.escape(f"{base}/{corpus}") + r"\b", normalized_address
+                        ))
+                        litera_ok = litera and bool(re.search(
+                            r"\bлит\s+" + re.escape(litera) + r"\b", normalized_address
+                        ))
+
+                        # Литера указана но не совпала → не матчим (разные здания)
+                        if litera and not litera_ok:
+                            pass
+                        elif corpus and (corpus_ok or composite_ok):
+                            score += 90
+                            house_matched = True
+                        elif corpus and not litera:
+                            # Корпус не найден, литера не указана → слабый матч
+                            # (реестр может не содержать инфо о корпусе)
+                            score += 60
+                            house_matched = True
+                        elif not corpus:
+                            # Нет корпуса: матч по базе + литере (или только базе)
+                            score += 90 if litera_ok else 60
+                            house_matched = True
 
             if parsed_address.raw_fragment and parsed_address.raw_fragment in normalized_address:
                 score += 30
