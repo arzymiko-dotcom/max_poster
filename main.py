@@ -735,10 +735,11 @@ def _parse_smart_blocks(text: str, matcher) -> "tuple[list[_SmartBlock], str, st
 class _BlockBuilderRow(QFrame):
     """Одна строка конструктора блоков: кнопка выбора даты + чекбоксы адресов."""
 
-    def __init__(self, addresses, index: int, on_delete, parent=None):
+    def __init__(self, addresses, index: int, on_delete, on_addr_toggled, parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self._on_delete_cb = on_delete
+        self._on_addr_toggled = on_addr_toggled  # (source_row, address, checked)
         self._checks: list[tuple] = []  # (QCheckBox, MatchResult)
         self._date_str = ""
 
@@ -771,6 +772,9 @@ class _BlockBuilderRow(QFrame):
         for idx, m in enumerate(addresses):
             chk = QCheckBox(m.address)
             chk.setChecked(False)
+            chk.toggled.connect(
+                lambda checked, addr=m.address: self._on_addr_toggled(self, addr, checked)
+            )
             self._checks.append((chk, m))
             grid.addWidget(chk, idx // cols, idx % cols)
         main.addLayout(grid)
@@ -785,6 +789,17 @@ class _BlockBuilderRow(QFrame):
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._date_str = dlg.formatted_line()
             self._date_btn.setText(f"📅 {self._date_str}")
+
+    def set_addr_locked(self, address: str, locked: bool) -> None:
+        """Блокирует/разблокирует чекбокс адреса (адрес занят другим блоком)."""
+        for chk, m in self._checks:
+            if m.address == address:
+                if locked:
+                    chk.blockSignals(True)
+                    chk.setChecked(False)
+                    chk.blockSignals(False)
+                chk.setEnabled(not locked)
+                break
 
     def get_data(self):
         selected = [m for chk, m in self._checks if chk.isChecked()]
@@ -807,8 +822,8 @@ class _BlockBuilderDialog(QDialog):
         root.setSpacing(10)
 
         info = QLabel(
-            "Создайте блоки: введите дату и отметьте адреса из списка для каждого блока.\n"
-            "Один адрес можно включить в несколько блоков (если работы в разные дни)."
+            "Создайте блоки: выберите дату и отметьте адреса для каждого блока.\n"
+            "Адрес, отмеченный в одном блоке, недоступен в остальных."
         )
         info.setWordWrap(True)
         root.addWidget(info)
@@ -847,10 +862,26 @@ class _BlockBuilderDialog(QDialog):
         self._add_row()
         self._add_row()
 
+    def _addr_toggled(self, source_row: _BlockBuilderRow, address: str, checked: bool) -> None:
+        """Когда адрес отмечен в одном блоке — блокируем его во всех остальных."""
+        for row in self._rows:
+            if row is source_row:
+                continue
+            row.set_addr_locked(address, checked)
+
     def _add_row(self):
         self._counter += 1
-        row = _BlockBuilderRow(self._addresses, self._counter, self._remove_row,
-                               parent=self._container)
+        row = _BlockBuilderRow(
+            self._addresses, self._counter,
+            on_delete=self._remove_row,
+            on_addr_toggled=self._addr_toggled,
+            parent=self._container,
+        )
+        # Заблокировать адреса, уже занятые в других блоках
+        for other in self._rows:
+            for chk, m in other._checks:
+                if chk.isChecked():
+                    row.set_addr_locked(m.address, True)
         self._rows.append(row)
         # Вставляем перед stretch
         self._vlayout.insertWidget(self._vlayout.count() - 1, row)
@@ -861,6 +892,10 @@ class _BlockBuilderDialog(QDialog):
     def _remove_row(self, row: _BlockBuilderRow):
         if len(self._rows) <= 1:
             return
+        # Разблокируем адреса этого блока в остальных
+        for chk, m in row._checks:
+            if chk.isChecked():
+                self._addr_toggled(row, m.address, False)
         self._rows.remove(row)
         self._vlayout.removeWidget(row)
         row.deleteLater()
