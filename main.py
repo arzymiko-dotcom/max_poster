@@ -36,12 +36,14 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QScrollArea,
     QSizePolicy,
     QSpinBox,
     QSplitter,
+    QStackedWidget,
     QSystemTrayIcon,
     QTextBrowser,
     QVBoxLayout,
@@ -618,10 +620,26 @@ class _PasteConfirmDialog(QDialog):
 # Умная рассылка — dataclass, парсинг блоков, диалог предпросмотра, воркер
 # ---------------------------------------------------------------------------
 
+_BLOCK_DATE_RE = re.compile(
+    r'\b\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\b'
+    r'|\b\d{1,2}[./]\d{1,2}(?:[./]\d{2,4})?\b',
+    re.IGNORECASE,
+)
+
+
+def _extract_date_str(text: str) -> str:
+    """Возвращает первую строку блока, содержащую дату."""
+    for line in text.splitlines():
+        if _BLOCK_DATE_RE.search(line):
+            return line.strip()
+    return ""
+
+
 @dataclass
 class _SmartBlock:
     text: str
     clean_text: str = ""  # текст без строк-адресов (для опции «без адресов»)
+    date_str: str = ""    # строка с датой, найденная в блоке
     matches: list = dc_field(default_factory=list)   # list[MatchResult]
     not_found: list = dc_field(default_factory=list)  # list[str] — не найдены в реестре
 
@@ -663,7 +681,7 @@ def _parse_smart_blocks(text: str, matcher) -> "tuple[list[_SmartBlock], str, st
 
     for i in addr_indices:
         raw = raw_blocks[i]
-        block = _SmartBlock(text=raw)
+        block = _SmartBlock(text=raw, date_str=_extract_date_str(raw))
         for parsed in parsed_cache[i]:
             try:
                 results = matcher.find_matches(parsed)
@@ -698,7 +716,7 @@ def _parse_smart_blocks(text: str, matcher) -> "tuple[list[_SmartBlock], str, st
 class _SmartSendPreviewDialog(QDialog):
     """Диалог предпросмотра умной рассылки — показывает разбивку до отправки."""
 
-    def __init__(self, blocks: "list[_SmartBlock]", parent=None) -> None:
+    def __init__(self, blocks: "list[_SmartBlock]", header: str = "", parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Умная рассылка — предпросмотр")
         self.resize(960, 620)
@@ -706,6 +724,7 @@ class _SmartSendPreviewDialog(QDialog):
         self.setMinimumHeight(500)
         self._blocks = blocks
         self._current_block: "_SmartBlock | None" = blocks[0] if blocks else None
+        self._editing = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 10)
@@ -715,6 +734,16 @@ class _SmartSendPreviewDialog(QDialog):
         title = QLabel(f"Найдено блоков с адресами: <b>{len(blocks)}</b>")
         title.setTextFormat(Qt.TextFormat.RichText)
         root.addWidget(title)
+
+        # Callout шапки (если есть)
+        if header:
+            hdr_lbl = QLabel(f"📌 Шапка (добавляется ко всем блокам): {header[:120]}")
+            hdr_lbl.setWordWrap(True)
+            hdr_lbl.setStyleSheet(
+                "color: #1d4ed8; background: #eff6ff; padding: 5px 8px; "
+                "border-radius: 4px; font-size: 11px;"
+            )
+            root.addWidget(hdr_lbl)
 
         # Предупреждение о дублирующихся адресах
         all_ids = [m.chat_id for b in blocks for m in b.matches]
@@ -749,7 +778,6 @@ class _SmartSendPreviewDialog(QDialog):
         vbox.setSpacing(8)
 
         self._checks: list[tuple["QCheckBox", "_SmartBlock"]] = []
-        self._previews: list[tuple["QLabel", "_SmartBlock"]] = []
         self._frames: list[tuple["QFrame", "_SmartBlock"]] = []
 
         for idx, block in enumerate(blocks, 1):
@@ -760,15 +788,22 @@ class _SmartSendPreviewDialog(QDialog):
             fl.setContentsMargins(8, 6, 8, 6)
             fl.setSpacing(3)
 
-            # Заголовок блока (первая строка текста)
-            first_line = block.text.splitlines()[0][:70]
+            # Первая строка = заголовок (дата, если есть — берём её)
+            first_line = (block.date_str or block.text.splitlines()[0])[:70]
             chk = QCheckBox(f"Блок {idx}: {first_line}")
             chk.setChecked(True)
             chk.setStyleSheet("font-weight: 600;")
             chk.clicked.connect(lambda _, b=block: self._select_block(b))
+            chk.stateChanged.connect(self._update_send_btn)
             fl.addWidget(chk)
             self._checks.append((chk, block))
             self._frames.append((frame, block))
+
+            # Дата — синим (если найдена и отличается от первой строки заголовка)
+            if block.date_str and block.date_str != first_line:
+                date_lbl = QLabel(f"  📅  {block.date_str}")
+                date_lbl.setStyleSheet("color: #1d4ed8; font-size: 11px; padding-left: 12px;")
+                fl.addWidget(date_lbl)
 
             # Найденные адреса — зелёным
             for m in block.matches:
@@ -795,19 +830,31 @@ class _SmartSendPreviewDialog(QDialog):
         left_lay.addWidget(scroll, 1)
         splitter.addWidget(left_w)
 
-        # ── Правая панель: предпросмотр ──
+        # ── Правая панель: предпросмотр + редактор ──
         right_w = QWidget()
         right_lay = QVBoxLayout(right_w)
         right_lay.setContentsMargins(4, 0, 0, 0)
         right_lay.setSpacing(4)
 
+        # Заголовок правой панели с кнопкой редактирования
+        prev_hdr = QHBoxLayout()
         prev_title = QLabel("Предпросмотр")
         prev_title.setStyleSheet("font-weight: 600; font-size: 12px;")
-        right_lay.addWidget(prev_title)
+        prev_hdr.addWidget(prev_title)
+        prev_hdr.addStretch()
+        self._edit_btn = QPushButton("✏️ Редактировать")
+        self._edit_btn.setFixedHeight(26)
+        self._edit_btn.setToolTip("Отредактировать текст этого блока перед отправкой")
+        self._edit_btn.clicked.connect(self._toggle_edit)
+        prev_hdr.addWidget(self._edit_btn)
+        right_lay.addLayout(prev_hdr)
 
-        prev_sub = QLabel("Как будет выглядеть отправляемое сообщение:")
+        prev_sub = QLabel("Кликните на блок слева — увидите точный текст сообщения")
         prev_sub.setStyleSheet("color: #6b7280; font-size: 11px;")
         right_lay.addWidget(prev_sub)
+
+        # QStackedWidget: 0 = browser (просмотр), 1 = editor (редактирование)
+        self._preview_stack = QStackedWidget()
 
         self._preview_browser = QTextBrowser()
         self._preview_browser.setReadOnly(True)
@@ -816,7 +863,16 @@ class _SmartSendPreviewDialog(QDialog):
             "font-size: 12px; padding: 8px;"
             "background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 6px;"
         )
-        right_lay.addWidget(self._preview_browser, 1)
+        self._preview_stack.addWidget(self._preview_browser)  # index 0
+
+        self._preview_editor = QPlainTextEdit()
+        self._preview_editor.setStyleSheet(
+            "font-size: 12px; padding: 8px;"
+            "background: #fffbeb; border: 1px solid #f59e0b; border-radius: 6px;"
+        )
+        self._preview_stack.addWidget(self._preview_editor)  # index 1
+
+        right_lay.addWidget(self._preview_stack, 1)
         splitter.addWidget(right_w)
 
         splitter.setSizes([430, 470])
@@ -832,29 +888,66 @@ class _SmartSendPreviewDialog(QDialog):
         self._chk_strip.toggled.connect(self._on_strip_toggled)
         root.addWidget(self._chk_strip)
 
-        # Кнопки: [Отмена] [Отправить]
+        # Кнопки: [Отмена] [Отправить N блоков]
         self.dry_run = False
         btn_row = QHBoxLayout()
         btn_cancel = QPushButton("Отмена")
-        btn_send = QPushButton("Отправить")
-        btn_send.setDefault(True)
+        self._btn_send = QPushButton("Отправить")
+        self._btn_send.setDefault(True)
         btn_cancel.clicked.connect(self.reject)
-        btn_send.clicked.connect(self.accept)
+        self._btn_send.clicked.connect(self.accept)
         btn_row.addStretch()
         btn_row.addWidget(btn_cancel)
-        btn_row.addWidget(btn_send)
+        btn_row.addWidget(self._btn_send)
         root.addLayout(btn_row)
 
-        # Показать предпросмотр первого блока
+        # Показать предпросмотр первого блока и обновить счётчик
         if self._current_block:
             self._select_block(self._current_block)
+        self._update_send_btn()
+
+    def _update_send_btn(self) -> None:
+        """Обновляет текст кнопки «Отправить» — показывает кол-во выбранных блоков."""
+        n = sum(1 for chk, b in self._checks if chk.isChecked() and b.matches)
+        self._btn_send.setText(f"Отправить ({n} блок.)" if n != len(self._blocks) else "Отправить все")
+        self._btn_send.setEnabled(n > 0)
+
+    def _toggle_edit(self) -> None:
+        """Переключает между режимом просмотра и редактирования."""
+        if not self._editing:
+            # Войти в режим редактирования
+            if not self._current_block:
+                return
+            checked = self._chk_strip.isChecked()
+            src = self._current_block.clean_text if checked and self._current_block.clean_text else self._current_block.text
+            self._preview_editor.setPlainText(src)
+            self._preview_stack.setCurrentIndex(1)
+            self._edit_btn.setText("✓ Сохранить")
+            self._chk_strip.setEnabled(False)
+            self._editing = True
+        else:
+            # Сохранить и выйти из редактирования
+            if self._current_block:
+                new_text = self._preview_editor.toPlainText()
+                # Обновляем block.text; clean_text сбрасываем — пользователь сам отредактировал
+                self._current_block.text = new_text
+                self._current_block.clean_text = ""
+                self._preview_browser.setPlainText(new_text)
+            self._preview_stack.setCurrentIndex(0)
+            self._edit_btn.setText("✏️ Редактировать")
+            self._chk_strip.setEnabled(True)
+            self._editing = False
 
     def _select_block(self, block: "_SmartBlock") -> None:
         """Обновляет правую панель предпросмотра для выбранного блока."""
+        # Если был открыт редактор — сохранить перед переключением
+        if self._editing:
+            self._toggle_edit()
         self._current_block = block
         checked = self._chk_strip.isChecked()
         src = block.clean_text if checked and block.clean_text else block.text
         self._preview_browser.setPlainText(src)
+        self._preview_stack.setCurrentIndex(0)
 
     def accepted_blocks(self) -> "list[_SmartBlock]":
         return [b for chk, b in self._checks if chk.isChecked() and b.matches]
@@ -865,7 +958,7 @@ class _SmartSendPreviewDialog(QDialog):
 
     def _on_strip_toggled(self, checked: bool) -> None:
         """Обновляет предпросмотр при переключении галочки «без адресов»."""
-        if self._current_block:
+        if self._current_block and not self._editing:
             self._select_block(self._current_block)
 
 
@@ -883,6 +976,9 @@ class _SmartSendWorker(QThread):
         image_path: "str | None",
         send_max: bool,
         dry_run: bool = False,
+        extra_delay: int = 0,
+        delay_min: int = 5,
+        delay_max: int = 12,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -891,6 +987,9 @@ class _SmartSendWorker(QThread):
         self._image_path = image_path
         self._send_max = send_max
         self.dry_run = dry_run
+        self._extra_delay = extra_delay
+        self._delay_min = delay_min
+        self._delay_max = delay_max
         self._cancelled = False
 
     def cancel(self) -> None:
@@ -921,7 +1020,9 @@ class _SmartSendWorker(QThread):
                     self.all_done.emit(False, f"Отменено. Отправлено: {ok_count} | Ошибок: {fail_count}")
                     return
                 if send_num > 0 and not self.dry_run:
-                    delay = random.randint(5, 12)
+                    lo = min(self._delay_min, self._delay_max)
+                    hi = max(self._delay_min, self._delay_max)
+                    delay = random.randint(lo, hi) + self._extra_delay
                     for sec in range(delay):
                         if self._cancelled:
                             break
@@ -4439,7 +4540,7 @@ class MainWindow(QMainWindow):
                 if b.clean_text:
                     b.clean_text = b.clean_text + "\n\n" + footer
 
-        dlg = _SmartSendPreviewDialog(blocks, parent=self)
+        dlg = _SmartSendPreviewDialog(blocks, header=header, parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
@@ -4475,12 +4576,16 @@ class MainWindow(QMainWindow):
         self._cancel_button.setText("✕  Отменить рассылку")
         self._cancel_button.show()
 
+        extra_delay = int(os.getenv("SEND_DELAY_SEC", "0") or 0)
         worker = _SmartSendWorker(
             self.max_sender,
             chat_ids_per_block,
             str(self.image_path) if self.image_path else None,
             send_max=True,
             dry_run=dlg.dry_run,
+            extra_delay=extra_delay,
+            delay_min=self._delay_min_spin.value() if self._chk_delay.isChecked() else 5,
+            delay_max=self._delay_max_spin.value() if self._chk_delay.isChecked() else 12,
             parent=self,
         )
         worker.progress.connect(self._on_send_progress)

@@ -5,7 +5,7 @@ import re
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import QDate, QTime, Qt, pyqtSignal
+from PyQt6.QtCore import QDate, QSettings, QTime, Qt, pyqtSignal
 from PyQt6.QtGui import (
     QColor, QPainter,
     QSyntaxHighlighter, QTextCharFormat, QTextCursor,
@@ -309,31 +309,42 @@ _RU_MONTHS = [
 class _DateTimePickerDialog(QDialog):
     """Диалог выбора даты и временного диапазона для умной рассылки."""
 
+    _SETTINGS_KEY_FROM = "datetime_picker/time_from"
+    _SETTINGS_KEY_TO   = "datetime_picker/time_to"
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Дата и время")
         self.setFixedWidth(320)
 
+        cfg = QSettings("MAX POST", "MAX POST")
+        saved_from = cfg.value(self._SETTINGS_KEY_FROM, "09:00")
+        saved_to   = cfg.value(self._SETTINGS_KEY_TO,   "17:00")
+
         root = QVBoxLayout(self)
         root.setSpacing(10)
         root.setContentsMargins(16, 16, 16, 12)
 
-        # Дата
+        # Дата — предлагаем следующий рабочий день если уже вечер (после 17:00)
+        from PyQt6.QtCore import QDateTime
+        suggested = QDate.currentDate()
+        if QDateTime.currentDateTime().time().hour() >= 17:
+            suggested = suggested.addDays(1)
         root.addWidget(QLabel("Дата:"))
-        self._date_edit = QDateEdit(QDate.currentDate())
+        self._date_edit = QDateEdit(suggested)
         self._date_edit.setCalendarPopup(True)
         self._date_edit.setDisplayFormat("dd.MM.yyyy")
         root.addWidget(self._date_edit)
 
         # Время «с»
         root.addWidget(QLabel("Время с:"))
-        self._time_from = QTimeEdit(QTime(9, 0))
+        self._time_from = QTimeEdit(QTime.fromString(saved_from, "HH:mm") or QTime(9, 0))
         self._time_from.setDisplayFormat("HH:mm")
         root.addWidget(self._time_from)
 
         # Время «по»
         root.addWidget(QLabel("Время по:"))
-        self._time_to = QTimeEdit(QTime(17, 0))
+        self._time_to = QTimeEdit(QTime.fromString(saved_to, "HH:mm") or QTime(17, 0))
         self._time_to.setDisplayFormat("HH:mm")
         root.addWidget(self._time_to)
 
@@ -348,6 +359,13 @@ class _DateTimePickerDialog(QDialog):
         btn_row.addWidget(btn_cancel)
         btn_row.addWidget(btn_ok)
         root.addLayout(btn_row)
+
+    def accept(self) -> None:
+        """Сохраняет выбранное время в QSettings перед закрытием."""
+        cfg = QSettings("MAX POST", "MAX POST")
+        cfg.setValue(self._SETTINGS_KEY_FROM, self._time_from.time().toString("HH:mm"))
+        cfg.setValue(self._SETTINGS_KEY_TO,   self._time_to.time().toString("HH:mm"))
+        super().accept()
 
     def formatted_line(self) -> str:
         """Возвращает строку вида '22 апреля с 13:00 по 19:00'."""
