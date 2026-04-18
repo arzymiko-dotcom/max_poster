@@ -1,5 +1,6 @@
 import logging
 import re
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,7 +72,7 @@ class ExcelMatcher:
         df = self._df
         address_col, link_col, id_col = self._resolve_columns(df)
         index: list[tuple[str, str, MatchResult]] = []
-        for _, row in df.iterrows():
+        for row in df.to_dict("records"):
             addr = str(row.get(address_col, "")).strip()
             if not addr or addr.lower() == "nan":
                 continue
@@ -88,10 +89,10 @@ class ExcelMatcher:
         self._search_index: list[tuple[str, str, MatchResult]] = index
 
         # Строим инвертированный индекс: нормализованное слово → [индексы строк]
-        word_index: dict[str, list[int]] = {}
+        word_index: defaultdict[str, list[int]] = defaultdict(list)
         for i, (_lower, normalized, _cached) in enumerate(index):
             for word in normalized.split():
-                word_index.setdefault(word, []).append(i)
+                word_index[word].append(i)
         self._word_index = word_index
 
     def _resolve_columns(self, df) -> tuple[str, str | None, str | None]:

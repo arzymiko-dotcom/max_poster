@@ -808,14 +808,20 @@ class _BlockBuilderRow(QFrame):
             self._date_str = dlg.formatted_line()
             self._date_btn.setText(f"📅 {self._date_str}")
 
+    def get_checked_addresses(self) -> list:
+        """Возвращает список выбранных MatchResult (без прямого доступа к _checks)."""
+        return [m for chk, m in self._checks if chk.isChecked()]
+
     def set_addr_locked(self, address: str, locked: bool) -> None:
         """Блокирует/разблокирует чекбокс адреса (адрес занят другим блоком)."""
         for chk, m in self._checks:
             if m.address == address:
                 if locked:
-                    chk.blockSignals(True)
-                    chk.setChecked(False)
-                    chk.blockSignals(False)
+                    try:
+                        chk.blockSignals(True)
+                        chk.setChecked(False)
+                    finally:
+                        chk.blockSignals(False)
                 chk.setEnabled(not locked)
                 break
 
@@ -897,9 +903,8 @@ class _BlockBuilderDialog(QDialog):
         )
         # Заблокировать адреса, уже занятые в других блоках
         for other in self._rows:
-            for chk, m in other._checks:
-                if chk.isChecked():
-                    row.set_addr_locked(m.address, True)
+            for m in other.get_checked_addresses():
+                row.set_addr_locked(m.address, True)
         self._rows.append(row)
         # Вставляем перед stretch
         self._vlayout.insertWidget(self._vlayout.count() - 1, row)
@@ -3290,6 +3295,22 @@ class MainWindow(QMainWindow):
         self._update_checklist()
         self.save_state()
 
+    @staticmethod
+    def _stop_worker(worker, timeout: int = 2000, cancel: bool = False) -> None:
+        """Корректно останавливает QThread-воркер: cancel → quit → wait."""
+        if not worker or not worker.isRunning():
+            return
+        if cancel and hasattr(worker, "cancel"):
+            worker.cancel()
+        worker.quit()
+        worker.wait(timeout)
+
+    def _get_delay_params(self, default_min: int = 5, default_max: int = 12) -> tuple[int, int]:
+        """Возвращает (delay_min, delay_max) из UI или (0, 0) если чекбокс снят."""
+        if not self._chk_delay.isChecked():
+            return default_min, default_max
+        return self._delay_min_spin.value(), self._delay_max_spin.value()
+
     def _get_checked_matches(self) -> list[MatchResult]:
         results = []
         for i in range(self._addr_list.count()):
@@ -4701,44 +4722,20 @@ class MainWindow(QMainWindow):
             t = entry.get("timer")
             if t:
                 t.stop()
-            w = entry.get("worker")
-            if w and w.isRunning():
-                w.quit()
-                w.wait(2000)
+            self._stop_worker(entry.get("worker"), timeout=2000)
 
-        if self._vk_sched_worker and self._vk_sched_worker.isRunning():
-            self._vk_sched_worker.quit()
-            self._vk_sched_worker.wait(2000)
-            self._vk_sched_worker = None
+        self._stop_worker(self._vk_sched_worker, timeout=2000)
+        self._vk_sched_worker = None
 
-        if self._worker and self._worker.isRunning():
-            self._worker.cancel()
-            self._worker.quit()
-            self._worker.wait(3000)
+        self._stop_worker(self._worker, timeout=3000, cancel=True)
+        self._stop_worker(self._smart_worker, timeout=3000, cancel=True)
+        self._stop_worker(self._sel_worker, timeout=2000)
+        self._stop_worker(self._addr_check_worker, timeout=1000, cancel=True)
 
-        if self._smart_worker and self._smart_worker.isRunning():
-            self._smart_worker.cancel()
-            self._smart_worker.quit()
-            self._smart_worker.wait(3000)
+        self._stop_worker(self._vk_fetch_worker, timeout=1000)
+        self._vk_fetch_worker = None
 
-        if self._sel_worker and self._sel_worker.isRunning():
-            self._sel_worker.quit()
-            self._sel_worker.wait(2000)
-
-        if self._addr_check_worker and self._addr_check_worker.isRunning():
-            self._addr_check_worker.cancel()
-            self._addr_check_worker.quit()
-            self._addr_check_worker.wait(1000)
-
-        if self._vk_fetch_worker and self._vk_fetch_worker.isRunning():
-            self._vk_fetch_worker.quit()
-            self._vk_fetch_worker.wait(1000)
-            self._vk_fetch_worker = None
-
-        conn = getattr(self, "_conn_worker", None)
-        if conn and conn.isRunning():
-            conn.quit()
-            conn.wait(1000)
+        self._stop_worker(getattr(self, "_conn_worker", None), timeout=1000)
 
         tray = getattr(self, "_tray", None)
         if tray:
@@ -4943,7 +4940,11 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Умная рассылка", "Реестр адресов не загружен.")
             return
 
-        blocks, header, footer = _parse_smart_blocks(text, self._matcher)
+        try:
+            blocks, header, footer = _parse_smart_blocks(text, self._matcher)
+        except Exception as exc:
+            QMessageBox.warning(self, "Умная рассылка", f"Ошибка разбора текста: {exc}")
+            return
         if not blocks:
             # Фолбэк: если адреса не найдены в тексте, но есть отмеченные адреса в списке —
             # открываем конструктор блоков чтобы задать дату для каждой группы адресов
@@ -5020,8 +5021,8 @@ class MainWindow(QMainWindow):
             send_max=True,
             dry_run=dlg.dry_run,
             extra_delay=extra_delay,
-            delay_min=self._delay_min_spin.value() if self._chk_delay.isChecked() else 5,
-            delay_max=self._delay_max_spin.value() if self._chk_delay.isChecked() else 12,
+            delay_min=self._get_delay_params()[0],
+            delay_max=self._get_delay_params()[1],
             parent=self,
         )
         worker.progress.connect(self._on_send_progress)
@@ -5044,8 +5045,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("MAX POST")
         self._send_log_list.hide()
         self._addr_list.show()
-        if self._smart_worker is not None:
-            self._smart_worker = None
+        self._smart_worker = None
         if is_dry_run:
             QMessageBox.information(self, "Тест завершён", "Пробный прогон умной рассылки выполнен.\nРеальных отправок не было.")
             return
