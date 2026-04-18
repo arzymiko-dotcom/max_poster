@@ -635,6 +635,23 @@ def _extract_date_str(text: str) -> str:
     return ""
 
 
+def _finalize_block_text(text: str) -> str:
+    """Если дата не первая строка — переносит её в начало через пробел к первой строке.
+    Убирает все пустые строки — текст идёт компактно без отступов."""
+    lines = [l for l in text.split("\n") if l.strip()]
+    if not lines:
+        return text.strip()
+    # Ищем строку с датой начиная со второй
+    date_idx = next(
+        (i for i, l in enumerate(lines) if i > 0 and _BLOCK_DATE_RE.search(l.strip())),
+        -1,
+    )
+    if date_idx > 0:
+        date_line = lines.pop(date_idx).strip()
+        lines[0] = date_line + " " + lines[0].strip()
+    return "\n".join(lines)
+
+
 @dataclass
 class _SmartBlock:
     text: str
@@ -706,6 +723,8 @@ def _parse_smart_blocks(text: str, matcher) -> "tuple[list[_SmartBlock], str, st
         # убираем «по адресам:» / «по адресу:» в конце строк-заголовков блока
         cleaned = "\n".join(clean_lines).rstrip()
         cleaned = re.sub(r"[,\s]*по адресам?\s*:?\s*$", "", cleaned, flags=re.IGNORECASE)
+        # сжимаем 2+ пустых строки подряд в одну — они остаются после удаления адресных строк
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
         block.clean_text = cleaned.strip()
 
         address_blocks.append(block)
@@ -731,9 +750,16 @@ class _SmartSendPreviewDialog(QDialog):
         root.setSpacing(8)
 
         # Заголовок
-        title = QLabel(f"Найдено блоков с адресами: <b>{len(blocks)}</b>")
+        hdr_row = QHBoxLayout()
+        title = QLabel(f"Найдено блоков: <b>{len(blocks)}</b>")
         title.setTextFormat(Qt.TextFormat.RichText)
-        root.addWidget(title)
+        hdr_row.addWidget(title)
+        hdr_row.addStretch()
+        self._total_lbl = QLabel()
+        self._total_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._total_lbl.setStyleSheet("color: #374151; font-size: 12px;")
+        hdr_row.addWidget(self._total_lbl)
+        root.addLayout(hdr_row)
 
         # Callout шапки (если есть)
         if header:
@@ -766,7 +792,7 @@ class _SmartSendPreviewDialog(QDialog):
 
         blocks_hdr = QHBoxLayout()
         blocks_hdr.setSpacing(6)
-        blocks_lbl = QLabel("Блоки для рассылки:")
+        blocks_lbl = QLabel("Блоки:")
         blocks_lbl.setStyleSheet("font-weight: 600; font-size: 12px;")
         blocks_hdr.addWidget(blocks_lbl)
         self._select_all_blocks_btn = QPushButton("Снять все")
@@ -774,8 +800,21 @@ class _SmartSendPreviewDialog(QDialog):
         self._select_all_blocks_btn.setFixedHeight(28)
         self._select_all_blocks_btn.clicked.connect(self._toggle_select_all_blocks)
         blocks_hdr.addWidget(self._select_all_blocks_btn)
+        self._hide_empty_btn = QPushButton("Скрыть пустые")
+        self._hide_empty_btn.setObjectName("tplMiniBtn")
+        self._hide_empty_btn.setFixedHeight(28)
+        self._hide_empty_btn.setCheckable(True)
+        self._hide_empty_btn.setChecked(True)
+        self._hide_empty_btn.toggled.connect(self._filter_blocks)
+        blocks_hdr.addWidget(self._hide_empty_btn)
         blocks_hdr.addStretch()
         left_lay.addLayout(blocks_hdr)
+
+        self._search_edit = QLineEdit()
+        self._search_edit.setPlaceholderText("🔍 Поиск по блокам…")
+        self._search_edit.setFixedHeight(26)
+        self._search_edit.textChanged.connect(self._filter_blocks)
+        left_lay.addWidget(self._search_edit)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -800,9 +839,14 @@ class _SmartSendPreviewDialog(QDialog):
 
             # Первая строка = заголовок (дата, если есть — берём её)
             first_line = (block.date_str or block.text.splitlines()[0])[:70]
+            has_matches = bool(block.matches)
             chk = QCheckBox(f"Блок {idx}: {first_line}")
-            chk.setChecked(True)
+            chk.setChecked(has_matches)
             chk.setStyleSheet("font-weight: 600;")
+            if not has_matches:
+                frame.setStyleSheet(
+                    "QFrame { border: 1px solid #fca5a5; background: #fff5f5; border-radius: 4px; }"
+                )
             chk.clicked.connect(lambda _, b=block: self._select_block(b))
             chk.stateChanged.connect(self._update_send_btn)
             fl.addWidget(chk)
@@ -923,11 +967,12 @@ class _SmartSendPreviewDialog(QDialog):
         self._update_send_btn()
 
     def _update_send_btn(self) -> None:
-        """Обновляет текст кнопки «Отправить» — показывает кол-во выбранных блоков."""
+        """Обновляет кнопку «Отправить», итого получателей, кнопку выбора всех."""
         n = sum(1 for chk, b in self._checks if chk.isChecked() and b.matches)
+        total_rcpt = sum(len(b.matches) for chk, b in self._checks if chk.isChecked())
         self._btn_send.setText(f"Отправить ({n} блок.)" if n != len(self._blocks) else "Отправить все")
         self._btn_send.setEnabled(n > 0)
-        # Обновляем кнопку выбора всех
+        self._total_lbl.setText(f"Итого получателей: <b>{total_rcpt}</b>")
         all_checked = all(chk.isChecked() for chk, _ in self._checks)
         self._select_all_blocks_btn.setText("Снять все" if all_checked else "Выбрать все")
 
@@ -937,6 +982,19 @@ class _SmartSendPreviewDialog(QDialog):
         for chk, _ in self._checks:
             chk.setChecked(not all_checked)
         self._update_send_btn()
+
+    def _filter_blocks(self) -> None:
+        """Фильтрует список блоков по поиску и флагу «Скрыть пустые»."""
+        query = self._search_edit.text().lower()
+        hide_empty = self._hide_empty_btn.isChecked()
+        for frame, block in self._frames:
+            if hide_empty and not block.matches:
+                frame.hide()
+                continue
+            if query and query not in block.text.lower():
+                frame.hide()
+            else:
+                frame.show()
 
     def _toggle_edit(self) -> None:
         """Переключает между режимом просмотра и редактирования."""
@@ -1050,6 +1108,7 @@ class _SmartSendWorker(QThread):
     """Рассылает блоки умной рассылки по своим адресам."""
 
     progress = pyqtSignal(str)
+    progress_step = pyqtSignal(int, int)         # (current, total_addresses)
     address_result = pyqtSignal(int, bool, str)  # (global_idx, success, message)
     all_done = pyqtSignal(bool, str)             # (overall_success, summary)
 
@@ -1075,9 +1134,17 @@ class _SmartSendWorker(QThread):
         self._delay_min = delay_min
         self._delay_max = delay_max
         self._cancelled = False
+        self._paused = False
 
     def cancel(self) -> None:
         self._cancelled = True
+        self._paused = False
+
+    def pause(self) -> None:
+        self._paused = True
+
+    def resume(self) -> None:
+        self._paused = False
 
     def run(self) -> None:
         if not self._send_max:
@@ -1093,6 +1160,7 @@ class _SmartSendWorker(QThread):
                 _img_bytes = None
 
         total_blocks = len(self._blocks)
+        total_addrs = sum(len(chat_ids) for _, chat_ids in self._blocks)
         ok_count = 0
         fail_count = 0
         send_num = 0
@@ -1103,12 +1171,19 @@ class _SmartSendWorker(QThread):
                 if self._cancelled:
                     self.all_done.emit(False, f"Отменено. Отправлено: {ok_count} | Ошибок: {fail_count}")
                     return
+                # Пауза
+                while self._paused and not self._cancelled:
+                    self.progress.emit(f"Блок {b_idx + 1}/{total_blocks} · ⏸ на паузе…")
+                    time.sleep(0.5)
+                if self._cancelled:
+                    self.all_done.emit(False, f"Отменено. Отправлено: {ok_count} | Ошибок: {fail_count}")
+                    return
                 if send_num > 0 and not self.dry_run:
                     lo = min(self._delay_min, self._delay_max)
                     hi = max(self._delay_min, self._delay_max)
                     delay = random.randint(lo, hi) + self._extra_delay
                     for sec in range(delay):
-                        if self._cancelled:
+                        if self._cancelled or self._paused:
                             break
                         self.progress.emit(
                             f"Блок {b_idx + 1}/{total_blocks} · пауза {delay - sec}с…"
@@ -1117,7 +1192,8 @@ class _SmartSendWorker(QThread):
                 if self._cancelled:
                     self.all_done.emit(False, f"Отменено. Отправлено: {ok_count} | Ошибок: {fail_count}")
                     return
-                self.progress.emit(f"Блок {b_idx + 1}/{total_blocks}: отправка {send_num + 1}…")
+                self.progress_step.emit(global_idx + 1, total_addrs)
+                self.progress.emit(f"Блок {b_idx + 1}/{total_blocks}: {global_idx + 1}/{total_addrs}…")
                 if self.dry_run:
                     time.sleep(0.3)
                     ok_count += 1
@@ -1330,9 +1406,9 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(500, self._load_scheduled_from_disk)
         # Прогрев Excel — загружаем датафрейм в фоне чтобы первый парсинг был мгновенным
         if self._matcher is not None:
-            _warmup = _ExcelWarmupWorker(self._matcher, self)
-            _warmup.finished.connect(_warmup.deleteLater)
-            _warmup.start()
+            self._warmup_worker = _ExcelWarmupWorker(self._matcher, self)
+            self._warmup_worker.finished.connect(self._warmup_worker.deleteLater)
+            self._warmup_worker.start()
         # Проверки безопасности — откладываем чтобы не мешать старту
         QTimer.singleShot(4000, self._check_token_reminder)
         QTimer.singleShot(6000, self._check_vk_token)
@@ -1503,7 +1579,31 @@ class MainWindow(QMainWindow):
         self._smart_send_btn.setFixedHeight(28)
         self._smart_send_btn.setMinimumWidth(85)
         self._smart_send_btn.setToolTip(
-            "Умная рассылка — разбить текст на блоки и отправить каждый по своим адресам"
+            "🔀 Умная рассылка\n"
+            "\n"
+            "Отправляет разные блоки текста разным адресам автоматически.\n"
+            "\n"
+            "📝 КАК НАПИСАТЬ ТЕКСТ:\n"
+            "• Общая шапка (приветствие) — первый абзац ДО адресов\n"
+            "• Каждый блок = дата + адрес, разделённые пустой строкой\n"
+            "• Подпись в конце — после последнего блока\n"
+            "\n"
+            "📋 ПРИМЕР:\n"
+            "Уважаемые жильцы!\n"
+            "\n"
+            "22 апреля с 13:00 по 19:00\n"
+            "ул. Есенина, д. 10\n"
+            "\n"
+            "23 апреля с 09:00 по 17:00\n"
+            "ул. Есенина, д. 14\n"
+            "\n"
+            "Работы выполняет: ООО «ПетербургГаз»\n"
+            "\n"
+            "⚠️ ВАЖНО:\n"
+            "• Между блоками — ПУСТАЯ строка (Enter дважды)\n"
+            "• Адрес должен быть из реестра max_address.xlsx\n"
+            "• Дата пишется в том же блоке что и адрес\n"
+            "• Программа сама найдёт нужные группы и разошлёт каждому"
         )
         self._smart_send_btn.clicked.connect(self._start_smart_send)
         lh_layout.addWidget(self._smart_send_btn)
@@ -1683,7 +1783,15 @@ class MainWindow(QMainWindow):
         self._select_all_btn.setToolTip("Выбрать все / Снять все")
         self._select_all_btn.clicked.connect(self._toggle_select_all)
 
+        self._clear_addr_btn = QPushButton("Очистить")
+        self._clear_addr_btn.setObjectName("tplMiniBtn")
+        self._clear_addr_btn.setFixedHeight(24)
+        self._clear_addr_btn.setToolTip("Очистить список адресов")
+        self._clear_addr_btn.clicked.connect(self._clear_all_addresses)
+
         ah_layout.addWidget(self._addr_count_lbl)
+        ah_layout.addSpacing(12)
+        ah_layout.addWidget(self._clear_addr_btn)
         ah_layout.addStretch()
         ah_layout.addWidget(self._hist_btn)
         ah_layout.addWidget(self._select_all_btn)
@@ -1972,8 +2080,16 @@ class MainWindow(QMainWindow):
         sa_layout = QVBoxLayout(send_area)
         sa_layout.setContentsMargins(0, 0, 0, 0)
         sa_layout.setSpacing(0)
+        self._pause_btn = QPushButton("⏸ Пауза")
+        self._pause_btn.setObjectName("tplMiniBtn")
+        self._pause_btn.setFixedHeight(28)
+        self._pause_btn.setCheckable(True)
+        self._pause_btn.hide()
+        self._pause_btn.clicked.connect(self._toggle_pause)
+
         sa_layout.addWidget(send_row_w)
         sa_layout.addWidget(self._cancel_button)
+        sa_layout.addWidget(self._pause_btn)
         buttons_row.addWidget(send_area, 4, 0, 1, 2)
 
         ctrl_layout.addWidget(platforms_section)
@@ -1981,8 +2097,9 @@ class MainWindow(QMainWindow):
         self._progress_bar = QProgressBar()
         self._progress_bar.setObjectName("sendProgress")
         self._progress_bar.setRange(0, 0)
-        self._progress_bar.setFixedHeight(4)
-        self._progress_bar.setTextVisible(False)
+        self._progress_bar.setFixedHeight(8)
+        self._progress_bar.setTextVisible(True)
+        self._progress_bar.setFormat("%v / %m")
         self._progress_bar.hide()
 
         ctrl_layout.addLayout(buttons_row)
@@ -2716,9 +2833,9 @@ class MainWindow(QMainWindow):
         self._matcher = None
         if self.excel_path.exists():
             self._matcher = ExcelMatcher(self.excel_path)
-            _warmup = _ExcelWarmupWorker(self._matcher, self)
-            _warmup.finished.connect(_warmup.deleteLater)
-            _warmup.start()
+            self._warmup_worker = _ExcelWarmupWorker(self._matcher, self)
+            self._warmup_worker.finished.connect(self._warmup_worker.deleteLater)
+            self._warmup_worker.start()
             self._excel_mtime = self.excel_path.stat().st_mtime
             self._tray_notify("Реестр обновлён", f"{self.excel_path.name} перезагружен.")
 
@@ -3104,6 +3221,15 @@ class MainWindow(QMainWindow):
         self._update_checklist()
         self.save_state()
 
+    def _clear_all_addresses(self) -> None:
+        """Очищает весь список адресов без сброса текста и фото."""
+        if self._addr_list.count() == 0:
+            return
+        self._addr_list.clear()
+        self._last_addr_row = -1
+        self._update_checklist()
+        self.save_state()
+
     def _add_address_manually(self) -> None:
         dlg = AddAddressDialog(parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -3365,6 +3491,24 @@ class MainWindow(QMainWindow):
     def _on_send_step(self, current: int, total: int) -> None:
         self._progress_bar.setRange(0, total)
         self._progress_bar.setValue(current)
+        self._progress_bar.show()
+        # Подсвечиваем текущий элемент лога как «📤 Отправляется…»
+        if current > 0:
+            item = self._send_log_list.item(current - 1)
+            if item and item.text().startswith("⏳"):
+                addr = item.data(Qt.ItemDataRole.UserRole)
+                item.setText(f"📤  {addr}")
+                item.setForeground(QColor("#2563eb"))
+                self._send_log_list.scrollToItem(item)
+
+    def _toggle_pause(self, checked: bool) -> None:
+        if self._smart_worker and self._smart_worker.isRunning():
+            if checked:
+                self._smart_worker.pause()
+                self._pause_btn.setText("▶ Продолжить")
+            else:
+                self._smart_worker.resume()
+                self._pause_btn.setText("⏸ Пауза")
 
     def _cancel_send(self) -> None:
         """Запрашивает отмену текущей рассылки."""
@@ -3377,6 +3521,7 @@ class MainWindow(QMainWindow):
             self._smart_worker.cancel()
             self._cancel_button.setEnabled(False)
             self._cancel_button.setText("✕  Отменяется…")
+            self._pause_btn.hide()
             self.setWindowTitle("MAX POST — Отменяется…")
         if self._vk_sched_worker and self._vk_sched_worker.isRunning():
             self._vk_sched_worker.quit()
@@ -4108,9 +4253,9 @@ class MainWindow(QMainWindow):
         self._matcher = None
         if self.excel_path.exists():
             self._matcher = ExcelMatcher(self.excel_path)
-            _warmup = _ExcelWarmupWorker(self._matcher, self)
-            _warmup.finished.connect(_warmup.deleteLater)
-            _warmup.start()
+            self._warmup_worker = _ExcelWarmupWorker(self._matcher, self)
+            self._warmup_worker.finished.connect(self._warmup_worker.deleteLater)
+            self._warmup_worker.start()
             QMessageBox.information(
                 self, "Реестр обновлён",
                 f"Файл {self.excel_path.name} перезагружен."
@@ -4616,13 +4761,17 @@ class MainWindow(QMainWindow):
 
         for b in blocks:
             if header:
-                b.text = header + "\n" + b.text
+                b.text = header + "\n\n" + b.text
                 if b.clean_text:
-                    b.clean_text = header + "\n" + b.clean_text
+                    b.clean_text = header + "\n\n" + b.clean_text
             if footer:
                 b.text = b.text + "\n\n" + footer
                 if b.clean_text:
                     b.clean_text = b.clean_text + "\n\n" + footer
+            # Переносим дату в начало и чистим пустые строки ДО показа превью
+            b.text = _finalize_block_text(b.text)
+            if b.clean_text:
+                b.clean_text = _finalize_block_text(b.clean_text)
 
         dlg = _SmartSendPreviewDialog(blocks, header=header, parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
@@ -4659,6 +4808,9 @@ class MainWindow(QMainWindow):
         self._cancel_button.setEnabled(True)
         self._cancel_button.setText("✕  Отменить рассылку")
         self._cancel_button.show()
+        self._pause_btn.setChecked(False)
+        self._pause_btn.setText("⏸ Пауза")
+        self._pause_btn.show()
 
         extra_delay = int(os.getenv("SEND_DELAY_SEC", "0") or 0)
         worker = _SmartSendWorker(
@@ -4673,6 +4825,7 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         worker.progress.connect(self._on_send_progress)
+        worker.progress_step.connect(self._on_send_step)
         worker.address_result.connect(self._on_address_result)
         worker.all_done.connect(self._on_smart_send_done)
         worker.finished.connect(worker.deleteLater)
@@ -4682,6 +4835,8 @@ class MainWindow(QMainWindow):
     def _on_smart_send_done(self, success: bool, summary: str) -> None:
         is_dry_run = self._smart_worker.dry_run if self._smart_worker else False
         self._cancel_button.hide()
+        self._pause_btn.hide()
+        self._progress_bar.hide()
         self.send_button.show()
         self.send_button.setText("Опубликовать")
         self._smart_send_btn.show()

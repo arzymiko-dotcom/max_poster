@@ -2,6 +2,15 @@
 
 
 _DARK_STYLESHEET = """
+            QToolTip {
+                background: #2d2d44;
+                color: #e0e0f0;
+                border: 1px solid #6d3aad;
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 12px;
+                line-height: 1.5;
+            }
             QSplitter::handle { background: #6d3aad; }
             QSplitter::handle:hover { background: #8b5cf6; }
             #maxPosterContent { background: #1e1e2e; }
@@ -530,6 +539,15 @@ def get_dark_stylesheet() -> str:
 
 
 _LIGHT_STYLESHEET = """
+            QToolTip {
+                background: #ffffff;
+                color: #1f2937;
+                border: 1px solid #7c3aed;
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 12px;
+                line-height: 1.5;
+            }
             QSplitter::handle { background: #7c3aed; }
             QSplitter::handle:hover { background: #a855f7; }
             #maxPosterContent { background: #f3f4f6; }
