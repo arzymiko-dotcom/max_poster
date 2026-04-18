@@ -805,22 +805,27 @@ class _SmartSendPreviewDialog(QDialog):
                 date_lbl.setStyleSheet("color: #1d4ed8; font-size: 11px; padding-left: 12px;")
                 fl.addWidget(date_lbl)
 
-            # Найденные адреса — зелёным
+            # Найденные адреса — зелёным + кнопка ✕
             for m in block.matches:
-                lbl = QLabel(f"  ✓  {m.address}")
-                lbl.setStyleSheet("color: #16a34a; font-size: 11px; padding-left: 12px;")
-                fl.addWidget(lbl)
+                row = self._make_addr_row(
+                    f"  ✓  {m.address}", "#16a34a",
+                    on_remove=lambda _m=m, _b=block, _fl=fl: self._remove_match(_b, _m, _fl),
+                )
+                fl.addWidget(row)
 
-            # Не найденные — красным
+            # Не найденные — красным + кнопка ✕
             for addr in block.not_found:
-                lbl = QLabel(f"  ✗  {addr}  (не найден)")
-                lbl.setStyleSheet("color: #dc2626; font-size: 11px; padding-left: 12px;")
-                fl.addWidget(lbl)
+                row = self._make_addr_row(
+                    f"  ✗  {addr}  (не найден)", "#dc2626",
+                    on_remove=lambda _a=addr, _b=block, _fl=fl: self._remove_not_found(_b, _a, _fl),
+                )
+                fl.addWidget(row)
 
-            # Кол-во получателей
+            # Кол-во получателей (храним ссылку для обновления)
             cnt = len(block.matches)
             info = QLabel(f"  Получателей: {cnt}")
             info.setStyleSheet("color: #6b7280; font-size: 11px; padding-left: 12px;")
+            info.setObjectName(f"info_{id(block)}")
             fl.addWidget(info)
 
             frame.mousePressEvent = lambda _e, b=block: self._select_block(b)
@@ -960,6 +965,64 @@ class _SmartSendPreviewDialog(QDialog):
         """Обновляет предпросмотр при переключении галочки «без адресов»."""
         if self._current_block and not self._editing:
             self._select_block(self._current_block)
+
+    # ── Удаление отдельных адресов из блока ─────────────────────────────────
+
+    def _make_addr_row(self, label_text: str, color: str, on_remove) -> "QWidget":
+        """Строка адреса: цветная метка + кнопка ✕."""
+        row = QWidget()
+        row.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(2)
+
+        lbl = QLabel(label_text)
+        lbl.setStyleSheet(f"color: {color}; font-size: 11px; padding-left: 12px;")
+        lbl.setWordWrap(False)
+        hl.addWidget(lbl, 1)
+
+        btn = QPushButton("✕")
+        btn.setFixedSize(16, 16)
+        btn.setToolTip("Убрать этот адрес из рассылки")
+        btn.setStyleSheet(
+            "QPushButton { border: none; color: #9ca3af; font-size: 10px; padding: 0; }"
+            "QPushButton:hover { color: #ef4444; }"
+        )
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.clicked.connect(lambda: (on_remove(), row.setVisible(False)))
+        hl.addWidget(btn)
+        return row
+
+    def _refresh_info_label(self, block: "_SmartBlock", layout: "QVBoxLayout") -> None:
+        """Обновляет метку «Получателей: N» в карточке блока."""
+        obj_name = f"info_{id(block)}"
+        for i in range(layout.count()):
+            w = layout.itemAt(i).widget()
+            if w and w.objectName() == obj_name:
+                w.setText(f"  Получателей: {len(block.matches)}")
+                break
+
+    def _auto_uncheck_block(self, block: "_SmartBlock") -> None:
+        """Снимает галочку блока если в нём не осталось найденных адресов."""
+        if not block.matches:
+            for chk, b in self._checks:
+                if b is block:
+                    chk.setChecked(False)
+                    break
+            self._update_send_btn()
+
+    def _remove_match(self, block: "_SmartBlock", match, layout: "QVBoxLayout") -> None:
+        """Убирает найденный адрес из block.matches."""
+        if match in block.matches:
+            block.matches.remove(match)
+        self._refresh_info_label(block, layout)
+        self._auto_uncheck_block(block)
+        self._update_send_btn()
+
+    def _remove_not_found(self, block: "_SmartBlock", addr: str, layout: "QVBoxLayout") -> None:
+        """Убирает ненайденный адрес из block.not_found."""
+        if addr in block.not_found:
+            block.not_found.remove(addr)
 
 
 class _SmartSendWorker(QThread):
